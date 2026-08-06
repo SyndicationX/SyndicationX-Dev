@@ -1,0 +1,39 @@
+/* Shared layout for SSN / ITIN masked input + reveal toggle. */
+
+.ssn_itin_input_wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.ssn_itin_input_wrap input {
+  width: 100%;
+  padding-right: 2.5rem;
+}
+
+.ssn_itin_toggle {
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+}
+
+.ssn_itin_toggle:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.ssn_itin_toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}

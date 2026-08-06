@@ -1,0 +1,283 @@
+/* Full-page distribution details (investors + payments) */
+
+.deal_dist_details_page .deal_dist_details_body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.deal_dist_details_summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+@media (max-width: 960px) {
+  .deal_dist_details_summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .deal_dist_details_summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.deal_dist_details_table_intro {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.deal_dist_details_toolbar {
+  align-items: center !important;
+  gap: 0.85rem 1.25rem;
+  margin-bottom: 0.85rem !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+.deal_dist_details_investor_cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding-block: 0.15rem;
+}
+
+.deal_dist_details_investor_name {
+  display: block;
+  font-weight: 650;
+  color: var(--portal-text, #1b1b1d);
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.deal_dist_details_investor_email {
+  display: block;
+  font-size: 0.8125em;
+  font-weight: 500;
+  color: var(--portal-text-muted, #6b6b6b);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deal_dist_class_badge {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--portal-text, #1b1b1d);
+}
+
+.deal_dist_td_class_pill .deal_inv_class_pills_row {
+  justify-content: flex-start;
+}
+
+.deal_dist_td_class_pill .deal_inv_class_pill {
+  max-width: 9.5rem;
+}
+
+.deal_dist_details_pct {
+  display: inline-block;
+  width: 100%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.deal_dist_details_pct_input {
+  width: 100%;
+  max-width: 6.5rem;
+  margin-left: auto;
+  display: block;
+  box-sizing: border-box;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--portal-border, #d8d8dc);
+  border-radius: 6px;
+  background: var(--portal-surface, #fff);
+  color: var(--portal-text, #1b1b1d);
+}
+
+.deal_dist_details_pct_input:focus {
+  outline: 2px solid color-mix(in srgb, var(--portal-accent, #2563eb) 45%, transparent);
+  outline-offset: 1px;
+  border-color: var(--portal-accent, #2563eb);
+}
+
+.deal_dist_details_pct_input:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+/* Fixed columns so headers + cells share the same right edge */
+.deal_dist_panel .um_table.deal_dist_details_table {
+  min-width: 48rem;
+}
+
+.deal_dist_panel .um_table.deal_dist_details_table thead th.deal_dist_th_investor,
+.deal_dist_panel .um_table.deal_dist_details_table tbody td.deal_dist_td_investor {
+  width: 16rem;
+  min-width: 14rem;
+  vertical-align: middle;
+}
+
+.deal_dist_panel .um_table.deal_dist_details_table thead th.deal_dist_th_class,
+.deal_dist_panel .um_table.deal_dist_details_table tbody td.deal_dist_td_class {
+  width: 11rem;
+  min-width: 9rem;
+}
+
+.deal_dist_panel .um_table.deal_dist_details_table thead th.deal_dist_th_capital,
+.deal_dist_panel .um_table.deal_dist_details_table tbody td.deal_dist_td_capital,
+.deal_dist_panel .um_table.deal_dist_details_table thead th.deal_dist_th_payment,
+.deal_dist_panel .um_table.deal_dist_details_table tbody td.deal_dist_td_payment {
+  width: 9.5rem;
+  min-width: 8.5rem;
+}
+
+.deal_dist_panel .um_table.deal_dist_details_table thead th.deal_dist_th_pct,
+.deal_dist_panel .um_table.deal_dist_details_table tbody td.deal_dist_td_pct {
+  width: 7.5rem;
+  min-width: 6.5rem;
+}
+
+.deal_dist_details_loading,
+.deal_dist_details_error_panel {
+  padding: 1.1rem 1rem;
+}
+
+.deal_dist_details_send_btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.deal_dist_td_actions {
+  text-align: right;
+}
+
+/* ACH status badges */
+.deal_dist_ach_badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.2em 0.55em;
+  border-radius: var(--ui-button-border-radius, 4px);
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.deal_dist_ach_badge--neutral {
+  color: #6b7280;
+  background: color-mix(in srgb, #9ca3af 12%, transparent);
+  border-color: color-mix(in srgb, #9ca3af 30%, transparent);
+}
+
+.deal_dist_ach_badge--info {
+  color: #1d4ed8;
+  background: color-mix(in srgb, #3b82f6 14%, transparent);
+  border-color: color-mix(in srgb, #3b82f6 32%, transparent);
+}
+
+.deal_dist_ach_badge--success {
+  color: #047857;
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  border-color: color-mix(in srgb, #10b981 35%, transparent);
+}
+
+.deal_dist_ach_badge--danger {
+  color: #b91c1c;
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  border-color: color-mix(in srgb, #ef4444 32%, transparent);
+}
+
+:root[data-theme="dark"] .deal_dist_ach_badge--neutral {
+  color: #d1d5db;
+}
+
+:root[data-theme="dark"] .deal_dist_ach_badge--info {
+  color: #93c5fd;
+}
+
+:root[data-theme="dark"] .deal_dist_ach_badge--success {
+  color: #6ee7b7;
+}
+
+:root[data-theme="dark"] .deal_dist_ach_badge--danger {
+  color: #fca5a5;
+}
+
+.deal_dist_details_page .deal_dist_heading {
+  margin-bottom: 0;
+}
+
+.deal_dist_th_pct_head {
+  justify-content: flex-end;
+}
+
+.deal_dist_formula_tooltip,
+.deal_dist_pct_tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-width: 18rem;
+  color: var(--form-tooltip-fg, #f9fafb);
+}
+
+.deal_dist_formula_tooltip p,
+.deal_dist_pct_tooltip p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--form-tooltip-fg, #f9fafb);
+}
+
+.deal_dist_formula_tooltip_eq,
+.deal_dist_pct_tooltip_formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 650;
+  font-size: 0.75rem !important;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  color: var(--form-tooltip-fg, #f9fafb) !important;
+  background: rgb(255 255 255 / 12%);
+}
+
+/* Smooth horizontal scroll on the investors DataTable (Shift+wheel / trackpad / drag). */
+.deal_dist_details_page .deal_dist_panel .data_table_scroll_region {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+}
+
+.deal_dist_details_page .deal_dist_panel .data_table_scroll_region.data_table_scroll_region--overflow-x {
+  overflow-x: auto;
+}
+
+.deal_dist_details_page .deal_dist_panel .data_table_scroll_region::-webkit-scrollbar {
+  height: 8px;
+}
+
+.deal_dist_details_page .deal_dist_panel .data_table_scroll_region.is-panning {
+  scroll-behavior: auto;
+}
