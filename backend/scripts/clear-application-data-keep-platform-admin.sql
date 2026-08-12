@@ -4,7 +4,7 @@
 -- TABLES (public schema, 27 — all cleared except where noted):
 --   1.  add_deal_form
 --   2.  assigning_deal_user
---   3.  companies                    KEEP: platform admin org (Massive Capital)
+--   3.  companies                    KEEP: orgs for kept users (Massive Capital)
 --   4.  company_admin_audit_logs
 --   5.  company_workspace_tab_settings
 --   6.  contact
@@ -27,14 +27,16 @@
 --   23. user_page_navigations
 --   24. user_portal_sessions
 --   25. user_saved_addresses
---   26. users                        KEEP: platform.admin@example.com
+--   26. users                        KEEP: platform.admin + Sanjay Aggarwal
 --   (drizzle.__drizzle_migrations is NOT touched)
 --
 -- IMPORTANT: Do not use TRUNCATE ... CASCADE on companies — users.organization_id
--- references companies, so PostgreSQL could truncate users and remove platform admin.
+-- references companies, so PostgreSQL could truncate users and remove kept admins.
 --
--- Kept user:  platform.admin@example.com (role platform_admin)
--- Kept company: organization_id on that user, or seeded Massive Capital
+-- Kept users:
+--   - platform.admin@example.com (role platform_admin)
+--   - sanjay@massive.capital (Sanjay Aggarwal, role platform_admin)
+-- Kept company: organization_id on those users, or seeded Massive Capital
 --   (3f8a9c1e-2b4d-4f6a-8c7e-1d0e9a8b7c6d from migration 0029)
 --
 -- Run from backend/:
@@ -47,37 +49,60 @@
 
 DO $$
 DECLARE
-  v_admin_email constant text := 'platform.admin@example.com';
   v_seed_company_id constant uuid := '3f8a9c1e-2b4d-4f6a-8c7e-1d0e9a8b7c6d';
+  v_keep_emails constant text[] := ARRAY[
+    'platform.admin@example.com',
+    'sanjay@massive.capital'
+  ];
+  v_missing text;
   v_keep_company_id uuid;
 BEGIN
-  IF NOT EXISTS (
+  SELECT string_agg(e, ', ' ORDER BY e)
+  INTO v_missing
+  FROM unnest(v_keep_emails) AS e
+  WHERE NOT EXISTS (
     SELECT 1
     FROM public.users u
-    WHERE lower(trim(u.email)) = lower(v_admin_email)
-  ) THEN
+    WHERE lower(trim(u.email)) = lower(e)
+  );
+
+  IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION
-      'Platform admin not found (%). Run migrations/seeds first.', v_admin_email;
+      'Kept user(s) not found (%). Run migrations/seeds first.', v_missing;
   END IF;
 
-  SELECT COALESCE(u.organization_id, v_seed_company_id)
-  INTO v_keep_company_id
-  FROM public.users u
-  WHERE lower(trim(u.email)) = lower(v_admin_email);
+  -- Prefer platform.admin org, then Sanjay's, then seeded Massive Capital.
+  SELECT COALESCE(
+    (
+      SELECT u.organization_id
+      FROM public.users u
+      WHERE lower(trim(u.email)) = lower('platform.admin@example.com')
+    ),
+    (
+      SELECT u.organization_id
+      FROM public.users u
+      WHERE lower(trim(u.email)) = lower('sanjay@massive.capital')
+    ),
+    v_seed_company_id
+  )
+  INTO v_keep_company_id;
 
   IF NOT EXISTS (
     SELECT 1 FROM public.companies c WHERE c.id = v_keep_company_id
   ) THEN
     RAISE EXCEPTION
-      'Platform admin company % not found in public.companies.', v_keep_company_id;
+      'Kept company % not found in public.companies.', v_keep_company_id;
   END IF;
 
-  UPDATE public.users
+  -- Point all kept users at the kept company when org is missing / drifted.
+  UPDATE public.users u
   SET
     organization_id = v_keep_company_id,
     updated_at = now()
-  WHERE lower(trim(email)) = lower(v_admin_email)
-    AND organization_id IS DISTINCT FROM v_keep_company_id;
+  WHERE lower(trim(u.email)) = ANY (
+    SELECT lower(e) FROM unnest(v_keep_emails) AS e
+  )
+    AND u.organization_id IS DISTINCT FROM v_keep_company_id;
 END $$;
 
 BEGIN;
@@ -119,32 +144,40 @@ DELETE FROM public.assigning_deal_user;
 DELETE FROM public.add_deal_form;
 DELETE FROM public.deals;
 
--- Company settings (all orgs; platform admin company row stays in companies)
+-- Company settings (all orgs; kept company row stays in companies)
 DELETE FROM public.company_workspace_tab_settings;
 
--- users — remove everyone except platform admin
+-- users — remove everyone except kept platform admins
 DELETE FROM public.users u
-WHERE lower(trim(u.email)) <> lower('platform.admin@example.com');
+WHERE lower(trim(u.email)) NOT IN (
+  lower('platform.admin@example.com'),
+  lower('sanjay@massive.capital')
+);
 
--- companies — remove every org except platform admin's company
+-- companies — remove every org except companies linked to kept users
 DELETE FROM public.companies c
-WHERE c.id <> (
-  SELECT COALESCE(
+WHERE c.id NOT IN (
+  SELECT DISTINCT COALESCE(
     u.organization_id,
     '3f8a9c1e-2b4d-4f6a-8c7e-1d0e9a8b7c6d'::uuid
   )
   FROM public.users u
-  WHERE lower(trim(u.email)) = lower('platform.admin@example.com')
+  WHERE lower(trim(u.email)) IN (
+    lower('platform.admin@example.com'),
+    lower('sanjay@massive.capital')
+  )
 );
 
 COMMIT;
 
 -- Verify
-SELECT id, email, username, role, organization_id
-FROM public.users;
+SELECT id, email, username, role, organization_id, first_name, last_name
+FROM public.users
+ORDER BY email;
 
 SELECT id, name, status
-FROM public.companies;
+FROM public.companies
+ORDER BY name;
 
 SELECT 'add_deal_form' AS table_name, count(*)::int AS rows FROM public.add_deal_form
 UNION ALL SELECT 'assigning_deal_user', count(*)::int FROM public.assigning_deal_user

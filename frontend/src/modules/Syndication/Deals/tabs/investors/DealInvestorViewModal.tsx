@@ -8,7 +8,6 @@ import {
   CircleDollarSign,
   DollarSign,
   IdCard,
-  Landmark,
   Mail,
   Percent,
   Pencil,
@@ -20,10 +19,21 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { CardCompactAmount } from "../../../../../common/components/card-compact-amount/CardCompactAmount"
+import { Link } from "react-router-dom"
+import {
+  CardCompactAmount,
+  TableCompactAmountCell,
+} from "../../../../../common/components/card-compact-amount/CardCompactAmount"
+import {
+  DataTable,
+  type DataTableColumn,
+} from "../../../../../common/components/data-table/DataTable"
 import { TabsScrollStrip } from "../../../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { ViewReadonlyField } from "../../../../../common/components/ViewReadonlyField"
 import { formatDateDdMmmYyyy } from "../../../../../common/utils/formatDateDisplay"
+import { displayEmail } from "../../../../../common/utils/displayEmail"
+import { fetchDealInvestors } from "../../api/dealsApi"
+import { fetchDistributionSetup } from "../../distribution-setup/api/distributionSetupApi"
 import { investorRoleLabel } from "../../constants/investor-profile"
 import {
   dealInvestorStatusDisplayLabel,
@@ -31,12 +41,18 @@ import {
 } from "../../utils/dealInvestorTableDisplay"
 import { displayInvestorCommittedAmount } from "../../utils/offeringMoneyFormat"
 import { investorSignedColumnDisplay } from "../../utils/investorEsignStatus"
+import { parseStoredClassPercent } from "../distributions/utils/investorDistributionAllocation"
 import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
+import {
+  buildInvestorDistributionHistory,
+  type InvestorDistHistoryRow,
+} from "./investorDistributionHistory"
 import "../../../usermanagement/user_management.css"
 import "../../deals-list.css"
 import "../../deal-investors-tab.css"
 import "../deal_members/add-investment/add_deal_modal.css"
+import "../distributions/distributions-tab.css"
 
 /** Optional this-run distribution snapshot (Distribution Details → View). */
 export interface DealInvestorViewDistributionContext {
@@ -72,8 +88,10 @@ interface DealInvestorViewModalProps {
   dealAllClassNamesLine: string
   /** When omitted, the Edit button is hidden (e.g. Distribution Details). */
   onEdit?: (row: DealInvestorRow) => void
-  /** When set, adds a Distribution section with this-run payment details. */
+  /** When set, shows this-run payment snapshot above the history list. */
   distributionContext?: DealInvestorViewDistributionContext | null
+  /** Deal id — loads compact distribution history in the Distributions tab. */
+  dealId?: string | null
   /** Initial section when the modal opens (defaults to investor, or distribution when context is set). */
   initialSectionTab?: InvestorViewSectionTab
 }
@@ -92,7 +110,7 @@ const DISTRIBUTION_VIEW_SECTION_TAB: {
   id: InvestorViewSectionTab
   label: string
   Icon: LucideIcon
-} = { id: "distribution", label: "Distribution", Icon: CircleDollarSign }
+} = { id: "distribution", label: "Distributions", Icon: CircleDollarSign }
 
 function displayOrDash(v: string | null | undefined): string {
   const t = String(v ?? "").trim()
@@ -106,6 +124,14 @@ function displayPctOrDash(v: string | null | undefined): string {
   const n = Number(t.replace(/[^0-9.-]/g, ""))
   if (!Number.isFinite(n)) return t
   return `${n.toFixed(2)}%`
+}
+
+function ownershipPercentLabel(row: DealInvestorRow): string {
+  const n =
+    parseStoredClassPercent(row.percentOfClassDistributions) ??
+    parseStoredClassPercent(row.percentOfClassOwnership)
+  if (n == null) return "—"
+  return `${(Math.round(n * 100) / 100).toFixed(2)}%`
 }
 
 function resolveInvestorClassDisplay(
@@ -144,14 +170,16 @@ function datePlacedDisplay(row: DealInvestorRow): string {
   return "—"
 }
 
-function moneyFieldValue(v: number | undefined | null) {
-  if (v == null || !Number.isFinite(v)) return "—"
-  return <CardCompactAmount amount={v} />
+function normId(v: unknown): string {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
 }
 
-function displayRateOrDash(v: number | undefined | null): string {
-  if (v == null || !Number.isFinite(v) || v <= 0) return "—"
-  return `${v.toFixed(2)}%`
+function normEmail(v: unknown): string {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
 }
 
 /**
@@ -165,20 +193,26 @@ export function DealInvestorViewModal({
   dealAllClassNamesLine,
   onEdit,
   distributionContext = null,
+  dealId = null,
   initialSectionTab,
 }: DealInvestorViewModalProps) {
-  const hasDistribution = distributionContext != null
-  const sectionTabs = useMemo(() => {
-    if (!hasDistribution) return BASE_INVESTOR_VIEW_SECTION_TABS
-    return [...BASE_INVESTOR_VIEW_SECTION_TABS, DISTRIBUTION_VIEW_SECTION_TAB]
-  }, [hasDistribution])
+  const dealIdTrimmed = String(dealId ?? "").trim()
+  const hasThisRun = distributionContext != null
+  const showDistributionsTab = Boolean(dealIdTrimmed) || hasThisRun
 
+  const sectionTabs = useMemo(() => {
+    if (!showDistributionsTab) return BASE_INVESTOR_VIEW_SECTION_TABS
+    return [...BASE_INVESTOR_VIEW_SECTION_TABS, DISTRIBUTION_VIEW_SECTION_TAB]
+  }, [showDistributionsTab])
+
+  const preferDistributionsTab = Boolean(dealIdTrimmed) || hasThisRun
   const defaultTab: InvestorViewSectionTab =
-    initialSectionTab ??
-    (hasDistribution ? "distribution" : "investor")
+    initialSectionTab ?? (preferDistributionsTab ? "distribution" : "investor")
 
   const [sectionTab, setSectionTab] =
     useState<InvestorViewSectionTab>(defaultTab)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyRows, setHistoryRows] = useState<InvestorDistHistoryRow[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const sectionRefs = useRef<
     Partial<Record<InvestorViewSectionTab, HTMLElement | null>>
@@ -189,7 +223,7 @@ export function DealInvestorViewModal({
     if (!row) return
     setSectionTab(
       initialSectionTab ??
-        (hasDistribution ? "distribution" : "investor"),
+        (preferDistributionsTab ? "distribution" : "investor"),
     )
     ignoreScrollSpyUntilRef.current = 0
     const el = scrollRef.current
@@ -199,7 +233,53 @@ export function DealInvestorViewModal({
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [row, onClose, hasDistribution, initialSectionTab])
+  }, [row, onClose, preferDistributionsTab, initialSectionTab])
+
+  useEffect(() => {
+    if (!row || !dealIdTrimmed) {
+      setHistoryRows([])
+      setHistoryLoading(false)
+      return
+    }
+    let cancelled = false
+    setHistoryLoading(true)
+    void Promise.all([
+      fetchDistributionSetup(dealIdTrimmed),
+      fetchDealInvestors(dealIdTrimmed, { lpInvestorsOnly: false }),
+    ])
+      .then(([bundle, invPack]) => {
+        if (cancelled) return
+        const dealInvestors = invPack.investors ?? []
+        // Prefer the investment row for this person when the clicked row is LP roster.
+        const matchInvestor =
+          dealInvestors.find(
+            (r) =>
+              r.investorKind !== "lp_roster" &&
+              (normId(r.id) === normId(row.id) ||
+                (normId(r.contactId) &&
+                  normId(r.contactId) === normId(row.contactId)) ||
+                (normEmail(r.userEmail) &&
+                  normEmail(r.userEmail) === normEmail(row.userEmail))),
+          ) ?? row
+        setHistoryRows(
+          buildInvestorDistributionHistory({
+            investor: matchInvestor,
+            priorDistributions: bundle.priorDistributions ?? [],
+            dealInvestors,
+            classes: bundle.classes ?? [],
+          }),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryRows([])
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [row, dealIdTrimmed])
 
   const syncActiveTabFromScroll = useCallback(() => {
     if (Date.now() < ignoreScrollSpyUntilRef.current) return
@@ -227,7 +307,7 @@ export function DealInvestorViewModal({
     syncActiveTabFromScroll()
     root.addEventListener("scroll", syncActiveTabFromScroll, { passive: true })
     return () => root.removeEventListener("scroll", syncActiveTabFromScroll)
-  }, [row, syncActiveTabFromScroll, hasDistribution])
+  }, [row, syncActiveTabFromScroll, showDistributionsTab])
 
   const scrollToSection = useCallback((id: InvestorViewSectionTab) => {
     const root = scrollRef.current
@@ -242,14 +322,69 @@ export function DealInvestorViewModal({
   }, [])
 
   useEffect(() => {
-    if (!row || !hasDistribution) return
+    if (!row || !preferDistributionsTab) return
     const id = requestAnimationFrame(() => {
-      scrollToSection(
-        initialSectionTab ?? "distribution",
-      )
+      scrollToSection(initialSectionTab ?? "distribution")
     })
     return () => cancelAnimationFrame(id)
-  }, [row, hasDistribution, initialSectionTab, scrollToSection])
+  }, [row, preferDistributionsTab, initialSectionTab, scrollToSection])
+
+  const historyColumns: DataTableColumn<InvestorDistHistoryRow>[] = useMemo(
+    () => [
+      {
+        id: "memo",
+        header: "Memo",
+        colWidth: "8rem",
+        sortValue: (r) => r.dateSort,
+        cell: (r) =>
+          dealIdTrimmed && r.distributionId ? (
+            <Link
+              to={`/deals/${encodeURIComponent(dealIdTrimmed)}/distributions/${encodeURIComponent(r.distributionId)}`}
+              className="deals_table_name_link deal_dist_row_link"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {r.memo}
+            </Link>
+          ) : (
+            r.memo
+          ),
+      },
+      {
+        id: "type",
+        header: "Type",
+        colWidth: "8.5rem",
+        sortValue: (r) => r.type.toLowerCase(),
+        cell: (r) => r.type,
+      },
+      {
+        id: "paymentDate",
+        header: "Payment date",
+        colWidth: "7.5rem",
+        sortValue: (r) => r.dateSort,
+        cell: (r) => r.paymentDate,
+      },
+      {
+        id: "payment",
+        header: "Payment",
+        align: "right",
+        colWidth: "7.5rem",
+        thClassName: "deals_th_align_right",
+        tdClassName: "um_td_numeric deals_td_align_right",
+        sortValue: (r) => r.payment,
+        cell: (r) => <TableCompactAmountCell amount={r.payment} />,
+      },
+    ],
+    [dealIdTrimmed],
+  )
+
+  const totalDistributed = useMemo(
+    () =>
+      historyRows.reduce(
+        (sum, r) => sum + (Number.isFinite(r.payment) ? r.payment : 0),
+        0,
+      ),
+    [historyRows],
+  )
 
   if (row == null) return null
 
@@ -260,7 +395,6 @@ export function DealInvestorViewModal({
     dealAllClassNamesLine,
   )
   const investedAmount = displayInvestorCommittedAmount(investorRow)
-  const dist = distributionContext
 
   function handleEdit() {
     onEdit?.(investorRow)
@@ -282,9 +416,14 @@ export function DealInvestorViewModal({
           <div className="add_contact_modal_head_main">
             <h2
               id="deal-inv-investor-view-title"
-              className="um_modal_title add_contact_modal_title"
+              className="um_modal_title add_contact_modal_title deal_inv_view_modal_title"
             >
-              Investor details
+              <span>Investor details</span>
+              {displayOrDash(investorRow.displayName) !== "—" ? (
+                <span className="deal_inv_view_title_investor_name">
+                  {displayOrDash(investorRow.displayName)}
+                </span>
+              ) : null}
             </h2>
           </div>
           <button
@@ -359,7 +498,7 @@ export function DealInvestorViewModal({
                 <ViewReadonlyField
                   Icon={Mail}
                   label="Email address"
-                  value={displayOrDash(investorRow.userEmail)}
+                  value={displayEmail(investorRow.userEmail)}
                 />
                 <ViewReadonlyField
                   Icon={User}
@@ -382,12 +521,12 @@ export function DealInvestorViewModal({
               <div className="um_view_grid">
                 <ViewReadonlyField
                   Icon={IdCard}
-                  label="Investment profile"
+                  label="Profile name"
                   value={investmentProfileLabel(investorRow)}
                 />
                 <ViewReadonlyField
                   Icon={Shield}
-                  label="Self accredited"
+                  label="Accreditation"
                   value={displayOrDash(investorRow.selfAccredited)}
                 />
                 <ViewReadonlyField
@@ -464,7 +603,7 @@ export function DealInvestorViewModal({
                 />
                 <ViewReadonlyField
                   Icon={Percent}
-                  label="Entity Ownership %"
+                  label="Entity Ownership"
                   value={displayPctOrDash(investorRow.entityOwnershipPercent)}
                 />
                 <ViewReadonlyField
@@ -492,7 +631,7 @@ export function DealInvestorViewModal({
               </div>
             </section>
 
-            {dist ? (
+            {showDistributionsTab ? (
               <section
                 ref={(el) => {
                   sectionRefs.current.distribution = el
@@ -502,122 +641,98 @@ export function DealInvestorViewModal({
                 id="deal-inv-view-panel-distribution"
                 aria-labelledby="deal-inv-view-tab-distribution"
               >
-                <h3 className="deal_inv_view_section_label">Distribution</h3>
-                <div className="um_view_grid">
-                  <ViewReadonlyField
-                    Icon={CircleDollarSign}
-                    label="Distribution"
-                    value={displayOrDash(dist.distributionName)}
-                  />
-                  <ViewReadonlyField
-                    Icon={Calendar}
-                    label="Distribution date"
-                    value={
-                      dist.distributionDate
-                        ? formatDateDdMmmYyyy(dist.distributionDate)
-                        : "—"
-                    }
-                  />
-                  <ViewReadonlyField
-                    Icon={DollarSign}
-                    label="Cash distributed (run)"
-                    value={moneyFieldValue(
-                      (() => {
-                        const n = Number(
-                          String(dist.distributionAmount ?? "").replace(
-                            /[^0-9.-]/g,
-                            "",
-                          ),
-                        )
-                        return Number.isFinite(n) ? n : null
-                      })(),
-                    )}
-                  />
-                  <ViewReadonlyField
-                    Icon={Landmark}
-                    label="Waterfall"
-                    value={displayOrDash(dist.waterfallSource)}
-                  />
-                  <ViewReadonlyField
-                    Icon={Tag}
-                    label="Class"
-                    value={displayOrDash(dist.className)}
-                  />
-                  <ViewReadonlyField
-                    Icon={DollarSign}
-                    label="Capital"
-                    value={moneyFieldValue(dist.capital)}
-                  />
-                  <ViewReadonlyField
-                    Icon={Percent}
-                    label="% of class"
-                    value={
-                      dist.percentOfClass != null &&
-                      Number.isFinite(dist.percentOfClass)
-                        ? `${Number(dist.percentOfClass).toFixed(2)}%`
-                        : "—"
-                    }
-                  />
-                  <ViewReadonlyField
-                    Icon={DollarSign}
-                    label="Payment"
-                    value={moneyFieldValue(dist.payment)}
-                  />
-                  <ViewReadonlyField
-                    Icon={DollarSign}
-                    label="Preferred due"
-                    value={moneyFieldValue(dist.required)}
-                  />
-                  <ViewReadonlyField
-                    Icon={DollarSign}
-                    label="Unpaid"
-                    value={moneyFieldValue(dist.unpaid)}
-                  />
-                  <ViewReadonlyField
-                    Icon={Percent}
-                    label="Annual rate"
-                    value={displayRateOrDash(dist.annualRatePct)}
-                  />
-                  <ViewReadonlyField
-                    Icon={Calendar}
-                    label="Accrual days"
-                    value={
-                      dist.days != null && Number.isFinite(dist.days)
-                        ? String(dist.days)
-                        : "—"
-                    }
-                  />
-                  <ViewReadonlyField
-                    Icon={Landmark}
-                    label="ACH status"
-                    value={displayOrDash(dist.achStatus || "not sent")}
-                  />
-                  <ViewReadonlyField
-                    Icon={Calendar}
-                    label="ACH initiated"
-                    value={
-                      dist.achInitiatedAt
-                        ? formatDateDdMmmYyyy(dist.achInitiatedAt)
-                        : "—"
-                    }
-                  />
-                  <ViewReadonlyField
-                    Icon={CalendarCheck}
-                    label="ACH paid"
-                    value={
-                      dist.achPaidAt
-                        ? formatDateDdMmmYyyy(dist.achPaidAt)
-                        : "—"
-                    }
-                  />
-                  {dist.achFailureMessage ? (
+                <h3 className="deal_inv_view_section_label">Distributions</h3>
+
+                <div className="deal_dist_summary deal_inv_view_dist_summary">
+                  <div className="deal_dist_summary_item">
+                    <span className="deal_dist_summary_label">Ownership %</span>
+                    <span className="deal_dist_summary_value">
+                      {ownershipPercentLabel(investorRow)}
+                    </span>
+                  </div>
+                  <div className="deal_dist_summary_item">
+                    <span className="deal_dist_summary_label">
+                      Invested amount
+                    </span>
+                    <span className="deal_dist_summary_value deal_dist_summary_value_money">
+                      <TableCompactAmountCell amount={investedAmount} />
+                    </span>
+                  </div>
+                  <div className="deal_dist_summary_item">
+                    <span className="deal_dist_summary_label">
+                      Total distributed
+                    </span>
+                    <span className="deal_dist_summary_value deal_dist_summary_value_money">
+                      {historyLoading ? (
+                        "—"
+                      ) : (
+                        <TableCompactAmountCell amount={totalDistributed} />
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {/* This-run snapshot hidden — history table is enough for now.
+                {dist ? (
+                  <div className="um_view_grid deal_inv_view_dist_this_run">
                     <ViewReadonlyField
-                      Icon={Activity}
-                      label="ACH failure"
-                      fieldClassName="deals_deal_view_field_full"
-                      value={dist.achFailureMessage}
+                      Icon={CircleDollarSign}
+                      label="This distribution"
+                      value={displayOrDash(dist.distributionName)}
                     />
-                  ) : null}
+                    <ViewReadonlyField
+                      Icon={Calendar}
+                      label="Distribution date"
+                      value={
+                        dist.distributionDate
+                          ? formatDateDdMmmYyyy(dist.distributionDate)
+                          : "—"
+                      }
+                    />
+                    <ViewReadonlyField
+                      Icon={Tag}
+                      label="Class"
+                      value={displayOrDash(dist.className)}
+                    />
+                    <ViewReadonlyField
+                      Icon={DollarSign}
+                      label="Payment (this run)"
+                      value={moneyFieldValue(dist.payment)}
+                    />
+                    <ViewReadonlyField
+                      Icon={Landmark}
+                      label="ACH status"
+                      value={displayOrDash(dist.achStatus || "not sent")}
+                    />
+                    {dist.achFailureMessage ? (
+                      <ViewReadonlyField
+                        Icon={Activity}
+                        label="ACH failure"
+                        fieldClassName="deals_deal_view_field_full"
+                        value={dist.achFailureMessage}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+                */}
+
+                <div className="deal_inv_view_dist_history">
+                  <p className="deal_inv_view_dist_history_label">
+                    Distribution history
+                  </p>
+                  <DataTable
+                    visualVariant="members"
+                    membersTableClassName="um_table_members deal_inv_table deal_dist_table deal_inv_view_dist_table"
+                    columns={historyColumns}
+                    rows={historyLoading ? [] : historyRows}
+                    getRowKey={(r) => r.key}
+                    emptyLabel={
+                      historyLoading
+                        ? "Loading distributions…"
+                        : "No distributions for this investor on this deal yet."
+                    }
+                    initialSort={{ columnId: "memo", direction: "desc" }}
+                  />
                 </div>
               </section>
             ) : null}

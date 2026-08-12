@@ -3,11 +3,13 @@ import {
   BarChart3,
   CircleHelp,
   Download,
+  Landmark,
+  Loader2,
   // Percent,
   Search,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
   DataTable,
   type DataTableColumn,
@@ -28,6 +30,11 @@ import { ExportSelectableRowsModal } from "../../components/ExportSelectableRows
 import { BulkDeleteReasonModal } from "../../../../../common/components/bulk-delete-reason-modal/BulkDeleteReasonModal"
 import "../../../../../common/components/bulk-delete-reason-modal/bulk-delete-reason-modal.css"
 import { toast } from "../../../../../common/components/Toast"
+import {
+  fetchDealDistributionFundingStatus,
+  startDealDistributionFundingOnboarding,
+  type DealDistributionFundingStatus,
+} from "@/modules/Investing/api/stripeInvestorPaymentsApi"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 // import { DistributionFeeTab } from "./DistributionFeeTab"
 import { DistributionRowActions } from "./DistributionRowActions"
@@ -47,7 +54,7 @@ import "../../../usermanagement/user_management.css"
 import "../../deals-list.css"
 import "./distributions-tab.css"
 
-type DistributionsSubTab = "distributions" | "distribution_fee"
+type DistributionsSubTab = "distributions" | "bank_account" | "distribution_fee"
 
 type DistributionsTabProps = {
   dealId: string
@@ -67,18 +74,74 @@ function formatMoneyPlain(n: number): string {
   })
 }
 
+function fundingStatusSlug(status: string): string {
+  const raw = status.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")
+  return raw || "not-started"
+}
+
+function fundingStatusLabel(status: string): string {
+  const slug = fundingStatusSlug(status)
+  const labels: Record<string, string> = {
+    "not-sent": "Not sent",
+    "not-started": "Not set up",
+    "not-set-up": "Not set up",
+    pending: "Pending",
+    onboarding: "Onboarding",
+    processing: "Processing",
+    ready: "Ready",
+    restricted: "Restricted",
+  }
+  if (labels[slug]) return labels[slug]
+  return status
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function dealFundingStatusMeta(
+  funding: DealDistributionFundingStatus | null,
+): { label: string; tone: string } {
+  if (!funding) return { label: "Unavailable", tone: "danger" }
+  if (funding.fundingReady) return { label: "Ready", tone: "success" }
+  const slug = fundingStatusSlug(funding.status || "not-started")
+  if (slug === "not-started" || slug === "not-set-up") {
+    return { label: "Not set up", tone: "neutral" }
+  }
+  if (slug === "onboarding" || slug === "pending") {
+    return { label: fundingStatusLabel(funding.status), tone: "info" }
+  }
+  if (slug === "restricted") return { label: "Restricted", tone: "danger" }
+  return { label: fundingStatusLabel(funding.status), tone: "neutral" }
+}
+
+function formatDealBankDetails(
+  funding: DealDistributionFundingStatus | null,
+): string | null {
+  const bank = funding?.bankAccount
+  if (!bank) return null
+  const parts: string[] = []
+  if (bank.bankName) parts.push(bank.bankName)
+  if (bank.last4) parts.push(`···· ${bank.last4}`)
+  if (bank.routingNumber) parts.push(`Routing ${bank.routingNumber}`)
+  if (bank.accountHolderName) parts.push(bank.accountHolderName)
+  if (bank.currency) parts.push(bank.currency)
+  return parts.length ? parts.join(" · ") : null
+}
+
 /**
  * Deal Detail → Distributions: portal-style list (Woodland Ridge reference).
  */
 export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
   const id = dealId.trim()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const classSetupHref = `/deals/${encodeURIComponent(id)}/class-setup`
   const distributionSetupHref = `/deals/${encodeURIComponent(id)}/distribution-setup`
   const returnState = { returnTab: "distributions" as const }
 
   const [activeSubTab, setActiveSubTab] =
     useState<DistributionsSubTab>("distributions")
+  const openedFundingReturnRef = useRef(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [priorDistributions, setPriorDistributions] = useState<
@@ -86,6 +149,10 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
   >([])
   const [classes, setClasses] = useState<DistributionSetupClass[]>([])
   const [investors, setInvestors] = useState<DealInvestorRow[]>([])
+  const [dealFunding, setDealFunding] =
+    useState<DealDistributionFundingStatus | null>(null)
+  const [fundingBusy, setFundingBusy] = useState(false)
+  const fundingReturnKeyRef = useRef<string | null>(null)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -110,20 +177,23 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
     setLoading(true)
     setLoadError(null)
     try {
-      const [bundle, invPack] = await Promise.all([
+      const [bundle, invPack, funding] = await Promise.all([
         fetchDistributionSetup(id),
         fetchDealInvestors(id, { lpInvestorsOnly: false }),
+        fetchDealDistributionFundingStatus(id).catch(() => null),
       ])
       setPriorDistributions(
         sanitizePriorDistributions(bundle.priorDistributions ?? []),
       )
       setClasses(bundle.classes ?? [])
       setInvestors(invPack.investors ?? [])
+      setDealFunding(funding)
       if (bundle.dealName?.trim()) setResolvedDealName(bundle.dealName.trim())
     } catch (err) {
       setPriorDistributions([])
       setClasses([])
       setInvestors([])
+      setDealFunding(null)
       setLoadError(
         err instanceof Error ? err.message : "Could not load distributions.",
       )
@@ -135,6 +205,93 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const fundingReturn = searchParams.get("stripe_deal_funding")
+    if (!fundingReturn || !id) return
+    const returnKey = `${id}:${fundingReturn}`
+    if (fundingReturnKeyRef.current === returnKey) return
+    fundingReturnKeyRef.current = returnKey
+    if (!openedFundingReturnRef.current) {
+      openedFundingReturnRef.current = true
+      setActiveSubTab("bank_account")
+    }
+    void (async () => {
+      if (fundingReturn === "refresh") {
+        try {
+          const link = await startDealDistributionFundingOnboarding(id)
+          window.location.assign(link.url)
+          return
+        } catch (err) {
+          toast.error(
+            "Bank setup needs attention",
+            err instanceof Error ? err.message : "Please restart bank setup.",
+          )
+        }
+      } else {
+        try {
+          const status = await fetchDealDistributionFundingStatus(id)
+          setDealFunding(status)
+          if (status.fundingReady) {
+            const bankBits = [
+              status.bankAccount?.bankName?.trim() || null,
+              status.bankAccount?.last4
+                ? `···· ${status.bankAccount.last4}`
+                : null,
+            ].filter(Boolean)
+            toast.success(
+              "Deal bank account ready",
+              bankBits.length
+                ? `${bankBits.join(" ")}. ACH distributions can be sent from this account.`
+                : "ACH distributions can now be sent from this deal's bank account.",
+            )
+          } else {
+            toast.warning(
+              "Bank setup pending",
+              "Finish adding the deal bank details before ACH distributions can be sent.",
+            )
+          }
+        } catch (err) {
+          toast.error(
+            "Could not verify bank setup",
+            err instanceof Error ? err.message : "Please try again.",
+          )
+        }
+      }
+      const next = new URLSearchParams(searchParams)
+      next.delete("stripe_deal_funding")
+      setSearchParams(next, { replace: true })
+    })()
+  }, [id, searchParams, setSearchParams])
+
+  const startDealFundingSetup = useCallback(async () => {
+    if (!id || fundingBusy || !dealFunding?.canManage) return
+    setFundingBusy(true)
+    try {
+      const link = await startDealDistributionFundingOnboarding(id)
+      window.location.assign(link.url)
+    } catch (err) {
+      toast.error(
+        "Could not start bank setup",
+        err instanceof Error ? err.message : "Please try again.",
+      )
+      setFundingBusy(false)
+    }
+  }, [id, fundingBusy, dealFunding?.canManage])
+
+  const fundingStatus = useMemo(
+    () => dealFundingStatusMeta(dealFunding),
+    [dealFunding],
+  )
+  const dealBankDetailsLabel = useMemo(
+    () => formatDealBankDetails(dealFunding),
+    [dealFunding],
+  )
+  const fundingActionLabel = dealFunding?.fundingReady
+    ? "Update bank account"
+    : dealFunding?.accountId
+      ? "Continue setup"
+      : "Add bank account"
 
   const rows: CompletedDistributionRow[] = useMemo(
     () =>
@@ -530,6 +687,27 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
                 Distributions
               </span>
             </button>
+            <button
+              type="button"
+              id="deal-dist-subtab-bank"
+              role="tab"
+              aria-selected={activeSubTab === "bank_account"}
+              aria-controls="deal-dist-panel-bank"
+              className={`um_members_tab deals_tabs_tab um_segmented_tab${
+                activeSubTab === "bank_account" ? " um_members_tab_active" : ""
+              }`}
+              onClick={() => setActiveSubTab("bank_account")}
+            >
+              <Landmark
+                className="deals_tabs_icon um_segmented_tab_icon"
+                size={16}
+                strokeWidth={2}
+                aria-hidden
+              />
+              <span className="deals_tabs_label um_segmented_tab_label">
+                Bank account
+              </span>
+            </button>
             {/* <button
               type="button"
               id="deal-dist-subtab-fee"
@@ -550,11 +728,154 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
                 aria-hidden
               />
               <span className="deals_tabs_label um_segmented_tab_label">
-                Distribution Fee
+                Acquisition Fee
               </span>
             </button> */}
           </div>
         </TabsScrollStrip>
+      </div>
+
+      <div
+        id="deal-dist-panel-bank"
+        role="tabpanel"
+        aria-labelledby="deal-dist-subtab-bank"
+        hidden={activeSubTab !== "bank_account"}
+        className="deal_dist_subtab_panel"
+      >
+        {activeSubTab === "bank_account" ? (
+          <div
+            className="deal_dist_tab deal_dist_bank_tab"
+            role="region"
+            aria-label="Deal bank account"
+          >
+            <section
+              className="um_panel deal_dist_funding_panel deal_dist_funding_panel--page"
+              aria-labelledby="deal-dist-funding-title"
+            >
+              <div className="deal_dist_funding_page_header">
+                <div className="deal_dist_funding_main">
+                  <div className="deal_dist_funding_icon" aria-hidden>
+                    <Landmark size={18} strokeWidth={1.75} />
+                  </div>
+                  <div className="deal_dist_funding_body">
+                    <div className="deal_dist_funding_title_row">
+                      <h2
+                        id="deal-dist-funding-title"
+                        className="deal_dist_funding_title"
+                      >
+                        Deal bank account
+                      </h2>
+                      <span
+                        className={`deal_dist_ach_badge deal_dist_ach_badge--${fundingStatus.tone}`}
+                      >
+                        {fundingStatus.label}
+                      </span>
+                    </div>
+                    <p className="deal_dist_funding_copy">
+                      Add this deal’s bank account once. ACH distributions for
+                      every run are paid from this account to investors.
+                    </p>
+                  </div>
+                </div>
+                {dealFunding?.canManage ? (
+                  <button
+                    type="button"
+                    className={
+                      dealFunding.fundingReady
+                        ? "um_btn_secondary deal_dist_funding_action"
+                        : "um_btn_primary deal_dist_funding_action"
+                    }
+                    disabled={fundingBusy || loading}
+                    onClick={() => void startDealFundingSetup()}
+                  >
+                    {fundingBusy ? (
+                      <Loader2
+                        size={16}
+                        className="deals_create_loading_icon"
+                        aria-hidden
+                      />
+                    ) : (
+                      <Landmark size={16} aria-hidden />
+                    )}
+                    {fundingBusy ? "Opening…" : fundingActionLabel}
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="deal_dist_funding_page_body">
+                {!dealFunding ? (
+                  <p className="deal_dist_funding_hint" role="status">
+                    Couldn’t load bank status. Refresh the page and try again.
+                  </p>
+                ) : !dealFunding.canManage && !dealBankDetailsLabel ? (
+                  <p className="deal_dist_funding_hint" role="status">
+                    Only the lead sponsor or admin sponsor can add or update
+                    this deal’s bank account.
+                  </p>
+                ) : dealBankDetailsLabel ? (
+                  <dl className="deal_dist_funding_details deal_dist_funding_details--page">
+                    <div className="deal_dist_funding_detail_row">
+                      <dt>Bank</dt>
+                      <dd>
+                        {dealFunding?.bankAccount?.bankName?.trim() || "—"}
+                      </dd>
+                    </div>
+                    <div className="deal_dist_funding_detail_row">
+                      <dt>Account</dt>
+                      <dd>
+                        {dealFunding?.bankAccount?.last4
+                          ? `···· ${dealFunding.bankAccount.last4}`
+                          : "—"}
+                      </dd>
+                    </div>
+                    <div className="deal_dist_funding_detail_row">
+                      <dt>Routing</dt>
+                      <dd>
+                        {dealFunding?.bankAccount?.routingNumber?.trim() ||
+                          "—"}
+                      </dd>
+                    </div>
+                    <div className="deal_dist_funding_detail_row">
+                      <dt>Name on account</dt>
+                      <dd>
+                        {dealFunding?.bankAccount?.accountHolderName?.trim() ||
+                          "—"}
+                      </dd>
+                    </div>
+                    {dealFunding?.bankAccount?.currency ? (
+                      <div className="deal_dist_funding_detail_row">
+                        <dt>Currency</dt>
+                        <dd>
+                          {dealFunding.bankAccount.currency
+                            .trim()
+                            .toUpperCase()}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                ) : dealFunding.accountId ? (
+                  <p className="deal_dist_funding_hint" role="status">
+                    Bank details will appear here after Stripe finishes linking
+                    the account. Use Continue setup if more steps remain.
+                  </p>
+                ) : (
+                  <p className="deal_dist_funding_hint" role="status">
+                    No bank account linked yet.
+                    {dealFunding.canManage
+                      ? " Use Add bank account to connect the deal funding account in Stripe."
+                      : " Ask the lead or admin sponsor to add one."}
+                  </p>
+                )}
+                {dealFunding?.canManage && dealBankDetailsLabel ? (
+                  <p className="deal_dist_funding_hint deal_dist_funding_hint--footer">
+                    Full account numbers stay masked. Use Update bank account to
+                    change the linked account in Stripe.
+                  </p>
+                ) : null}
+              </div>
+            </section>
+          </div>
+        ) : null}
       </div>
 
       <div

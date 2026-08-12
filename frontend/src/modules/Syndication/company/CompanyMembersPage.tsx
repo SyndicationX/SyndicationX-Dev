@@ -37,6 +37,10 @@ import {
 import { ViewReadonlyField } from "../../../common/components/ViewReadonlyField"
 import { toast } from "../../../common/components/Toast"
 import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../common/utils/displayEmail"
+import {
   loadEmailTemplates,
   type EmailTemplateRow,
 } from "../contacts/emailTemplatesStorage"
@@ -901,13 +905,13 @@ export default function CompanyMembersPage() {
         colWidth: "16rem",
         sortValue: (row) => {
           const name = memberUserCellPrimaryLabel(row)
-          const e = formatValue(row.email)
+          const e = displayEmail(row.email)
           return `${name} ${e}`.toLowerCase()
         },
         tdClassName: "um_td_user",
         cell: (row) => {
           const rawEmail = String(row.email ?? "").trim()
-          const emailShown = formatValue(row.email)
+          const emailShown = displayEmail(row.email)
           const displayName = memberUserCellPrimaryLabel(row)
           const namePlaceholder =
             displayName === "—" ? " um_user_meta_username--placeholder" : ""
@@ -924,7 +928,7 @@ export default function CompanyMembersPage() {
                 >
                   {displayName}
                 </span>
-                {rawEmail.includes("@") ? (
+                {isDisplayableEmail(rawEmail) ? (
                   <a
                     href={`mailto:${encodeURIComponent(rawEmail)}`}
                     className="um_user_meta_email um_user_meta_email_link"
@@ -932,7 +936,9 @@ export default function CompanyMembersPage() {
                     {rawEmail}
                   </a>
                 ) : (
-                  <span className="um_user_meta_email">{emailShown}</span>
+                  <span className="um_user_meta_email um_status_muted">
+                    {emailShown}
+                  </span>
                 )}
               </div>
             </div>
@@ -1338,7 +1344,7 @@ export default function CompanyMembersPage() {
               <ViewReadonlyField
                 Icon={Mail}
                 label="Email"
-                value={formatValue(viewRow.email)}
+                value={displayEmail(viewRow.email)}
               />
               <ViewReadonlyField
                 Icon={User}
@@ -1698,7 +1704,7 @@ export default function CompanyMembersPage() {
               <ViewReadonlyField
                 Icon={Mail}
                 label="Email"
-                value={formatValue(editRow.email)}
+                value={displayEmail(editRow.email)}
               />
             </div>
             <form onSubmit={submitEditMember}>
@@ -1838,7 +1844,7 @@ export default function CompanyMembersPage() {
               <ViewReadonlyField
                 Icon={Mail}
                 label="Email"
-                value={formatValue(suspendRow.email)}
+                value={displayEmail(suspendRow.email)}
               />
             </div>
             <form onSubmit={submitSuspendMember}>

@@ -2,18 +2,14 @@ import {
   buildTableExportFilename,
   downloadTableExportCsv,
 } from "../../../../../../common/utils/tableExportFilename"
+import { formatDateDdMmmYyyy } from "../../../../../../common/utils/formatDateDisplay"
 import { escapeCsvCell } from "../../../utils/dealInvestorExportCsv"
 import type { PriorDistributionRecord } from "../../../distribution-setup/types/distribution-setup.types"
 import { parseMoneyDigits } from "../../../utils/offeringMoneyFormat"
 
 function formatDistributionDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
+  const formatted = formatDateDdMmmYyyy(iso)
+  return formatted === "—" ? iso : formatted
 }
 
 function sourceLabel(source: string | undefined): string {

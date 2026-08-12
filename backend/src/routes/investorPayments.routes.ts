@@ -5,9 +5,13 @@ import { Router } from "express";
 //   postInvestorInvestmentCheckoutSync,
 // } from "../controllers/payments/investorCheckout.controller.js";
 import {
+  getDealDistributionFundingOnboardingStatus,
   getDistributionPayouts,
   getInvestorConnectOnboardingStatus,
+  getInvestorSharedConnectBanks,
+  postDealDistributionFundingOnboarding,
   postDistributionPayouts,
+  postInvestorConnectAttachBank,
   postInvestorConnectOnboarding,
 } from "../controllers/payments/investorDistributionPayout.controller.js";
 
@@ -22,6 +26,10 @@ const router = Router();
 //   "/investing/investment-payments/sync-checkout",
 //   postInvestorInvestmentCheckoutSync,
 // );
+router.get(
+  "/investing/stripe-connect/banks",
+  getInvestorSharedConnectBanks,
+);
 router.post(
   "/investing/profiles/:profileId/stripe-connect/onboarding",
   postInvestorConnectOnboarding,
@@ -29,6 +37,18 @@ router.post(
 router.get(
   "/investing/profiles/:profileId/stripe-connect/status",
   getInvestorConnectOnboardingStatus,
+);
+router.post(
+  "/investing/profiles/:profileId/stripe-connect/attach",
+  postInvestorConnectAttachBank,
+);
+router.post(
+  "/deals/:dealId/distribution-funding/onboarding",
+  postDealDistributionFundingOnboarding,
+);
+router.get(
+  "/deals/:dealId/distribution-funding/status",
+  getDealDistributionFundingOnboardingStatus,
 );
 router.get(
   "/deals/:dealId/distributions/:distributionId/payouts",

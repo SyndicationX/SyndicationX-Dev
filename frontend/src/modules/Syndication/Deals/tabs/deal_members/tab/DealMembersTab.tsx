@@ -590,9 +590,9 @@ export function DealMembersTab({
               label="Commitment from investors they added"
               content={
                 <p className="deal_inv_class_tooltip_p">
-                  Total subscription commitment (plus additional contribution lines)
-                  recorded on this deal for other investors this Lead Sponsor, Admin
-                  sponsor, or Co-sponsor added. Their own commitment is not included.
+                  Sum of the Investors tab Committed amounts on this deal for
+                  investors whose Sponsor name is this Lead Sponsor, Admin
+                  sponsor, or Co-sponsor. Their own commitment is not included.
                   Shown in USD.
                 </p>
               }
@@ -628,18 +628,18 @@ export function DealMembersTab({
         tdClassName: "deal_inv_td_ellipsis",
         cell: (r) => dealInvestorStatusDisplayLabel(r),
       },
-      {
-        id: "added_by",
-        header: "Added by",
-        sortValue: (r) =>
-          String(r.addedByDisplayName ?? "").toLowerCase(),
-        tdClassName: "deal_inv_td_ellipsis",
-        cell: (r) => {
-          if (r.id === ADD_MEMBER_DRAFT_ROW_ID) return "—"
-          const s = String(r.addedByDisplayName ?? "").trim()
-          return s && s !== "—" ? s : "—"
-        },
-      },
+      // {
+      //   id: "added_by",
+      //   header: "Added by",
+      //   sortValue: (r) =>
+      //     String(r.addedByDisplayName ?? "").toLowerCase(),
+      //   tdClassName: "deal_inv_td_ellipsis",
+      //   cell: (r) => {
+      //     if (r.id === ADD_MEMBER_DRAFT_ROW_ID) return "—"
+      //     const s = String(r.addedByDisplayName ?? "").trim()
+      //     return s && s !== "—" ? s : "—"
+      //   },
+      // },
       {
         id: "mailStatus",
         header: "Email status",
@@ -995,13 +995,6 @@ export function DealMembersTab({
               getRowClassName={(r) =>
                 investorRowShowsDraftBadge(r) ? "deal_inv_row_draft" : undefined
               }
-              onBodyRowClick={(r) => {
-                if (r.id === ADD_MEMBER_DRAFT_ROW_ID) {
-                  onEditMember(r)
-                  return
-                }
-                onViewMember(r)
-              }}
               emptyLabel="No deal members yet. Add a member or record an investment on the Investors tab."
               pagination={{
                 page,

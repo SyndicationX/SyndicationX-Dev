@@ -6,7 +6,7 @@ type DistributionFeeTabProps = {
 }
 
 /**
- * Deal Detail → Distributions → Distribution Fee.
+ * Deal Detail → Distributions → Acquisition Fee.
  * Fee configuration lives on Distribution Setup.
  */
 export function DistributionFeeTab({
@@ -22,16 +22,16 @@ export function DistributionFeeTab({
     <div
       className="deal_dist_fee_tab"
       role="region"
-      aria-label="Distribution fee"
+      aria-label="Acquisition fee"
     >
       <div className="um_panel um_members_tab_panel deals_list_table_panel deals_list_card_surface deal_inv_table_panel deal_dist_panel">
         <div
           className="um_toolbar um_toolbar_export_then_search deal_dist_toolbar"
           role="toolbar"
-          aria-label="Distribution fee"
+          aria-label="Acquisition fee"
         >
           <div className="deal_dist_toolbar_copy">
-            <h2 className="deal_dist_heading">Distribution Fee</h2>
+            <h2 className="deal_dist_heading">Acquisition Fee</h2>
             <p className="deal_dist_lead">
               {dealName?.trim()
                 ? `Configure fee name, cash, and class split for ${dealName.trim()} in Distribution Setup.`
@@ -56,7 +56,7 @@ export function DistributionFeeTab({
             Fee settings are on Distribution Setup
           </p>
           <p className="deal_dist_fee_empty_copy">
-            Use the Distribution Fee tab there to name the fee, set cash /
+            Use the Acquisition Fee tab there to name the fee, set cash /
             period / dates, and allocate percentages across investor classes
             (must total 100%).
           </p>

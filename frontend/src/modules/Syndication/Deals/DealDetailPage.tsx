@@ -79,6 +79,7 @@ import {
   viewerCanUploadDealEsignTemplates,
   viewerCanApproveDealFund,
   visibleDealDetailTabIds,
+  isUsableInvestorEmail,
   type ViewerDealMemberRole,
 } from "./utils/dealDetailTabVisibility"
 import { toast } from "../../../common/components/Toast"
@@ -503,7 +504,7 @@ export function DealDetailPage() {
   const handleSendInvestorEsign = useCallback(
     async (row: DealInvestorRow, fileIds: string[]) => {
       const email = row.userEmail?.trim()
-      if (!email || email === "—") {
+      if (!isUsableInvestorEmail(email)) {
         toast.error("No email address", "This row has no email to send to.")
         return
       }
@@ -514,7 +515,7 @@ export function DealDetailPage() {
       if (!dealId) return
       const name = row.displayName?.trim()
       const result = await postDealInvestorSendEsign(dealId, {
-        to_email: email,
+        to_email: email!,
         member_display_name: name && name !== "—" ? name : undefined,
         roster_id: row.id?.trim(),
         file_ids: fileIds,
@@ -537,14 +538,14 @@ export function DealDetailPage() {
   const handleSendInvestorInvitationMail = useCallback(
     async (row: DealInvestorRow) => {
       const email = row.userEmail?.trim()
-      if (!email || email === "—") {
+      if (!isUsableInvestorEmail(email)) {
         toast.error("No email address", "This row has no email to send to.")
         return
       }
       if (!dealId) return
       const name = row.displayName?.trim()
       const result = await postDealMemberInvitationEmail(dealId, {
-        to_email: email,
+        to_email: email!,
         member_display_name: name && name !== "—" ? name : undefined,
         invitation_source: "investor",
         contact_member_id: row.contactId?.trim() || undefined,
@@ -571,14 +572,14 @@ export function DealDetailPage() {
   const handleSendMemberInvitationMail = useCallback(
     async (row: DealInvestorRow) => {
       const email = row.userEmail?.trim()
-      if (!email || email === "—") {
+      if (!isUsableInvestorEmail(email)) {
         toast.error("No email address", "This row has no email to send to.")
         return
       }
       if (!dealId) return
       const name = row.displayName?.trim()
       const result = await postDealMemberInvitationEmail(dealId, {
-        to_email: email,
+        to_email: email!,
         member_display_name: name && name !== "—" ? name : undefined,
         invitation_source: "deal_member",
         deal_member_role: dealRowRoleLabelForInvitationEmail(row),

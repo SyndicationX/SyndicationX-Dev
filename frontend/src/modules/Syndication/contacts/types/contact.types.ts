@@ -2,16 +2,22 @@ export type ContactStatus = "active" | "suspended"
 
 export type ContactSource = "local" | "ghl"
 
-/** Per-contact offering visibility on the investor portal. */
-export type ContactShowOfferings = "show" | "506c" | "hide"
+/**
+ * Per-contact offering visibility on the investor portal.
+ * `null` / unset → treat as all offerings when filtering deals.
+ */
+export type ContactOfferingVisibility =
+  | "ALL_OFFERINGS"
+  | "HIDE_OFFERINGS"
+  | "506C_ONLY"
 
-export const CONTACT_SHOW_OFFERINGS_OPTIONS: ReadonlyArray<{
-  value: ContactShowOfferings
+export const CONTACT_OFFERING_VISIBILITY_OPTIONS: ReadonlyArray<{
+  value: ContactOfferingVisibility
   label: string
 }> = [
-  { value: "show", label: "Show offerings" },
-  { value: "506c", label: "Show only 506c offerings" },
-  { value: "hide", label: "Hide offerings" },
+  { value: "ALL_OFFERINGS", label: "Show Offerings" },
+  { value: "HIDE_OFFERINGS", label: "Hide Offerings" },
+  { value: "506C_ONLY", label: "506(c) offerings only" },
 ]
 
 export interface ContactRow {
@@ -26,9 +32,17 @@ export interface ContactRow {
   owners: string[]
   /** `active` (default) or `suspended` */
   status?: ContactStatus
-  /** Offering visibility for this contact (default `show`) */
-  showOfferings?: ContactShowOfferings
-  /** Text from the most recent edit (required when saving edits) */
+  /**
+   * Offering visibility for this contact.
+   * `null` when unset (optional field).
+   * Stored in DB as `contact.show_offerings_visibility`.
+   */
+  showOfferingsVisibility?: ContactOfferingVisibility | null
+  /** Accreditation status; `null` when unset */
+  accreditationStatus?: string | null
+  /** Relationship start date (YYYY-MM-DD); `null` when unset */
+  knownSince?: string | null
+  /** Reason from the most recent edit (required when saving edits) */
   lastEditReason?: string
   /** Resolved display name for the user who created the row (from API) */
   createdByDisplayName?: string

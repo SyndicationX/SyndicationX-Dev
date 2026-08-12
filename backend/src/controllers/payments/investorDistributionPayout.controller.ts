@@ -7,10 +7,16 @@ import {
 import { getAddDealFormById } from "../../services/deal/dealForm.service.js";
 import { requestedOrganizationIdFromRequest } from "../../services/org/orgResolution.service.js";
 import {
+  createDealDistributionFundingOnboardingLink,
+  getDealDistributionFundingStatus,
+} from "../../services/payments/dealDistributionFunding.service.js";
+import {
+  attachInvestorConnectBankToProfile,
   createInvestorConnectOnboardingLink,
   executeDistributionPayouts,
   getInvestorConnectStatus,
   listDistributionPayouts,
+  listInvestorSharedConnectBanks,
 } from "../../services/payments/investorDistributionPayout.service.js";
 
 function param(v: string | string[] | undefined): string {
@@ -51,9 +57,14 @@ export async function postInvestorConnectOnboarding(
     res.status(401).json({ message: "Authorization required" });
     return;
   }
+  const forceNew =
+    req.body?.forceNew === true ||
+    req.body?.forceNew === "true" ||
+    req.body?.forceNew === 1;
   const result = await createInvestorConnectOnboardingLink({
     profileId: param(req.params.profileId),
     investorUserId: user.id,
+    forceNew,
   });
   if (!result.ok) {
     res.status(result.status).json({ message: result.message });
@@ -75,6 +86,101 @@ export async function getInvestorConnectOnboardingStatus(
   const result = await getInvestorConnectStatus({
     profileId: param(req.params.profileId),
     investorUserId: user.id,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+  res.status(200).json(result);
+}
+
+/** GET /investing/stripe-connect/banks */
+export async function getInvestorSharedConnectBanks(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const result = await listInvestorSharedConnectBanks({
+    investorUserId: user.id,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+  res.status(200).json({ banks: result.banks });
+}
+
+/** POST /investing/profiles/:profileId/stripe-connect/attach */
+export async function postInvestorConnectAttachBank(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const accountId = String(req.body?.accountId ?? "").trim();
+  if (!accountId) {
+    res.status(400).json({ message: "accountId is required." });
+    return;
+  }
+  const result = await attachInvestorConnectBankToProfile({
+    profileId: param(req.params.profileId),
+    investorUserId: user.id,
+    accountId,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+  res.status(200).json(result);
+}
+
+/** POST /deals/:dealId/distribution-funding/onboarding */
+export async function postDealDistributionFundingOnboarding(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const dealId = param(req.params.dealId);
+  const access = await requireSyndicationDealAccess(req, dealId);
+  if (!access.ok) {
+    res.status(access.status).json({ message: access.message });
+    return;
+  }
+  const user = await getValidJwtUser(req);
+  const result = await createDealDistributionFundingOnboardingLink({
+    dealId,
+    userId: access.userId,
+    userRole: user?.userRole,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+  res.status(200).json(result);
+}
+
+/** GET /deals/:dealId/distribution-funding/status */
+export async function getDealDistributionFundingOnboardingStatus(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const dealId = param(req.params.dealId);
+  const access = await requireSyndicationDealAccess(req, dealId);
+  if (!access.ok) {
+    res.status(access.status).json({ message: access.message });
+    return;
+  }
+  const user = await getValidJwtUser(req);
+  const result = await getDealDistributionFundingStatus({
+    dealId,
+    userId: access.userId,
+    userRole: user?.userRole,
   });
   if (!result.ok) {
     res.status(result.status).json({ message: result.message });

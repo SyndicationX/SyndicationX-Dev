@@ -1,5 +1,10 @@
 import { FilePenLine } from "lucide-react"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
+import {
+  EMAIL_UNAVAILABLE_LABEL,
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../../../common/utils/displayEmail"
 
 function investorInitials(r: DealInvestorRow): string {
   const name = String(r.displayName ?? "").trim()
@@ -25,11 +30,19 @@ export function DealInvestorIdentityCell({
   const initials = investorInitials(row)
   const displayName = String(row.displayName ?? "").trim() || "—"
   const email = String(row.userEmail ?? "").trim()
-  const line2 = email || String(row.entitySubtitle ?? "").trim() || "—"
+  const emailUsable = isDisplayableEmail(email)
+  const entitySubtitle = String(row.entitySubtitle ?? "").trim()
+  const line2 = emailUsable
+    ? email
+    : email || !entitySubtitle
+      ? displayEmail(email)
+      : entitySubtitle
+  const line2IsMuted =
+    line2 === "—" || line2 === EMAIL_UNAVAILABLE_LABEL
   const line2Title =
-    email && row.entitySubtitle?.trim()
-      ? `${email} · ${row.entitySubtitle.trim()}`
-      : line2 !== "—"
+    emailUsable && entitySubtitle
+      ? `${email} · ${entitySubtitle}`
+      : !line2IsMuted
         ? line2
         : undefined
 
@@ -78,7 +91,7 @@ export function DealInvestorIdentityCell({
         </div>
         <span
           className={`deal_inv_identity_line2 deal_inv_identity_ellipsis${
-            line2 === "—" ? " um_status_muted" : ""
+            line2IsMuted ? " um_status_muted" : ""
           }`}
           title={line2Title}
         >

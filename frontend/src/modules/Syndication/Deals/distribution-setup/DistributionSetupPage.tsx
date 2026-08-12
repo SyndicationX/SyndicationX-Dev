@@ -573,7 +573,7 @@ export function DistributionSetupPage() {
     if (!dealId || !bundle || saving) return false
     const feeCheck = validateDistributionFee({ fee: distributionFee })
     if (!feeCheck.ok) {
-      toast.error("Distribution fee", feeCheck.message)
+      toast.error("Acquisition fee", feeCheck.message)
       setMainTab("fee")
       return false
     }
@@ -908,6 +908,8 @@ export function DistributionSetupPage() {
         priorDistributions: bundle.priorDistributions,
         distributionFee,
         excludePriorId: editingDistributionId || undefined,
+        // Same name may be reused across Distributions runs.
+        ignorePriorNames: true,
       })
       if (dup) {
         toast.error("Duplicate name", dup)
@@ -1015,7 +1017,7 @@ export function DistributionSetupPage() {
       requireComplete: true,
     })
     if (!feeCheck.ok) {
-      toast.error("Distribution fee", feeCheck.message)
+      toast.error("Acquisition fee", feeCheck.message)
       return
     }
     const amount = parseMoneyDigits(distributionFee.cashAvailable)
@@ -1188,7 +1190,7 @@ export function DistributionSetupPage() {
         setDistributionFee(feeToPersist)
       }
       toast.success(
-        "Distribution fee completed",
+        "Acquisition fee completed",
         "It appears on the Distributions tab with Source “GP Payment” and Type set to the selected type.",
       )
     } catch (err) {
@@ -1286,7 +1288,7 @@ export function DistributionSetupPage() {
                     aria-hidden
                   />
                   <span className="deals_tabs_label um_segmented_tab_label">
-                    Distribution Fee
+                    Acquisition Fee
                   </span>
                 </button>
                 <button

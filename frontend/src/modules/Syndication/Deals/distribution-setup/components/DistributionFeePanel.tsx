@@ -55,7 +55,7 @@ function classTypeLabel(classType: string): string {
 }
 
 /**
- * Distribution Setup → Distribution Fee tab.
+ * Distribution Setup → Acquisition Fee tab.
  * Fee name + cash window + user-defined class split (must total 100%).
  */
 export function DistributionFeePanel({
@@ -126,9 +126,9 @@ export function DistributionFeePanel({
   }
 
   return (
-    <div className="ds_fee_panel" role="region" aria-label="Distribution fee">
+    <div className="ds_fee_panel" role="region" aria-label="Acquisition fee">
       <div className="ds_sim_head">
-        <h2>Distribution Fee</h2>
+        <h2>Acquisition Fee</h2>
         <p className="ds_table_subtitle">
           Name the fee and allocate available cash across investor classes. The
           split is yours to set — the system does not assume a GP-only fee.
@@ -139,7 +139,7 @@ export function DistributionFeePanel({
         <div className="ds_sim_row ds_sim_row_primary">
           <label className="ds_field ds_field_name">
             <span>
-              Distribution Fee Name <span className="ds_req" aria-hidden>*</span>
+              Acquisition Fee Name <span className="ds_req" aria-hidden>*</span>
             </span>
             <input
               type="text"
@@ -148,7 +148,7 @@ export function DistributionFeePanel({
               onChange={(e) => patch({ name: e.target.value })}
               aria-required
               aria-invalid={fee.name.trim() ? undefined : true}
-              aria-label="Distribution fee name"
+              aria-label="Acquisition fee name"
             />
           </label>
           <label className="ds_field ds_field_type">
@@ -161,7 +161,7 @@ export function DistributionFeePanel({
               options={typeOptions}
               onChange={commitType}
               placeholder="Type or select a fee type"
-              ariaLabel="Distribution fee type"
+              ariaLabel="Acquisition fee type"
               invalid={!fee.type.trim()}
             />
           </label>
@@ -352,7 +352,7 @@ export function DistributionFeePanel({
                 : "Enter fee name, type, cash > $0, and class split totaling 100% to complete"
             }
           >
-            {completing ? "Completing…" : "Complete distribution fee"}
+            {completing ? "Completing…" : "Complete acquisition fee"}
           </button>
         </div>
       ) : null}

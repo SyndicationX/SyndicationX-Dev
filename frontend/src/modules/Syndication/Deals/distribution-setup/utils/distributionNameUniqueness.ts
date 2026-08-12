@@ -18,7 +18,7 @@ export type DistributionNameSource =
   | "prior"
 
 /**
- * Names already used across Distribution Fee, Operating, and Capital event
+ * Names already used across Acquisition Fee, Operating, and Capital event
  * (completed priors + saved fee). `excludePriorId` skips the run being edited.
  */
 export function collectTakenDistributionNames(params: {
@@ -27,40 +27,47 @@ export function collectTakenDistributionNames(params: {
   excludePriorId?: string
   /** Skip completed fee-source runs (for fee-config save / fee complete). */
   ignoreFeeSourcePriors?: boolean
+  /**
+   * When true, do not treat other distribution runs as taken — duplicate
+   * names are allowed across Distributions (Operating / Capital / priors).
+   */
+  ignorePriorNames?: boolean
 }): Map<string, DistributionNameSource> {
   const taken = new Map<string, DistributionNameSource>()
   const exclude = String(params.excludePriorId ?? "")
     .trim()
     .toLowerCase()
 
-  for (const p of params.priorDistributions ?? []) {
-    if (
-      exclude &&
-      String(p.id ?? "")
+  if (!params.ignorePriorNames) {
+    for (const p of params.priorDistributions ?? []) {
+      if (
+        exclude &&
+        String(p.id ?? "")
+          .trim()
+          .toLowerCase() === exclude
+      )
+        continue
+      const src = String(p.source ?? "")
         .trim()
-        .toLowerCase() === exclude
-    )
-      continue
-    const src = String(p.source ?? "")
-      .trim()
-      .toLowerCase()
-    // Fee-config validation ignores completed fee runs (same name is expected).
-    if (
-      params.ignoreFeeSourcePriors &&
-      (src === "fee" || src === "distribution_fee")
-    )
-      continue
-    const key = normalizeDistributionNameKey(p.name ?? "")
-    if (!key || taken.has(key)) continue
-    const source: DistributionNameSource =
-      src === "capital" || src === "capital_event"
-        ? "capital"
-        : src === "fee" || src === "distribution_fee"
-          ? "fee"
-          : src === "operating"
-            ? "operating"
-            : "prior"
-    taken.set(key, source)
+        .toLowerCase()
+      // Fee-config validation ignores completed fee runs (same name is expected).
+      if (
+        params.ignoreFeeSourcePriors &&
+        (src === "fee" || src === "distribution_fee")
+      )
+        continue
+      const key = normalizeDistributionNameKey(p.name ?? "")
+      if (!key || taken.has(key)) continue
+      const source: DistributionNameSource =
+        src === "capital" || src === "capital_event"
+          ? "capital"
+          : src === "fee" || src === "distribution_fee"
+            ? "fee"
+            : src === "operating"
+              ? "operating"
+              : "prior"
+      taken.set(key, source)
+    }
   }
 
   const feeKey = normalizeDistributionNameKey(
@@ -92,6 +99,11 @@ export function findDuplicateDistributionName(params: {
   excludePriorId?: string
   /** When validating the fee itself, do not treat fee.name as taken. */
   ignoreFeeName?: boolean
+  /**
+   * When true, other distribution runs may share this name — only the
+   * Acquisition Fee name (and `extraNames`) can still collide.
+   */
+  ignorePriorNames?: boolean
   /** Extra draft names (e.g. Operating / Capital distribution name field). */
   extraNames?: Array<{ name: string; source: DistributionNameSource }>
 }): string | null {
@@ -107,6 +119,7 @@ export function findDuplicateDistributionName(params: {
     distributionFee: feeForTaken,
     excludePriorId: params.excludePriorId,
     ignoreFeeSourcePriors: params.ignoreFeeName === true,
+    ignorePriorNames: params.ignorePriorNames === true,
   })
 
   for (const extra of params.extraNames ?? []) {

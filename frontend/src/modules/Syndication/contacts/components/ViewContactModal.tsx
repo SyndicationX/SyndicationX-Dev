@@ -18,6 +18,7 @@ import {
 import { useEffect } from "react"
 import { ViewReadonlyField } from "../../../../common/components/ViewReadonlyField"
 import { formatUsPhoneStoredForUi } from "../../../../common/phone/usPhoneNumber"
+import { displayEmail } from "../../../../common/utils/displayEmail"
 import "../../Deals/tabs/investors/add-investment-modal.css"
 import "../../usermanagement/user_management.css"
 import "../contacts.css"
@@ -107,7 +108,7 @@ export function ViewContactModal({
               label="Name"
               value={displayName}
             />
-            <ViewReadonlyField Icon={Mail} label="Email" value={contact.email || "—"} />
+            <ViewReadonlyField Icon={Mail} label="Email" value={displayEmail(contact.email)} />
             <ViewReadonlyField
               Icon={Phone}
               label="Phone"

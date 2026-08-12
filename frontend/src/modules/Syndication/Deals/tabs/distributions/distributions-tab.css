@@ -26,6 +26,273 @@
   width: 100%;
 }
 
+/* Deal bank account — dedicated Bank account sub-tab (lead/admin sponsor) */
+.deal_dist_tab .deal_dist_funding_panel.um_panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--portal-border, #c6c6cd);
+  border-radius: calc(var(--portal-card-radius, 4px) + 2px);
+  background: var(--portal-surface, #fff);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.deal_dist_funding_panel--page .deal_dist_funding_page_header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 1.25rem;
+  flex-wrap: wrap;
+  padding: 1.15rem 1.25rem 1rem;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--portal-border, #c6c6cd) 85%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--portal-chrome-bg, #f4f4f5) 55%,
+    var(--portal-surface, #fff) 45%
+  );
+}
+
+.deal_dist_funding_panel--page .deal_dist_funding_page_body {
+  padding: 1.15rem 1.25rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.deal_dist_bank_tab {
+  max-width: 44rem;
+}
+
+.deal_dist_funding_main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  min-width: 0;
+  flex: 1 1 18rem;
+}
+
+.deal_dist_funding_icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 10px;
+  color: var(--portal-text, #1b1b1d);
+  background: color-mix(
+    in srgb,
+    var(--portal-chrome-bg, #f4f4f5) 92%,
+    var(--portal-accent, #2563eb) 8%
+  );
+  border: 1px solid color-mix(in srgb, var(--portal-border, #c6c6cd) 80%, transparent);
+}
+
+.deal_dist_funding_body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.deal_dist_funding_title_row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+}
+
+.deal_dist_funding_title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--portal-text, #1b1b1d);
+  line-height: 1.3;
+}
+
+.deal_dist_funding_copy {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--portal-text-muted, #64748b);
+  max-width: 36rem;
+}
+
+.deal_dist_funding_hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--portal-text-muted, #64748b);
+}
+
+.deal_dist_funding_details {
+  display: grid;
+  gap: 0.28rem 1rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+}
+
+.deal_dist_funding_details--page {
+  margin: 0;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--portal-border, #c6c6cd) 90%, transparent);
+  border-radius: var(--portal-card-radius, 4px);
+  overflow: hidden;
+  background: var(--portal-surface, #fff);
+}
+
+.deal_dist_funding_detail_row {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  margin: 0;
+}
+
+.deal_dist_funding_details--page .deal_dist_funding_detail_row {
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: 0.75rem 1rem;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid
+    color-mix(in srgb, var(--portal-border, #c6c6cd) 70%, transparent);
+}
+
+.deal_dist_funding_details--page .deal_dist_funding_detail_row:first-child {
+  border-top: none;
+}
+
+.deal_dist_funding_detail_row dt {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--portal-text-muted, #64748b);
+}
+
+.deal_dist_funding_details--page .deal_dist_funding_detail_row dt {
+  font-size: 0.8125rem;
+  align-self: center;
+}
+
+.deal_dist_funding_detail_row dd {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--portal-text, #1b1b1d);
+  overflow-wrap: anywhere;
+}
+
+.deal_dist_funding_details--page .deal_dist_funding_detail_row dd {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.deal_dist_funding_hint--footer {
+  margin-top: 0.15rem;
+}
+
+.deal_dist_funding_action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.deal_dist_ach_badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.2em 0.55em;
+  border-radius: var(--ui-button-border-radius, 4px);
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.deal_dist_ach_badge--neutral {
+  color: #6b7280;
+  background: color-mix(in srgb, #9ca3af 12%, transparent);
+  border-color: color-mix(in srgb, #9ca3af 30%, transparent);
+}
+
+.deal_dist_ach_badge--info {
+  color: #1d4ed8;
+  background: color-mix(in srgb, #3b82f6 14%, transparent);
+  border-color: color-mix(in srgb, #3b82f6 32%, transparent);
+}
+
+.deal_dist_ach_badge--success {
+  color: #047857;
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  border-color: color-mix(in srgb, #10b981 35%, transparent);
+}
+
+.deal_dist_ach_badge--danger {
+  color: #b91c1c;
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  border-color: color-mix(in srgb, #ef4444 35%, transparent);
+}
+
+@media (max-width: 640px) {
+  .deal_dist_funding_panel--page .deal_dist_funding_page_header {
+    align-items: stretch;
+  }
+
+  .deal_dist_funding_action {
+    width: 100%;
+  }
+
+  .deal_dist_funding_details--page .deal_dist_funding_detail_row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+}
+
+:root[data-theme="dark"] .deal_dist_tab .deal_dist_funding_panel.um_panel {
+  background: var(--portal-surface, #111);
+  border-color: var(--portal-border, rgb(255 255 255 / 12%));
+}
+
+:root[data-theme="dark"]
+  .deal_dist_funding_panel--page
+  .deal_dist_funding_page_header {
+  background: color-mix(
+    in srgb,
+    var(--portal-chrome-bg, #1c1c1e) 70%,
+    var(--portal-surface, #111) 30%
+  );
+  border-bottom-color: var(--portal-border, rgb(255 255 255 / 12%));
+}
+
+:root[data-theme="dark"] .deal_dist_funding_details--page {
+  border-color: var(--portal-border, rgb(255 255 255 / 12%));
+  background: var(--portal-surface, #111);
+}
+
+:root[data-theme="dark"]
+  .deal_dist_funding_details--page
+  .deal_dist_funding_detail_row {
+  border-top-color: var(--portal-border, rgb(255 255 255 / 10%));
+}
+
+:root[data-theme="dark"] .deal_dist_funding_icon {
+  background: color-mix(in srgb, var(--portal-chrome-bg, #1c1c1e) 85%, #3b82f6 15%);
+}
+
 .deal_dist_panel {
   display: flex;
   flex-direction: column;
@@ -269,9 +536,8 @@
 }
 
 /*
- * Distributions list: horizontal scroll like Investors / details.
- * Column min-widths must be real floors — `min-width: 0` + ellipsis lets the
- * table shrink to the panel, so scrollWidth never exceeds clientWidth.
+ * Distributions list: fill the panel width. Column min-widths stay as floors so
+ * narrow viewports still scroll horizontally when needed.
  */
 .deal_dist_panel.deal_inv_table_panel .um_table_wrap.data_table_shell,
 .deal_dist_panel .um_table_wrap.data_table_shell {
@@ -307,9 +573,8 @@
   .um_table.deal_dist_portal_table,
 .deal_dist_panel .um_table.deal_dist_table.deal_dist_portal_table {
   table-layout: auto !important;
-  width: max-content !important;
-  /* Sum of column floors below — forces overflow on typical deal panels */
-  min-width: 78rem !important;
+  width: 100% !important;
+  min-width: 100% !important;
   max-width: none !important;
 }
 
@@ -333,7 +598,7 @@
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_name,
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_name {
-  width: 12rem;
+  width: auto;
   min-width: 12rem !important;
 }
 
@@ -363,7 +628,7 @@
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_period,
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_period {
-  width: 12rem;
+  width: auto;
   min-width: 12rem !important;
 }
 
@@ -420,7 +685,7 @@
   white-space: nowrap;
 }
 
-/* Alignment (portal list uses max-content + column floors above — do not force 100% fixed) */
+/* Alignment (non-portal list keeps fixed layout) */
 .deal_dist_panel .um_table.deal_dist_table:not(.deal_dist_portal_table) {
   table-layout: fixed;
   width: 100%;

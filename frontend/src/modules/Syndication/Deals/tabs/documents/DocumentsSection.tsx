@@ -61,7 +61,8 @@ import {
 } from "../../utils/offeringPreviewDocumentAudience"
 import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
-import { DocumentSharedWithPicker,
+import {
+  DocumentSharedWithPicker,
   sharedAudienceSearchBlob,
   toggleIdInList,
 } from "./DocumentSharedWithPicker"
@@ -96,10 +97,40 @@ import {
   sectionSharedWithDisplay,
   writeOfferingPreviewSections,
   parseOfferingPreviewSectionsJson,
+  nestedDocumentHasSharedAudience,
   type NestedPreviewDocument,
   type OfferingPreviewSection,
   type SectionSharedWithScope,
 } from "../../utils/offeringPreviewDocSections"
+
+/** After Shared With changes: no audience → Hidden; first audience → LP portal. */
+function patchDocAfterAudienceChange(
+  doc: NestedPreviewDocument,
+): NestedPreviewDocument {
+  const hasAudience = nestedDocumentHasSharedAudience(doc)
+  if (!hasAudience) {
+    return doc.sharedWithScope === "not_visible"
+      ? doc
+      : { ...doc, sharedWithScope: "not_visible" }
+  }
+  if (doc.sharedWithScope === "not_visible" || doc.sharedWithScope == null) {
+    return { ...doc, sharedWithScope: "lp_investor" }
+  }
+  return doc
+}
+
+/** Visibility change: cannot leave Hidden without Shared With recipients. */
+function patchDocAfterVisibilityChange(
+  doc: NestedPreviewDocument,
+): NestedPreviewDocument {
+  if (
+    !nestedDocumentHasSharedAudience(doc) &&
+    doc.sharedWithScope !== "not_visible"
+  ) {
+    return { ...doc, sharedWithScope: "not_visible" }
+  }
+  return doc
+}
 import {
   applyOfferingInvestorPreviewJsonFromServer,
   persistOfferingInvestorPreviewToServer,
@@ -551,14 +582,20 @@ export function DocumentsSection({
       setPreviewHydrated(false)
       setSections([])
       lastPersistedSectionsSnapshotRef.current = ""
+      setExpandedSections({})
+      setCheckedDocsBySection({})
       return
     }
     applyOfferingInvestorPreviewJsonFromServer(id, offeringInvestorPreviewJson)
     setSectionsIfChanged(resolveWorkspaceSections())
     setPreviewHydrated(isOfferingPreviewHydrated(id))
+  }, [dealIdTrim, offeringInvestorPreviewJson])
+
+  /** Only collapse sections when switching deals — not after Shared With / visibility sync. */
+  useEffect(() => {
     setExpandedSections({})
     setCheckedDocsBySection({})
-  }, [dealIdTrim, offeringInvestorPreviewJson])
+  }, [dealIdTrim])
 
   useEffect(() => {
     const id = dealIdTrim
@@ -1356,10 +1393,10 @@ export function DocumentsSection({
             nestedDocuments: s.nestedDocuments.map((n) =>
               n.id !== pending.docId
                 ? n
-                : {
+                : patchDocAfterVisibilityChange({
                     ...n,
                     sharedWithScope: pending.nextScope,
-                  },
+                  }),
             ),
           },
     )
@@ -2052,13 +2089,12 @@ export function DocumentsSection({
                                   label="Shared With"
                                   hint={
                                     <p className="deals_table_header_tooltip_p">
-                                      Pick deal classes, <strong>Sponsor user investors</strong>{" "}
-                                      (all LPs that sponsor added), individual investors, or{" "}
-                                      <strong>All Investors</strong>.
-                                      Selected audiences only see the file in the LP portal and
-                                      shared link when signed in. Leave everything unchecked for all
-                                      viewers allowed by the section&apos;s visibility. Use the email
-                                      icon to email those investors.
+                                      Documents stay <strong>Hidden by default</strong> until
+                                      you pick deal classes, <strong>Sponsor user investors</strong>,
+                                      individual investors, or <strong>All Investors</strong>.
+                                      Selected audiences then see the file in the LP portal
+                                      (and offering link when Visibility is set to Offering link).
+                                      Use the email icon to notify those investors.
                                     </p>
                                   }
                                 />
@@ -2069,15 +2105,14 @@ export function DocumentsSection({
                                   label="Visibility"
                                   hint={
                                     <p className="deals_table_header_tooltip_p">
-                                      <strong>Not visible to anyone</strong>: sponsor
+                                      <strong>Hidden by default</strong>: sponsor
                                       workspace only — hidden from the offering link,
-                                      preview, and LP portal. <strong>Offering
+                                      preview, and LP portal until Shared With recipients
+                                      are chosen. <strong>Offering
                                       link</strong>: file appears on Preview offering and
                                       the no-login shared investor link (and for signed-in
-                                      LPs). <strong>LP portal only</strong>: signed-in LPs
-                                      only — not on the public offering link or preview.
-                                      Use Shared With to further limit which investors see
-                                      the file.
+                                      LPs who are Shared With). <strong>LP portal only</strong>: signed-in LPs
+                                      in Shared With only — not on the public offering link or preview.
                                     </p>
                                   }
                                 />
@@ -2217,7 +2252,11 @@ export function DocumentsSection({
                                     {d.dateAdded}
                                   </td>
                                   {!isEsignSection ? (
-                                  <td className="deal_docs_ui_td deal_docs_ui_td_shared_entities">
+                                  <td
+                                    className="deal_docs_ui_td deal_docs_ui_td_shared_entities"
+                                    onClick={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                  >
                                     <DocumentSharedWithPicker
                                       dealId={dealIdTrim}
                                       idPrefix={`${section.id}-${d.id}`}
@@ -2237,17 +2276,17 @@ export function DocumentsSection({
                                               : {
                                                   ...s,
                                                   nestedDocuments: s.nestedDocuments.map(
-                                                    (n) =>
-                                                      n.id !== d.id
-                                                        ? n
-                                                        : {
-                                                            ...n,
-                                                            sharedDealClassIds: toggleIdInList(
-                                                              n.sharedDealClassIds,
-                                                              classId,
-                                                              checked,
-                                                            ),
-                                                          },
+                                                    (n) => {
+                                                      if (n.id !== d.id) return n
+                                                      return patchDocAfterAudienceChange({
+                                                        ...n,
+                                                        sharedDealClassIds: toggleIdInList(
+                                                          n.sharedDealClassIds,
+                                                          classId,
+                                                          checked,
+                                                        ),
+                                                      })
+                                                    },
                                                   ),
                                                 },
                                           ),
@@ -2261,18 +2300,18 @@ export function DocumentsSection({
                                               : {
                                                   ...s,
                                                   nestedDocuments: s.nestedDocuments.map(
-                                                    (n) =>
-                                                      n.id !== d.id
-                                                        ? n
-                                                        : {
-                                                            ...n,
-                                                            sharedWithAllInvestors: false,
-                                                            sharedInvestorIds: toggleIdInList(
-                                                              n.sharedInvestorIds,
-                                                              investorRowId,
-                                                              checked,
-                                                            ),
-                                                          },
+                                                    (n) => {
+                                                      if (n.id !== d.id) return n
+                                                      return patchDocAfterAudienceChange({
+                                                        ...n,
+                                                        sharedWithAllInvestors: false,
+                                                        sharedInvestorIds: toggleIdInList(
+                                                          n.sharedInvestorIds,
+                                                          investorRowId,
+                                                          checked,
+                                                        ),
+                                                      })
+                                                    },
                                                   ),
                                                 },
                                           ),
@@ -2286,19 +2325,19 @@ export function DocumentsSection({
                                               : {
                                                   ...s,
                                                   nestedDocuments: s.nestedDocuments.map(
-                                                    (n) =>
-                                                      n.id !== d.id
-                                                        ? n
-                                                        : {
-                                                            ...n,
-                                                            sharedWithAllInvestors: checked,
-                                                            sharedInvestorIds: checked
-                                                              ? []
-                                                              : n.sharedInvestorIds,
-                                                            sharedSponsorUserIds: checked
-                                                              ? []
-                                                              : (n.sharedSponsorUserIds ?? []),
-                                                          },
+                                                    (n) => {
+                                                      if (n.id !== d.id) return n
+                                                      return patchDocAfterAudienceChange({
+                                                        ...n,
+                                                        sharedWithAllInvestors: checked,
+                                                        sharedInvestorIds: checked
+                                                          ? []
+                                                          : n.sharedInvestorIds,
+                                                        sharedSponsorUserIds: checked
+                                                          ? []
+                                                          : (n.sharedSponsorUserIds ?? []),
+                                                      })
+                                                    },
                                                   ),
                                                 },
                                           ),
@@ -2312,18 +2351,18 @@ export function DocumentsSection({
                                               : {
                                                   ...s,
                                                   nestedDocuments: s.nestedDocuments.map(
-                                                    (n) =>
-                                                      n.id !== d.id
-                                                        ? n
-                                                        : {
-                                                            ...n,
-                                                            sharedWithAllInvestors: false,
-                                                            sharedSponsorUserIds: toggleIdInList(
-                                                              n.sharedSponsorUserIds ?? [],
-                                                              sponsorUserId,
-                                                              checked,
-                                                            ),
-                                                          },
+                                                    (n) => {
+                                                      if (n.id !== d.id) return n
+                                                      return patchDocAfterAudienceChange({
+                                                        ...n,
+                                                        sharedWithAllInvestors: false,
+                                                        sharedSponsorUserIds: toggleIdInList(
+                                                          n.sharedSponsorUserIds ?? [],
+                                                          sponsorUserId,
+                                                          checked,
+                                                        ),
+                                                      })
+                                                    },
                                                   ),
                                                 },
                                           ),
@@ -2355,7 +2394,7 @@ export function DocumentsSection({
                                           }}
                                         >
                                           <option value="not_visible">
-                                            Not visible to anyone
+                                            Hidden by default
                                           </option>
                                           <option value="offering_page">
                                             Offering link
@@ -2837,10 +2876,10 @@ export function DocumentsSection({
                   </p>
                   <p className="deal_offering_muted">
                     {visibilityChangePending.nextScope === "not_visible" ?
-                      "This file will be hidden from the public offering link, preview, and LP portal. Only the sponsor workspace will show it."
+                      "This file will be Hidden by default — hidden from the public offering link, preview, and LP portal until you choose Shared With recipients. Only the sponsor workspace will show it."
                     : visibilityChangePending.nextScope === "lp_investor" ?
-                      "Signed-in investors will see this file on the Offering Documents tab in the LP portal. It will not appear on the public offering link."
-                    : "This file will appear on the public offering link, preview, and the Offering Documents tab for signed-in investors."}
+                      "Signed-in investors in Shared With will see this file on the Offering Documents tab in the LP portal. It will not appear on the public offering link."
+                    : "This file will appear on the public offering link, preview, and the Offering Documents tab for signed-in investors in Shared With."}
                   </p>
                 </div>
                 <div className="um_modal_actions add_contact_modal_actions">

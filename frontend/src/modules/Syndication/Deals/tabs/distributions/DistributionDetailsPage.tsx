@@ -8,10 +8,17 @@ import {
 import { TableCompactAmountCell } from "../../../../../common/components/card-compact-amount/CardCompactAmount"
 import { toast } from "../../../../../common/components/Toast"
 import { setAppDocumentTitle } from "../../../../../common/utils/appDocumentTitle"
+import { formatDateDdMmmYyyy } from "../../../../../common/utils/formatDateDisplay"
+import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../../../common/utils/displayEmail"
 import { fetchDealInvestorClasses, fetchDealInvestors } from "../../api/dealsApi"
 import {
   executeDistributionAchPayouts,
+  fetchDealDistributionFundingStatus,
   fetchDistributionPayouts,
+  type DealDistributionFundingStatus,
   type DistributionPayout,
 } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
 import {
@@ -35,7 +42,7 @@ import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
   formatCurrencyUsdTypeInput,
-  formatPercentTypeInput,
+  formatPercentTypeInputBare,
   moneyAmountOnBlur,
   parseMoneyDigits,
   sanitizePercentTypingInput,
@@ -61,8 +68,12 @@ import {
   DealInvestorViewModal,
   type DealInvestorViewDistributionContext,
 } from "../investors/DealInvestorViewModal"
+import {
+  investorProfileLabel,
+} from "../../constants/investor-profile"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import { isPlatformAdmin } from "../../../../../common/auth/roleUtils"
+import { AchPayoutConfirmModal } from "./AchPayoutConfirmModal"
 import "../../../usermanagement/user_management.css"
 import "../../deals-list.css"
 import "../../deal-investors-tab.css"
@@ -72,13 +83,7 @@ import "./distributions-tab.css"
 import "./distribution-details.css"
 
 function formatDistributionDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`)
-  if (Number.isNaN(d.getTime())) return iso || "—"
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
+  return formatDateDdMmmYyyy(iso)
 }
 
 function sourceLabel(source: string | undefined): string {
@@ -142,7 +147,20 @@ function blurFormatPercentClamped(raw: string): string {
   if (!t) return ""
   const n = parseFloat(t)
   if (!Number.isFinite(n)) return ""
-  return `${Math.max(0, Math.min(100, n)).toFixed(2)}%`
+  return Math.max(0, Math.min(100, n)).toFixed(2)
+}
+
+/** My Profiles display name, then entity subtitle, then profile type label. */
+function distributionInvestorProfileLabel(
+  row: DealInvestorRow | null | undefined,
+): string {
+  if (!row) return "—"
+  const named = String(row.userInvestorProfileName ?? "").trim()
+  if (named) return named
+  const subtitle = String(row.entitySubtitle ?? "").trim()
+  if (subtitle && subtitle !== "—") return subtitle
+  const fromId = investorProfileLabel(String(row.profileId ?? "").trim())
+  return fromId !== "—" ? fromId : "—"
 }
 
 function linesFromStoredPayments(
@@ -152,6 +170,8 @@ function linesFromStoredPayments(
   const stored = distribution.investorPayments
   if (!stored?.length) return null
 
+  // Percent of class (distributions) always mirrors the Investment section
+  // (`percentOfClassDistributions`). Payment stays as stored on the run.
   const pctByInvestorId = new Map<string, number>()
   const pctByContact = new Map<string, number>()
   for (const inv of investors) {
@@ -174,11 +194,13 @@ function linesFromStoredPayments(
     const contactId = String(p.contactId ?? "")
       .trim()
       .toLowerCase()
-    const fromDb =
+    const fromInvestment =
       (investorId ? pctByInvestorId.get(investorId) : undefined) ??
       (contactId ? pctByContact.get(contactId) : undefined)
-    const fromStored =
-      Number(String(p.percentOfClass).replace(/[^0-9.-]/g, "")) || 0
+    const rawPct = String(p.percentOfClass ?? "").trim()
+    const fromStored = rawPct
+      ? Number(rawPct.replace(/[^0-9.-]/g, ""))
+      : NaN
     return {
       investorId: p.investorId,
       ...(p.contactId?.trim() ? { contactId: p.contactId.trim() } : {}),
@@ -189,7 +211,7 @@ function linesFromStoredPayments(
       classId: p.classId,
       className: p.className || "—",
       capital: parseMoneyDigits(p.capital) || 0,
-      percentOfClass: fromDb ?? fromStored,
+      percentOfClass: fromInvestment ?? (Number.isFinite(fromStored) ? fromStored : 0),
       payment: parseMoneyDigits(p.payment) || 0,
     }
   })
@@ -222,7 +244,14 @@ export function DistributionDetailsPage() {
   )
   const [savingInvestorId, setSavingInvestorId] = useState<string | null>(null)
   const [payouts, setPayouts] = useState<DistributionPayout[]>([])
+  const [dealFunding, setDealFunding] =
+    useState<DealDistributionFundingStatus | null>(null)
   const [executingPayouts, setExecutingPayouts] = useState(false)
+  const [achConfirm, setAchConfirm] = useState<
+    | { kind: "bulk" }
+    | { kind: "investor"; row: InvestorPreferredLine; amountLabel: string }
+    | null
+  >(null)
   const [sendingInvestorId, setSendingInvestorId] = useState<string | null>(
     null,
   )
@@ -241,11 +270,12 @@ export function DistributionDetailsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [setup, invPack, payoutRows, classes] = await Promise.all([
+      const [setup, invPack, payoutRows, classes, funding] = await Promise.all([
         fetchDistributionSetup(dealId),
         fetchDealInvestors(dealId),
         fetchDistributionPayouts(dealId, distributionId).catch(() => []),
         fetchDealInvestorClasses(dealId).catch(() => []),
+        fetchDealDistributionFundingStatus(dealId).catch(() => null),
       ])
       const found =
         (setup.priorDistributions ?? []).find((p) => p.id === distributionId) ??
@@ -255,6 +285,7 @@ export function DistributionDetailsPage() {
       setInvestorClasses(classes)
       setDistribution(found)
       setPayouts(payoutRows)
+      setDealFunding(funding)
       if (!found) {
         setError("That distribution was not found for this deal.")
       }
@@ -264,6 +295,7 @@ export function DistributionDetailsPage() {
       setInvestorClasses([])
       setDistribution(null)
       setPayouts([])
+      setDealFunding(null)
       setError(
         err instanceof Error ? err.message : "Could not load distribution.",
       )
@@ -311,6 +343,9 @@ export function DistributionDetailsPage() {
       const payout = payouts.find(
         (p) => p.investmentId === viewDistributionLine.investorId,
       )
+      const investmentPct = viewInvestorRow
+        ? parseStoredClassPercent(viewInvestorRow.percentOfClassDistributions)
+        : null
       return {
         distributionName:
           String(distribution.name ?? "").trim() ||
@@ -320,7 +355,8 @@ export function DistributionDetailsPage() {
         waterfallSource: sourceLabel(distribution.source),
         className: viewDistributionLine.className,
         capital: viewDistributionLine.capital,
-        percentOfClass: viewDistributionLine.percentOfClass,
+        percentOfClass:
+          investmentPct ?? viewDistributionLine.percentOfClass,
         payment: viewDistributionLine.payment,
         required: viewDistributionLine.required,
         unpaid: viewDistributionLine.unpaid,
@@ -331,7 +367,7 @@ export function DistributionDetailsPage() {
         achPaidAt: payout?.paidAt ?? null,
         achFailureMessage: payout?.failureMessage ?? null,
       }
-    }, [distribution, viewDistributionLine, payouts])
+    }, [distribution, viewDistributionLine, viewInvestorRow, payouts])
 
   useEffect(() => {
     void load()
@@ -411,8 +447,7 @@ export function DistributionDetailsPage() {
     const cash = parseMoneyDigits(distribution.amount)
     const window = resolvePeriodWindow(distribution)
 
-    // Prefer saved investor payments (including manual edits) so Payment stays editable/persistent.
-    // Overlay DB percentOfClassDistributions when present so % matches the LP roster.
+    // Prefer saved investor payments; % of class comes from Investment section.
     const fromStored = linesFromStoredPayments(distribution, investors)
     if (fromStored?.length) {
       return fromStored.map((line) => ({
@@ -456,7 +491,7 @@ export function DistributionDetailsPage() {
     const payNext: Record<string, string> = {}
     for (const row of computedLines) {
       pctNext[row.investorId] = Number.isFinite(row.percentOfClass)
-        ? `${(Math.round(row.percentOfClass * 100) / 100).toFixed(2)}%`
+        ? `${(Math.round(row.percentOfClass * 100) / 100).toFixed(2)}`
         : ""
       payNext[row.investorId] = Number.isFinite(row.payment)
         ? moneyAmountOnBlur(String(Math.round(row.payment * 100) / 100))
@@ -519,13 +554,23 @@ export function DistributionDetailsPage() {
     [payouts],
   )
 
+  const requestSendAchPayouts = useCallback(() => {
+    if (!dealId || !distributionId || executingPayouts || sendingInvestorId)
+      return
+    if (lines.length === 0 || allLinesPaymentTotal <= 0) return
+    setAchConfirm({ kind: "bulk" })
+  }, [
+    dealId,
+    distributionId,
+    executingPayouts,
+    sendingInvestorId,
+    lines.length,
+    allLinesPaymentTotal,
+  ])
+
   const sendAchPayouts = useCallback(async () => {
     if (!dealId || !distributionId || executingPayouts || sendingInvestorId)
       return
-    const confirmed = window.confirm(
-      `Send ${lines.length} ACH distribution payout${lines.length === 1 ? "" : "s"} totaling $${allLinesPaymentTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}? Stripe transfers cannot be edited after they are submitted.`,
-    )
-    if (!confirmed) return
     setExecutingPayouts(true)
     try {
       const result = await executeDistributionAchPayouts(
@@ -534,15 +579,16 @@ export function DistributionDetailsPage() {
       )
       const refreshed = await fetchDistributionPayouts(dealId, distributionId)
       setPayouts(refreshed)
+      setAchConfirm(null)
       if (result.failed > 0 || result.skipped > 0) {
         toast.error(
           "Some payouts need attention",
-          `${result.initiated} submitted, ${result.skipped} skipped, ${result.failed} failed. Skipped investors must complete Stripe Connect bank setup.`,
+          `${result.initiated} submitted, ${result.skipped} skipped, ${result.failed} failed. Skipped investors must add a bank on Investing → Profiles → Bank accounts, then assign it on My Profiles.`,
         )
       } else {
         toast.success(
           "ACH payouts submitted",
-          `${result.initiated} payout${result.initiated === 1 ? "" : "s"} sent to Stripe for processing.`,
+          `${result.initiated} payout${result.initiated === 1 ? "" : "s"} submitted for processing.`,
         )
       }
     } catch (err) {
@@ -553,14 +599,7 @@ export function DistributionDetailsPage() {
     } finally {
       setExecutingPayouts(false)
     }
-  }, [
-    dealId,
-    distributionId,
-    executingPayouts,
-    sendingInvestorId,
-    lines.length,
-    allLinesPaymentTotal,
-  ])
+  }, [dealId, distributionId, executingPayouts, sendingInvestorId])
 
   const canSendInvestorPayout = useCallback(
     (investorId: string, payment: number) => {
@@ -592,8 +631,8 @@ export function DistributionDetailsPage() {
     [payoutByInvestmentId],
   )
 
-  const sendInvestorAchPayout = useCallback(
-    async (row: InvestorPreferredLine) => {
+  const requestSendInvestorAchPayout = useCallback(
+    (row: InvestorPreferredLine) => {
       if (
         !dealId ||
         !distributionId ||
@@ -607,10 +646,28 @@ export function DistributionDetailsPage() {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       })
-      const confirmed = window.confirm(
-        `Send ACH payment of $${amountLabel} to ${row.investorName}? Stripe transfers cannot be edited after they are submitted.`,
-      )
-      if (!confirmed) return
+      setAchConfirm({ kind: "investor", row, amountLabel })
+    },
+    [
+      dealId,
+      distributionId,
+      executingPayouts,
+      sendingInvestorId,
+      canSendInvestorPayout,
+    ],
+  )
+
+  const sendInvestorAchPayout = useCallback(
+    async (row: InvestorPreferredLine, amountLabel: string) => {
+      if (
+        !dealId ||
+        !distributionId ||
+        executingPayouts ||
+        sendingInvestorId ||
+        !canSendInvestorPayout(row.investorId, row.payment)
+      ) {
+        return
+      }
       setSendingInvestorId(row.investorId)
       try {
         const result = await executeDistributionAchPayouts(
@@ -620,18 +677,19 @@ export function DistributionDetailsPage() {
         )
         const refreshed = await fetchDistributionPayouts(dealId, distributionId)
         setPayouts(refreshed)
+        setAchConfirm(null)
         const lineResult = result.results[0]
         if (result.failed > 0 || lineResult?.status === "failed") {
           toast.error(
             "Payment failed",
             lineResult?.message ||
-              "Stripe could not send this investor payout.",
+              "Could not send this investor payout.",
           )
         } else if (result.skipped > 0 || lineResult?.status === "skipped") {
           toast.error(
             "Cannot send payment",
             lineResult?.message ||
-              "This investor must complete Stripe Connect bank setup first.",
+              "This investor must add a bank account first (Investing → Profiles → Bank accounts).",
           )
         } else {
           toast.success(
@@ -699,10 +757,15 @@ export function DistributionDetailsPage() {
           ) ?? null
         setDistribution(found)
         const updated = localLines.find((l) => l.investorId === investorId)
-        if (updated) syncInvestorPct(investorId, updated.percentOfClass)
+        if (updated && payload.percentOfClass != null)
+          syncInvestorPct(investorId, updated.percentOfClass)
         toast.success(
-          "Payment updated",
-          "Saved payment and % of class. Change is logged.",
+          "Saved",
+          payload.payment != null && payload.percentOfClass == null
+            ? "Payment saved as entered. Change is logged."
+            : payload.percentOfClass != null && payload.payment == null
+              ? "Percent of class saved as entered. Change is logged."
+              : "Payment and percent of class saved. Change is logged.",
         )
       } catch (err) {
         toast.error(
@@ -730,7 +793,6 @@ export function DistributionDetailsPage() {
         lines,
         investorId,
         nextPercent: nextPct,
-        classPaymentByClassId,
       }).map((l) => {
         const prev = lines.find((x) => x.investorId === l.investorId)
         return {
@@ -742,22 +804,13 @@ export function DistributionDetailsPage() {
         }
       })
       setLines(nextLines)
-      const updated = nextLines.find((l) => l.investorId === investorId)
       setPctDrafts((prev) => ({
         ...prev,
-        [investorId]: `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`,
+        [investorId]: `${(Math.round(nextPct * 100) / 100).toFixed(2)}`,
       }))
-      if (updated) {
-        setPaymentDrafts((prev) => ({
-          ...prev,
-          [investorId]: moneyAmountOnBlur(
-            String(Math.round(updated.payment * 100) / 100),
-          ),
-        }))
-      }
       await persistShare(investorId, { percentOfClass: nextPct }, nextLines)
     },
-    [lines, classPaymentByClassId, persistShare],
+    [lines, persistShare],
   )
 
   const savePayment = useCallback(
@@ -771,7 +824,6 @@ export function DistributionDetailsPage() {
         lines,
         investorId,
         nextPayment: amount,
-        classPaymentByClassId,
       }).map((l) => {
         const prev = lines.find((x) => x.investorId === l.investorId)
         return {
@@ -783,22 +835,15 @@ export function DistributionDetailsPage() {
         }
       })
       setLines(nextLines)
-      const updated = nextLines.find((l) => l.investorId === investorId)
-      if (updated) {
-        setPctDrafts((prev) => ({
-          ...prev,
-          [investorId]: `${(Math.round(updated.percentOfClass * 100) / 100).toFixed(2)}%`,
-        }))
-        setPaymentDrafts((prev) => ({
-          ...prev,
-          [investorId]: moneyAmountOnBlur(
-            String(Math.round(updated.payment * 100) / 100),
-          ),
-        }))
-      }
+      setPaymentDrafts((prev) => ({
+        ...prev,
+        [investorId]: moneyAmountOnBlur(
+          String(Math.round(amount * 100) / 100),
+        ),
+      }))
       await persistShare(investorId, { payment: amount }, nextLines)
     },
-    [lines, classPaymentByClassId, persistShare],
+    [lines, persistShare],
   )
 
   const showFormulaTips = isPlatformAdmin()
@@ -825,7 +870,7 @@ export function DistributionDetailsPage() {
             )
           }
           const name = (row.investorName ?? "").trim() || "—"
-          const email = (row.userEmail ?? "").trim()
+          const emailShown = displayEmail(row.userEmail)
           return (
             <div className="deal_dist_details_investor_cell">
               <button
@@ -840,12 +885,49 @@ export function DistributionDetailsPage() {
               >
                 {name}
               </button>
-              {email ? (
-                <span className="deal_dist_details_investor_email" title={email}>
-                  {email}
-                </span>
-              ) : null}
+              <span
+                className={`deal_dist_details_investor_email${
+                  isDisplayableEmail(row.userEmail) ? "" : " um_status_muted"
+                }`}
+                title={emailShown}
+              >
+                {emailShown}
+              </span>
             </div>
+          )
+        },
+      },
+      {
+        id: "profile",
+        header: (
+          <span className="deal_dist_th_stack_label">
+            <span>Profile</span>
+            <span>name</span>
+          </span>
+        ),
+        colWidth: "7.5rem",
+        thClassName: "deal_dist_th_profile",
+        tdClassName: "deal_dist_td_profile",
+        sortValue: (row) => {
+          const dealRow =
+            investors.find((inv) => inv.id === row.investorId) ?? null
+          return distributionInvestorProfileLabel(dealRow).toLowerCase()
+        },
+        cell: (row) => {
+          const dealRow =
+            investors.find((inv) => inv.id === row.investorId) ?? null
+          const label = distributionInvestorProfileLabel(dealRow)
+          return (
+            <span
+              className={
+                label === "—"
+                  ? "um_status_muted deal_dist_profile_name"
+                  : "deal_dist_profile_name"
+              }
+              title={label !== "—" ? label : undefined}
+            >
+              {label}
+            </span>
           )
         },
       },
@@ -882,20 +964,24 @@ export function DistributionDetailsPage() {
         id: "pct",
         header: showFormulaTips ? (
           <span className="deal_dist_th_with_help deal_dist_th_pct_head">
-            <span>% of class</span>
+            <span className="deal_dist_pct_head_label">
+              <span>Percent of</span>
+              <span>class</span>
+              <span>(distributions)</span>
+            </span>
             <FormTooltip
-              label="How % of class is calculated"
+              label="How percent of class is calculated"
               content={
                 <div className="deal_dist_formula_tooltip">
                   <p>
-                    Share of this investor’s capital within their class:
+                    Initial share of this investor’s capital within their class:
                   </p>
                   <p className="deal_dist_formula_tooltip_eq">
                     (Investor capital ÷ Class capital) × 100
                   </p>
                   <p>
-                    Example: $50,000 ÷ $817,000 × 100 ≈ 6.12%. Payment uses this
-                    share of the class distribution.
+                    Example: $50,000 ÷ $817,000 × 100 ≈ 6.12. Manual edits are
+                    saved as entered and do not auto-change Payment.
                   </p>
                 </div>
               }
@@ -906,70 +992,84 @@ export function DistributionDetailsPage() {
             />
           </span>
         ) : (
-          "% of class"
+          <span className="deal_dist_pct_head_label">
+            <span>Percent of</span>
+            <span>class</span>
+            <span>(distributions)</span>
+          </span>
         ),
         align: "right",
-        colWidth: "8.5rem",
+        colWidth: "7.25rem",
         thClassName: "deals_th_align_right deal_dist_th_pct",
         tdClassName: "um_td_numeric deals_td_align_right deal_dist_td_pct",
         sortValue: (row) => row.percentOfClass,
         cell: (row) => (
-          <input
-            type="text"
-            className="deal_dist_details_pct_input"
-            inputMode="decimal"
-            aria-label={`Percent of class for ${row.investorName}`}
-            value={pctDrafts[row.investorId] ?? ""}
-            disabled={
-              savingInvestorId === row.investorId ||
-              isInvestorPayoutLocked(row.investorId)
-            }
-            placeholder="0.00%"
-            onChange={(e) => {
-              const next = formatPercentTypeInput(e.target.value, 100)
-              setPctDrafts((prev) => ({
-                ...prev,
-                [row.investorId]: next,
-              }))
-            }}
-            onBlur={(e) => {
-              const formatted = blurFormatPercentClamped(e.target.value)
-              setPctDrafts((prev) => ({
-                ...prev,
-                [row.investorId]: formatted,
-              }))
-              const prevN = row.percentOfClass
-              const nextN = formatted
-                ? parseFloat(sanitizePercentTypingInput(formatted))
-                : NaN
-              if (
-                !Number.isFinite(nextN) ||
-                Math.abs(nextN - prevN) < 0.0005
-              ) {
-                return
+          <div className="deal_dist_pct_input_wrap">
+            <input
+              type="text"
+              className="deal_dist_details_pct_input"
+              inputMode="decimal"
+              aria-label={`Percent of class (distributions) for ${row.investorName}`}
+              value={pctDrafts[row.investorId] ?? ""}
+              disabled={
+                savingInvestorId === row.investorId ||
+                isInvestorPayoutLocked(row.investorId)
               }
-              void savePercent(row.investorId, formatted)
-            }}
-          />
+              placeholder="0.00"
+              onChange={(e) => {
+                const next = formatPercentTypeInputBare(e.target.value, 100)
+                setPctDrafts((prev) => ({
+                  ...prev,
+                  [row.investorId]: next,
+                }))
+              }}
+              onBlur={(e) => {
+                const formatted = blurFormatPercentClamped(e.target.value)
+                setPctDrafts((prev) => ({
+                  ...prev,
+                  [row.investorId]: formatted,
+                }))
+                const prevN = row.percentOfClass
+                const nextN = formatted
+                  ? parseFloat(sanitizePercentTypingInput(formatted))
+                  : NaN
+                if (
+                  !Number.isFinite(nextN) ||
+                  Math.abs(nextN - prevN) < 0.0005
+                ) {
+                  return
+                }
+                void savePercent(row.investorId, formatted)
+              }}
+            />
+            <span className="deal_dist_pct_suffix" aria-hidden>
+              %
+            </span>
+          </div>
         ),
       },
       {
         id: "payment",
         header: showFormulaTips ? (
-          <span className="deal_dist_th_with_help deal_dist_th_pct_head">
+          <span className="deal_dist_th_with_help deal_dist_th_payment_head">
             <span>Payment</span>
             <FormTooltip
               label="How payment is calculated"
               content={
                 <div className="deal_dist_formula_tooltip">
                   <p>
-                    Investor payment is preferred due, scaled by available cash:
+                    Initial investor payment is preferred due, scaled by available
+                    cash:
                   </p>
                   <p className="deal_dist_formula_tooltip_eq">
                     Required = Capital × Rate × Days ÷ 365
                   </p>
                   <p className="deal_dist_formula_tooltip_eq">
                     Payment = Required × (Cash available ÷ Σ Required)
+                  </p>
+                  <p>
+                    Manual edits are saved as entered and do not auto-change
+                    percent of class.
                   </p>
                 </div>
               }
@@ -1025,8 +1125,16 @@ export function DistributionDetailsPage() {
       },
       {
         id: "payoutStatus",
-        header: "ACH status",
+        header: (
+          <span className="deal_dist_th_stack_label">
+            <span>ACH</span>
+            <span>status</span>
+          </span>
+        ),
+        align: "center",
         colWidth: "9rem",
+        thClassName: "deal_dist_th_ach deals_th_align_center",
+        tdClassName: "deal_dist_td_ach",
         sortValue: (row) =>
           payoutByInvestmentId.get(row.investorId)?.status ?? "not sent",
         cell: (row) => {
@@ -1047,9 +1155,9 @@ export function DistributionDetailsPage() {
       {
         id: "actions",
         header: "Actions",
-        align: "right",
+        align: "center",
         colWidth: "8.5rem",
-        thClassName: "um_th_actions deal_dist_th_actions",
+        thClassName: "um_th_actions deal_dist_th_actions deals_th_align_center",
         tdClassName: "um_td_actions deal_dist_td_actions",
         cell: (row) => {
           const sending = sendingInvestorId === row.investorId
@@ -1068,19 +1176,22 @@ export function DistributionDetailsPage() {
               className="um_btn_secondary deal_dist_details_send_btn"
               disabled={
                 !canSend ||
+                !dealFunding?.fundingReady ||
                 executingPayouts ||
                 sendingInvestorId != null ||
                 savingInvestorId === row.investorId
               }
               title={
-                canSend
-                  ? `Send ACH payment to ${row.investorName}`
-                  : payout
-                    ? `ACH already ${payout.status}`
-                    : "Payment amount must be greater than zero"
+                !dealFunding?.fundingReady
+                  ? "Lead sponsor must add this deal's bank account on Distributions → Bank account first"
+                  : canSend
+                    ? `Send ACH payment to ${row.investorName}`
+                    : payout
+                      ? `ACH already ${payout.status}`
+                      : "Payment amount must be greater than zero"
               }
               aria-label={`${label} for ${row.investorName}`}
-              onClick={() => void sendInvestorAchPayout(row)}
+              onClick={() => requestSendInvestorAchPayout(row)}
             >
               {sending ? (
                 <Loader2
@@ -1104,10 +1215,11 @@ export function DistributionDetailsPage() {
       savingInvestorId,
       sendingInvestorId,
       executingPayouts,
+      dealFunding?.fundingReady,
       payoutByInvestmentId,
       canSendInvestorPayout,
       isInvestorPayoutLocked,
-      sendInvestorAchPayout,
+      requestSendInvestorAchPayout,
       savePercent,
       savePayment,
       investors,
@@ -1162,9 +1274,15 @@ export function DistributionDetailsPage() {
               sendingInvestorId != null ||
               !distribution ||
               lines.length === 0 ||
-              allLinesPaymentTotal <= 0
+              allLinesPaymentTotal <= 0 ||
+              !dealFunding?.fundingReady
             }
-            onClick={() => void sendAchPayouts()}
+            title={
+              dealFunding?.fundingReady
+                ? undefined
+                : "Lead sponsor must add this deal's bank account on Distributions → Bank account first"
+            }
+            onClick={requestSendAchPayouts}
           >
             {executingPayouts ? (
               <Loader2
@@ -1284,10 +1402,72 @@ export function DistributionDetailsPage() {
           setViewInvestorRow(null)
           setViewDistributionLine(null)
         }}
+        dealId={dealId}
         investorClasses={investorClasses}
         dealAllClassNamesLine={dealAllClassNamesLine}
         distributionContext={viewDistributionContext}
         initialSectionTab="distribution"
+      />
+
+      <AchPayoutConfirmModal
+        open={achConfirm != null}
+        title={
+          achConfirm?.kind === "investor"
+            ? "Send ACH payment?"
+            : "Send ACH distributions?"
+        }
+        summaryRows={
+          achConfirm?.kind === "investor"
+            ? [
+                {
+                  label: "Investor",
+                  value: achConfirm.row.investorName.trim() || "—",
+                },
+                {
+                  label: "Amount",
+                  value: `$${achConfirm.amountLabel}`,
+                },
+              ]
+            : [
+                {
+                  label: "Investors",
+                  value: String(lines.length),
+                },
+                {
+                  label: "Total amount",
+                  value: `$${allLinesPaymentTotal.toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`,
+                },
+              ]
+        }
+        message={
+          achConfirm?.kind === "investor"
+            ? `Send an ACH payment of $${achConfirm.amountLabel} to ${achConfirm.row.investorName.trim() || "this investor"} from the deal bank account.`
+            : `Send ${lines.length} ACH distribution payout${lines.length === 1 ? "" : "s"} totaling $${allLinesPaymentTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} from the deal bank account.`
+        }
+        confirmLabel={
+          achConfirm?.kind === "investor"
+            ? "Send ACH payment"
+            : "Send ACH distributions"
+        }
+        busy={executingPayouts || sendingInvestorId != null}
+        onCancel={() => {
+          if (executingPayouts || sendingInvestorId != null) return
+          setAchConfirm(null)
+        }}
+        onConfirm={() => {
+          if (!achConfirm) return
+          if (achConfirm.kind === "investor") {
+            void sendInvestorAchPayout(
+              achConfirm.row,
+              achConfirm.amountLabel,
+            )
+            return
+          }
+          void sendAchPayouts()
+        }}
       />
     </div>
   )

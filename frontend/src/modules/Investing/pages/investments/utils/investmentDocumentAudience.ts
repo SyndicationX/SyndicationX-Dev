@@ -85,8 +85,8 @@ function fundingDocumentRequiresEsignCompletion(
 }
 
 /**
- * Workspace document is visible when Shared With targets this investor (or everyone),
- * or when no audience is selected (all LPs allowed by the section).
+ * Workspace document is visible only when Shared With targets this investor
+ * (or All Investors / class / sponsor audience). Empty Shared With = hidden.
  */
 export function nestedDocumentVisibleToInvestor(
   doc: NestedPreviewDocument,
@@ -100,7 +100,7 @@ export function nestedDocumentVisibleToInvestor(
   ) {
     return false
   }
-  if (!hasExplicitDocumentAudience(doc)) return true
+  if (!hasExplicitDocumentAudience(doc)) return false
   if (doc.sharedWithAllInvestors) return true
 
   const { viewerRows, dealClasses } = ctx
@@ -124,4 +124,11 @@ export function nestedDocumentVisibleToInvestor(
   }
 
   return false
+}
+
+/** True when Shared With has at least one class, investor, sponsor, or All Investors. */
+export function documentHasSharedWithAudience(
+  doc: NestedPreviewDocument,
+): boolean {
+  return hasExplicitDocumentAudience(doc)
 }

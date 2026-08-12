@@ -450,12 +450,17 @@ export function DataTable<T>({
                 colSpan={columns.length}
                 className="data_table_empty_members_cell data_table_members_loading_cell"
                 role="status"
-                aria-label="Loading"
+                aria-label={emptyLabel?.trim() || "Loading"}
               >
-                <div
-                  className="data_table_loader_spinner"
-                  aria-hidden
-                />
+                <div className="data_table_members_loading_inner">
+                  <div
+                    className="data_table_loader_spinner"
+                    aria-hidden
+                  />
+                  <p className="data_table_members_loading_label">
+                    {emptyLabel?.trim() || "Loading…"}
+                  </p>
+                </div>
               </td>
             </tr>
           ) : rows.length === 0 && visualVariant === "members" ? (

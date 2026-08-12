@@ -319,7 +319,7 @@ export async function completeDistributionRun(params: {
     (source === "capital"
       ? `Capital event · ${date}`
       : source === "fee"
-        ? `Distribution fee · ${date}`
+        ? `Acquisition fee · ${date}`
         : `Operating · ${date}`);
   const notes = params.input.notes?.trim() || "";
   const periodRaw = params.input.period;
@@ -357,33 +357,7 @@ export async function completeDistributionRun(params: {
           "This distribution name is already used on the Distribution Fee tab. Choose a unique name.",
       };
     }
-    const nameClash = parsed.priorDistributions.find((p) => {
-      if (replaceId && String(p.id).trim() === replaceId) return false;
-      const priorKey = String(p.name ?? "")
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, " ");
-      return Boolean(priorKey) && priorKey === nameKey;
-    });
-    if (nameClash) {
-      return {
-        bundle: (await getDistributionSetupBundle(params.dealId)) ?? {
-          dealId: params.dealId,
-          dealName: "",
-          targetRaise: "0",
-          setupName: parsed.setupName || "",
-          waterfalls: parsed.waterfalls,
-          priorDistributions: parsed.priorDistributions,
-          classes: [],
-          promote: { hurdles: [], shares: {} },
-          ...(parsed.distributionFee
-            ? { distributionFee: parsed.distributionFee }
-            : {}),
-        },
-        error:
-          "This distribution name is already used on another tab. Choose a unique name.",
-      };
-    }
+    // Duplicate names across Distributions runs are allowed.
   }
 
   let investorPayments = serializeInvestorPaymentLines(
@@ -415,13 +389,23 @@ export async function completeDistributionRun(params: {
   }
 
   const amountKey = formatUsdPlain(amount).replace(/[^0-9.-]/g, "");
-  // Ignore accidental double-complete (same date + amount + source),
+  // Ignore accidental double-complete (same date + amount + source + name),
   // unless we are intentionally replacing that same run.
+  // Different names in the same period are allowed and create separate rows.
   if (!replaceId) {
     const existingDuplicate = parsed.priorDistributions.find((p) => {
       const priorAmt = String(p.amount ?? "").replace(/[^0-9.-]/g, "");
       const priorSrc = String(p.source ?? "").toLowerCase();
-      return p.date === date && priorAmt === amountKey && priorSrc === source;
+      const priorName = String(p.name ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+      return (
+        p.date === date &&
+        priorAmt === amountKey &&
+        priorSrc === source &&
+        priorName === nameKey
+      );
     });
     if (existingDuplicate) {
       const bundle = await getDistributionSetupBundle(params.dealId);
@@ -704,8 +688,8 @@ async function buildFallbackInvestorPayments(
 
 /**
  * Edit an investor's % of class and/or payment on a completed distribution.
- * % and payment are co-dependent: editing one derives the other from class waterfall.
- * Syncs % onto `deal_lp_investor.percent_of_class_distributions` when a roster row matches.
+ * Manual values are stored as entered — editing one field does not derive the other.
+ * Syncs % onto `deal_lp_investor.percent_of_class_distributions` only when % is edited.
  */
 export async function updatePriorDistributionInvestorPercent(params: {
   dealId: string;
@@ -768,43 +752,16 @@ export async function updatePriorDistributionInvestorPercent(params: {
     return { bundle: existing, error: "Investor not found on this distribution" };
   }
 
-  const classId = target.classId;
   const oldPct = Math.max(0, Number(target.percentOfClass) || 0);
   const oldPay = Math.max(0, Number(target.payment) || 0);
-  const peers = lines.filter((l) => l.classId === classId);
-  let classPay =
-    oldPct > 0
-      ? oldPay / (oldPct / 100)
-      : peers.reduce((s, l) => {
-          const p = Math.max(0, Number(l.percentOfClass) || 0);
-          const pay = Math.max(0, Number(l.payment) || 0);
-          if (p > 0) return Math.max(s, pay / (p / 100));
-          return s;
-        }, 0);
-  if (!(classPay > 0)) {
-    classPay = peers.reduce((s, l) => s + Math.max(0, Number(l.payment) || 0), 0);
-  }
 
-  let nextPct: number;
-  let nextPayment: number;
-  if (hasPay && !hasPct) {
-    nextPayment = Math.max(0, Number(params.payment));
-    nextPct =
-      classPay > 0
-        ? Math.max(0, Math.min(100, (nextPayment / classPay) * 100))
-        : 0;
-    if (classPay > 0) {
-      nextPayment = Math.round(classPay * (nextPct / 100) * 100) / 100;
-    } else {
-      nextPayment = Math.round(nextPayment * 100) / 100;
-    }
-  } else {
-    nextPct = Math.max(
-      0,
-      Math.min(100, Number(params.percentOfClass)),
-    );
-    nextPayment = Math.round(classPay * (nextPct / 100) * 100) / 100;
-  }
+  // Persist each field as provided; leave the unedited field unchanged.
+  const nextPct = hasPct
+    ? Math.max(0, Math.min(100, Number(params.percentOfClass)))
+    : oldPct;
+  const nextPayment = hasPay
+    ? Math.round(Math.max(0, Number(params.payment)) * 100) / 100
+    : oldPay;
 
   lines = lines.map((l) => {
     if (String(l.investorId).toLowerCase() !== investorId.toLowerCase()) {
@@ -867,85 +824,93 @@ export async function updatePriorDistributionInvestorPercent(params: {
             from: Math.round(oldPay * 100) / 100,
             to: Math.round(nextPayment * 100) / 100,
           },
-          editSource: hasPay && !hasPct ? "payment" : "percent_of_class",
+          editSource:
+            hasPay && !hasPct
+              ? "payment"
+              : hasPct && !hasPay
+                ? "percent_of_class"
+                : "both",
         },
       });
     }
   }
 
-  const contactId = String(target.contactId ?? "").trim();
-  const pctLabel = `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`;
-  const roster = await db
-    .select({
-      id: dealLpInvestor.id,
-      contactMemberId: dealLpInvestor.contactMemberId,
-    })
-    .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, params.dealId));
+  // Only sync roster % when the user explicitly edited % of class.
+  if (hasPct) {
+    const contactId = String(target.contactId ?? "").trim();
+    const pctLabel = `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`;
+    const roster = await db
+      .select({
+        id: dealLpInvestor.id,
+        contactMemberId: dealLpInvestor.contactMemberId,
+      })
+      .from(dealLpInvestor)
+      .where(eq(dealLpInvestor.dealId, params.dealId));
 
-  let matchedLpIds: string[] = [];
-  if (contactId && roster.length > 0) {
-    const allRaw = [
-      contactId,
-      ...roster.map((m) => String(m.contactMemberId ?? "").trim()),
-    ].filter(Boolean);
-    const rawToCanonical =
-      await mapContactIdsToCanonicalCommitmentKeys(allRaw);
-    const contactKey = contactId.trim().toLowerCase();
-    const targetCanonical =
-      rawToCanonical.get(contactKey) ?? `id:${contactKey}`;
-    matchedLpIds = roster
-      .filter((m) => {
-        const k = String(m.contactMemberId ?? "")
-          .trim()
-          .toLowerCase();
-        if (!k) return false;
-        if (k === contactKey) return true;
-        const canonical = rawToCanonical.get(k) ?? `id:${k}`;
-        return canonical === targetCanonical;
-      })
-      .map((m) => m.id);
-  }
+    let matchedLpIds: string[] = [];
+    if (contactId && roster.length > 0) {
+      const allRaw = [
+        contactId,
+        ...roster.map((m) => String(m.contactMemberId ?? "").trim()),
+      ].filter(Boolean);
+      const rawToCanonical =
+        await mapContactIdsToCanonicalCommitmentKeys(allRaw);
+      const contactKey = contactId.trim().toLowerCase();
+      const targetCanonical =
+        rawToCanonical.get(contactKey) ?? `id:${contactKey}`;
+      matchedLpIds = roster
+        .filter((m) => {
+          const k = String(m.contactMemberId ?? "")
+            .trim()
+            .toLowerCase();
+          if (!k) return false;
+          if (k === contactKey) return true;
+          const canonical = rawToCanonical.get(k) ?? `id:${k}`;
+          return canonical === targetCanonical;
+        })
+        .map((m) => m.id);
+    }
 
-  if (matchedLpIds.length > 0) {
-    await db
-      .update(dealLpInvestor)
-      .set({
-        percentOfClassDistributions: pctLabel,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(dealLpInvestor.dealId, params.dealId),
-          inArray(dealLpInvestor.id, matchedLpIds),
-        ),
-      );
-  } else if (contactId) {
-    await db
-      .update(dealLpInvestor)
-      .set({
-        percentOfClassDistributions: pctLabel,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(dealLpInvestor.dealId, params.dealId),
-          eq(dealLpInvestor.contactMemberId, contactId),
-        ),
-      );
-  } else {
-    await db
-      .update(dealLpInvestor)
-      .set({
-        percentOfClassDistributions: pctLabel,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(dealLpInvestor.dealId, params.dealId),
-          eq(dealLpInvestor.id, investorId),
-        ),
-      );
+    if (matchedLpIds.length > 0) {
+      await db
+        .update(dealLpInvestor)
+        .set({
+          percentOfClassDistributions: pctLabel,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(dealLpInvestor.dealId, params.dealId),
+            inArray(dealLpInvestor.id, matchedLpIds),
+          ),
+        );
+    } else if (contactId) {
+      await db
+        .update(dealLpInvestor)
+        .set({
+          percentOfClassDistributions: pctLabel,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(dealLpInvestor.dealId, params.dealId),
+            eq(dealLpInvestor.contactMemberId, contactId),
+          ),
+        );
+    } else {
+      await db
+        .update(dealLpInvestor)
+        .set({
+          percentOfClassDistributions: pctLabel,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(dealLpInvestor.dealId, params.dealId),
+            eq(dealLpInvestor.id, investorId),
+          ),
+        );
+    }
   }
 
   const bundle = await getDistributionSetupBundle(params.dealId);

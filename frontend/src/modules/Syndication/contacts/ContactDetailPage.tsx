@@ -17,6 +17,10 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { formatUsPhoneStoredForUi } from "../../../common/phone/usPhoneNumber"
+import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../common/utils/displayEmail"
 import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { toast } from "../../../common/components/Toast"
 import { fetchContact } from "./api/contactsApi"
@@ -315,12 +319,12 @@ function ContactDetailPage() {
             {initialsFromContact(contact)}
           </div>
           <h1 className="cd_name">{displayName}</h1>
-          {email.includes("@") ? (
+          {isDisplayableEmail(email) ? (
             <a href={`mailto:${encodeURIComponent(email)}`} className="cd_email">
               {email}
             </a>
           ) : (
-            <span className="cd_email cd_muted">{email || "—"}</span>
+            <span className="cd_email cd_muted">{displayEmail(email)}</span>
           )}
           <p className="cd_phone">{phoneShown || "—"}</p>
           <span

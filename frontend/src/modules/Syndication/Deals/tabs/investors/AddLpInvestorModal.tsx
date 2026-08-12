@@ -28,6 +28,10 @@ import {
 import { toast } from "../../../../../common/components/Toast"
 import { TabsScrollStrip } from "../../../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../../../common/utils/displayEmail"
+import {
   lpInvestorValidationPreferSelector,
   presentFormValidationError,
 } from "../../../../../common/utils/formValidationFocus"
@@ -51,6 +55,11 @@ import {
   isContactAlreadyOnDealRoster,
   type RosterRowForDuplicateCheck,
 } from "../deal_members/add-investment/dealRosterContactDuplicate"
+import {
+  ensureSelectedMemberDropdownOption,
+  resolveInvestorMemberSelectValue,
+  selectedInvestorDropdownLabel,
+} from "../deal_members/add-investment/resolveInvestorMemberSelectValue"
 import { MEMBER_SELECT_OPTIONS } from "../../constants/member-options"
 import {
   INVESTOR_PROFILE_SELECT_OPTIONS,
@@ -62,7 +71,7 @@ import {
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import {
-  formatPercentTypeInput,
+  formatPercentTypeInputBare,
   sanitizePercentTypingInput,
 } from "../../utils/offeringMoneyFormat"
 import { rowDisplayName } from "../../../usermanagement/memberAdminShared"
@@ -137,7 +146,13 @@ function blurFormatPercentClamped(raw: string): string {
   if (!t) return ""
   const n = parseFloat(t)
   if (!Number.isFinite(n)) return ""
-  return `${Math.max(0, Math.min(100, n)).toFixed(2)}%`
+  return Math.max(0, Math.min(100, n)).toFixed(2)
+}
+
+function toPercentInputValue(raw: string | undefined | null): string {
+  const t = String(raw ?? "").trim()
+  if (!t) return ""
+  return blurFormatPercentClamped(t)
 }
 
 function percentValuesEqual(a: string, b: string): boolean {
@@ -231,16 +246,17 @@ function lpInvestorRowMissingMessage(message: string | undefined): boolean {
 
 function contactOptionLabel(c: ContactRow): string {
   const name = [c.firstName, c.lastName].filter(Boolean).join(" ").trim()
-  if (name && c.email.trim()) return `${name} — ${c.email.trim()}`
-  if (c.email.trim()) return c.email.trim()
+  if (name && isDisplayableEmail(c.email)) return `${name} — ${displayEmail(c.email)}`
+  if (isDisplayableEmail(c.email)) return displayEmail(c.email)
   return name || "Contact"
 }
 
 function buildMemberLabel(u: Record<string, unknown>): string {
   const name = rowDisplayName(u)
   const email = String(u.email ?? "").trim()
-  if (name && name !== "—" && email) return `${name} — ${email}`
-  if (email) return email
+  if (name && name !== "—" && isDisplayableEmail(email))
+    return `${name} — ${displayEmail(email)}`
+  if (isDisplayableEmail(email)) return displayEmail(email)
   return name !== "—" ? name : "—"
 }
 
@@ -500,8 +516,8 @@ export function AddLpInvestorModal({
       setContactId(editRow.contactId?.trim() ?? "")
       setContactDisplayName(editRow.displayName?.trim() ?? "")
       setContactEmail(
-        editRow.userEmail && editRow.userEmail !== "—"
-          ? editRow.userEmail.trim()
+        isDisplayableEmail(editRow.userEmail)
+          ? String(editRow.userEmail).trim()
           : "",
       )
       setProfileId(
@@ -512,14 +528,16 @@ export function AddLpInvestorModal({
       setSendInvitationMail("no")
       setInvestorClassId(resolveLpInvestorClassId(editRow, dealClasses))
       setPercentOfClassOwnership(
-        editRow.percentOfClassOwnership?.trim() ?? "",
+        toPercentInputValue(editRow.percentOfClassOwnership),
       )
       setPercentOfClassDistributions(
-        editRow.percentOfClassDistributions?.trim() ?? "",
+        toPercentInputValue(editRow.percentOfClassDistributions),
       )
-      setEntityOwnershipPercent(editRow.entityOwnershipPercent?.trim() ?? "")
+      setEntityOwnershipPercent(
+        toPercentInputValue(editRow.entityOwnershipPercent),
+      )
       setDistributionAllocationPercent(
-        editRow.distributionAllocationPercent?.trim() ?? "",
+        toPercentInputValue(editRow.distributionAllocationPercent),
       )
       setBackendLpRosterId(editRow.id)
       backendLpRosterIdRef.current = editRow.id
@@ -533,8 +551,8 @@ export function AddLpInvestorModal({
         setContactId(fetched.contactId?.trim() ?? "")
         setContactDisplayName(fetched.displayName?.trim() ?? "")
         setContactEmail(
-          fetched.userEmail && fetched.userEmail !== "—"
-            ? fetched.userEmail.trim()
+          isDisplayableEmail(fetched.userEmail)
+            ? String(fetched.userEmail).trim()
             : "",
         )
         setProfileId(
@@ -544,16 +562,16 @@ export function AddLpInvestorModal({
         )
         setInvestorClassId(resolveLpInvestorClassId(fetched, dealClasses))
         setPercentOfClassOwnership(
-          fetched.percentOfClassOwnership?.trim() ?? "",
+          toPercentInputValue(fetched.percentOfClassOwnership),
         )
         setPercentOfClassDistributions(
-          fetched.percentOfClassDistributions?.trim() ?? "",
+          toPercentInputValue(fetched.percentOfClassDistributions),
         )
         setEntityOwnershipPercent(
-          fetched.entityOwnershipPercent?.trim() ?? "",
+          toPercentInputValue(fetched.entityOwnershipPercent),
         )
         setDistributionAllocationPercent(
-          fetched.distributionAllocationPercent?.trim() ?? "",
+          toPercentInputValue(fetched.distributionAllocationPercent),
         )
         setBackendLpRosterId(fetched.id)
         backendLpRosterIdRef.current = fetched.id
@@ -593,14 +611,16 @@ export function AddLpInvestorModal({
         setError(null)
         setFieldErrors({})
         setPercentOfClassOwnership(
-          String(f.percentOfClassOwnership ?? "").trim(),
+          toPercentInputValue(f.percentOfClassOwnership),
         )
         setPercentOfClassDistributions(
-          String(f.percentOfClassDistributions ?? "").trim(),
+          toPercentInputValue(f.percentOfClassDistributions),
         )
-        setEntityOwnershipPercent(String(f.entityOwnershipPercent ?? "").trim())
+        setEntityOwnershipPercent(
+          toPercentInputValue(f.entityOwnershipPercent),
+        )
         setDistributionAllocationPercent(
-          String(f.distributionAllocationPercent ?? "").trim(),
+          toPercentInputValue(f.distributionAllocationPercent),
         )
         /** Only `deal_lp_investor` ids — never `backendInvestmentId` (different table / PUT route). */
         const bid = draft?.backendLpInvestorId?.trim()
@@ -769,16 +789,18 @@ export function AddLpInvestorModal({
     ],
   )
 
-  const memberSelectValue = useMemo(() => {
-    const id = contactId.trim()
-    if (!id) return ""
-    if (contactRows.some((c) => c.id === id)) return `${PREFIX_CONTACT}${id}`
-    if (memberRows.some((u) => String(u.id) === id))
-      return `${PREFIX_USER}${id}`
-    if (MEMBER_SELECT_OPTIONS.some((o) => o.value === id))
-      return `${PREFIX_USER}${id}`
-    return id
-  }, [contactId, contactRows, memberRows])
+  const memberSelectValue = useMemo(
+    () =>
+      resolveInvestorMemberSelectValue({
+        contactId,
+        contactEmail,
+        contactRows,
+        memberRows,
+        prefixContact: PREFIX_CONTACT,
+        prefixUser: PREFIX_USER,
+      }),
+    [contactId, contactEmail, contactRows, memberRows],
+  )
 
   const memberDropdownSections = useMemo((): DropdownSelectSection[] => {
     function isAlreadyOnInvestorsList(
@@ -836,12 +858,83 @@ export function AddLpInvestorModal({
           }),
       })
     }
-    return sections
+    return ensureSelectedMemberDropdownOption({
+      sections,
+      value: memberSelectValue,
+      fallbackLabel: selectedInvestorDropdownLabel({
+        displayName: contactDisplayName,
+        email: contactEmail,
+      }),
+    })
   }, [
     contactRows,
     memberRows,
     investorRosterForGate,
     excludeRowIdForDuplicateGate,
+    memberSelectValue,
+    contactDisplayName,
+    contactEmail,
+  ])
+
+  /** When lists load after edit open, resolve id by email and fill email on the trigger. */
+  useEffect(() => {
+    if (!contactId.trim()) return
+    if (contactRows.length === 0 && memberRows.length === 0) return
+    const resolved = resolveInvestorMemberSelectValue({
+      contactId,
+      contactEmail,
+      contactRows,
+      memberRows,
+      prefixContact: PREFIX_CONTACT,
+      prefixUser: PREFIX_USER,
+    })
+    if (!resolved) return
+
+    let nextId = ""
+    let nextEmail = contactEmail.trim()
+    let nextName = contactDisplayName.trim()
+    if (resolved.startsWith(PREFIX_CONTACT)) {
+      nextId = resolved.slice(PREFIX_CONTACT.length).trim()
+      const c = contactRows.find(
+        (row) =>
+          String(row.id).trim().toLowerCase() === nextId.toLowerCase(),
+      )
+      if (c) {
+        if (!nextEmail && isDisplayableEmail(c.email))
+          nextEmail = String(c.email).trim()
+        if (!nextName || nextName === "—") {
+          const label = contactOptionLabel(c)
+          nextName = label.split(" — ")[0]?.trim() || label
+        }
+      }
+    } else if (resolved.startsWith(PREFIX_USER)) {
+      nextId = resolved.slice(PREFIX_USER.length).trim()
+      const u = memberRows.find(
+        (row) =>
+          String(row.id ?? "")
+            .trim()
+            .toLowerCase() === nextId.toLowerCase(),
+      )
+      if (u) {
+        const em = String(u.email ?? "").trim()
+        if (!nextEmail && isDisplayableEmail(em)) nextEmail = em
+        if (!nextName || nextName === "—") {
+          const label = buildMemberLabel(u)
+          nextName = label.split(" — ")[0]?.trim() || label
+        }
+      }
+    }
+
+    if (nextId && nextId !== contactId) setContactId(nextId)
+    if (nextEmail && nextEmail !== contactEmail) setContactEmail(nextEmail)
+    if (nextName && nextName !== contactDisplayName)
+      setContactDisplayName(nextName)
+  }, [
+    contactId,
+    contactEmail,
+    contactDisplayName,
+    contactRows,
+    memberRows,
   ])
 
   const handleContactCreated = useCallback((contact: ContactRow) => {
@@ -1369,11 +1462,6 @@ export function AddLpInvestorModal({
                       htmlFor="lp-inv-pct-ownership"
                       className="um_field_label_row"
                     >
-                      <Percent
-                        className="um_field_label_icon"
-                        size={17}
-                        aria-hidden
-                      />
                       <span>
                         Percent of class (ownership)
                       </span>
@@ -1383,7 +1471,7 @@ export function AddLpInvestorModal({
                       type="text"
                       className="deals_add_inv_field_pill"
                       inputMode="decimal"
-                      placeholder="0.00%"
+                      placeholder="0.00"
                       value={percentOfClassOwnership}
                       aria-invalid={
                         Boolean(fieldErrors.percentOfClassOwnership) ||
@@ -1395,7 +1483,7 @@ export function AddLpInvestorModal({
                           : undefined
                       }
                       onChange={(e) => {
-                        const next = formatPercentTypeInput(e.target.value, 100)
+                        const next = formatPercentTypeInputBare(e.target.value, 100)
                         const prevOwnership = percentOfClassOwnership
                         setPercentOfClassOwnership(next)
                         clearFieldError("percentOfClassOwnership")
@@ -1441,11 +1529,6 @@ export function AddLpInvestorModal({
                       htmlFor="lp-inv-pct-distributions"
                       className="um_field_label_row"
                     >
-                      <Percent
-                        className="um_field_label_icon"
-                        size={17}
-                        aria-hidden
-                      />
                       <span>
                         Percent of class (distributions)
                       </span>
@@ -1455,7 +1538,7 @@ export function AddLpInvestorModal({
                       type="text"
                       className="deals_add_inv_field_pill"
                       inputMode="decimal"
-                      placeholder="0.00%"
+                      placeholder="0.00"
                       value={percentOfClassDistributions}
                       aria-invalid={
                         Boolean(fieldErrors.percentOfClassDistributions) ||
@@ -1468,7 +1551,7 @@ export function AddLpInvestorModal({
                       }
                       onChange={(e) => {
                         setPercentOfClassDistributions(
-                          formatPercentTypeInput(e.target.value, 100),
+                          formatPercentTypeInputBare(e.target.value, 100),
                         )
                         clearFieldError("percentOfClassDistributions")
                       }}
@@ -1502,18 +1585,18 @@ export function AddLpInvestorModal({
                       size={17}
                       aria-hidden
                     />
-                    <span>Entity Ownership %</span>
+                    <span>Entity Ownership</span>
                   </label>
                   <input
                     id="lp-inv-entity-ownership"
                     type="text"
                     className="deals_add_inv_field_pill"
                     inputMode="decimal"
-                    placeholder="0.00%"
+                    placeholder="0.00"
                     value={entityOwnershipPercent}
                     onChange={(e) =>
                       setEntityOwnershipPercent(
-                        formatPercentTypeInput(e.target.value, 100),
+                        formatPercentTypeInputBare(e.target.value, 100),
                       )
                     }
                     onBlur={(e) =>
@@ -1541,11 +1624,11 @@ export function AddLpInvestorModal({
                     type="text"
                     className="deals_add_inv_field_pill"
                     inputMode="decimal"
-                    placeholder="0.00%"
+                    placeholder="0.00"
                     value={distributionAllocationPercent}
                     onChange={(e) =>
                       setDistributionAllocationPercent(
-                        formatPercentTypeInput(e.target.value, 100),
+                        formatPercentTypeInputBare(e.target.value, 100),
                       )
                     }
                     onBlur={(e) =>

@@ -173,6 +173,7 @@ export async function getDealInvestors(
     const withAddedBy = await enrichInvestorApiRowsWithAddedBy(
       dealId,
       withLpRosterMeta,
+      user.id,
     );
     const investors = await redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
       dealId,

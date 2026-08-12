@@ -30,6 +30,124 @@
   max-width: 40rem;
 }
 
+.investing_bank_tab_lead {
+  margin: 0;
+  flex: 1 1 16rem;
+  min-width: 0;
+  align-self: center;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--portal-text-muted, #64748b);
+  max-width: 36rem;
+}
+
+.investing_profile_bank_select_wrap {
+  width: 100%;
+  max-width: 14.5rem;
+}
+
+.investing_profile_bank_select_wrap .deals_create_dropdown_select {
+  width: 100%;
+}
+
+.investing_profile_bank_select_wrap
+  .deals_create_dropdown_select
+  .portal_dropdown_select_shell {
+  width: 100%;
+}
+
+.investing_profile_bank_select_trigger.portal_dropdown_select_trigger,
+button.investing_profile_bank_select_trigger {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.28rem 0.55rem;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+  border-radius: var(--ui-button-border-radius, 4px);
+}
+
+.investing_profile_bank_select_panel.portal_dropdown_select_panel--fixed {
+  min-width: 16rem;
+  max-width: min(22rem, 92vw);
+}
+
+.investing_profile_bank_select_panel .portal_dropdown_select_option,
+.investing_profile_bank_select_panel .portal_dropdown_select_header_btn {
+  font-size: 0.8125rem;
+}
+
+.investing_bank_name_cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.investing_bank_name_cell_title {
+  font-weight: 600;
+  color: var(--portal-text, #1b1b1d);
+  overflow-wrap: anywhere;
+}
+
+.investing_bank_name_cell_meta {
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--portal-text-muted, #64748b);
+  font-variant-numeric: tabular-nums;
+}
+
+.investing_bank_profiles_cell {
+  display: block;
+  max-width: 18rem;
+  overflow-wrap: anywhere;
+  color: var(--portal-text-secondary, #4f4f4f);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.investing_bank_row_action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.investing_bank_status {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2em 0.55em;
+  border-radius: var(--ui-button-border-radius, 4px);
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.investing_bank_status--ready {
+  color: #047857;
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  border-color: color-mix(in srgb, #10b981 35%, transparent);
+}
+
+.investing_bank_status--pending {
+  color: #1d4ed8;
+  background: color-mix(in srgb, #3b82f6 14%, transparent);
+  border-color: color-mix(in srgb, #3b82f6 32%, transparent);
+}
+
+.investing_bank_status--danger {
+  color: #b91c1c;
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  border-color: color-mix(in srgb, #ef4444 35%, transparent);
+}
+
+.investing_bank_status--neutral {
+  color: #6b7280;
+  background: color-mix(in srgb, #9ca3af 12%, transparent);
+  border-color: color-mix(in srgb, #9ca3af 30%, transparent);
+}
+
 .investing_profiles_empty {
   border: 1px dashed var(--portal-border, #e2e8f0);
   border-radius: var(--portal-card-radius, 4px);

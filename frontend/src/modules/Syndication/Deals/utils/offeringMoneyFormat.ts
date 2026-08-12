@@ -89,14 +89,29 @@ export function displayInvestorCommittedAmountExport(row: DealInvestorRow): stri
 }
 
 /**
- * Dollars for the “Total Funded” KPI: fully funded rows use full commitment;
- * rows pending re-approval after an LP increase count only the last approved snapshot
- * (the incremental portion is excluded until the sponsor approves again).
+ * Statuses that count toward Total Funded even when Funded column is Not Approved
+ * (legacy / imported rows, e.g. “Funds partially received”).
+ */
+function investmentStatusCountsTowardFunded(
+  status: string | undefined | null,
+): boolean {
+  const raw = String(status ?? "").trim()
+  if (!raw || raw === "—") return false
+  if (/funds?\s+fully\s+received/i.test(raw)) return true
+  if (/funds?\s+partially\s+received/i.test(raw)) return true
+  return false
+}
+
+/**
+ * Dollars for the “Total Funded” KPI / class actually-funded.
+ * Full commitment when fund-approved or funds received (fully / partially);
+ * pending re-approval after an LP increase counts only the last approved snapshot.
  */
 export function fundedAmountForTotalFundedKpi(row: DealInvestorRow): number {
   const total = parseMoneyDigits(displayInvestorCommittedAmount(row))
-  if (!Number.isFinite(total)) return 0
-  if (investorRowIsFundApproved(row)) return total
+  if (!Number.isFinite(total) || total < 0) return 0
+  if (investorRowIsFundApproved(row) || investmentStatusCountsTowardFunded(row.status))
+    return total
   const split = investorCommittedPendingSplit(row)
   if (split) return split.snapshot
   return 0
@@ -228,9 +243,10 @@ export function formatCurrencyUsdTypeInput(raw: string): string {
 }
 
 /**
- * Percent fields while typing: digits with a trailing % (up to two decimals).
+ * Percent fields while typing: digits only (up to two decimals). No trailing `%`
+ * so the caret stays on the number while editing.
  */
-export function formatPercentTypeInput(raw: string, max?: number): string {
+export function formatPercentTypeInputBare(raw: string, max?: number): string {
   let sanitized = sanitizePercentTypingInput(raw)
   if (!sanitized) return ""
 
@@ -244,19 +260,38 @@ export function formatPercentTypeInput(raw: string, max?: number): string {
     const whole = sanitized.slice(0, -1)
     const wholeN = parseFloat(whole || "0")
     if (!Number.isFinite(wholeN)) return ""
-    return `${cap(wholeN)}.%`
+    return `${cap(wholeN)}.`
   }
 
   if (sanitized.includes(".")) {
     const [w, f = ""] = sanitized.split(".")
     const wholeN = cap(parseFloat(w || "0"))
     const frac = f.slice(0, 2)
-    return frac ? `${wholeN}.${frac}%` : `${wholeN}%`
+    return frac ? `${wholeN}.${frac}` : `${wholeN}`
   }
 
   const clamped = cap(parseFloat(sanitized))
   if (!Number.isFinite(clamped)) return ""
-  return `${clamped}%`
+  return `${clamped}`
+}
+
+/**
+ * Percent fields while typing: digits with a trailing % (up to two decimals).
+ * Prefer {@link formatPercentTypeInputBare} for editable inputs (caret stays usable).
+ */
+export function formatPercentTypeInput(raw: string, max?: number): string {
+  const bare = formatPercentTypeInputBare(raw, max)
+  if (!bare) return ""
+  return `${bare}%`
+}
+
+/** Percent blur format without trailing `%` — pairs with {@link formatPercentTypeInputBare}. */
+export function blurFormatPercentTwoDecimalsInputBare(raw: string): string {
+  const t = sanitizePercentTypingInput(raw)
+  if (!t) return ""
+  const n = parseFloat(t)
+  if (!Number.isFinite(n)) return ""
+  return n.toFixed(2)
 }
 
 export function parseNumberOfUnitsDigits(raw: string): number {

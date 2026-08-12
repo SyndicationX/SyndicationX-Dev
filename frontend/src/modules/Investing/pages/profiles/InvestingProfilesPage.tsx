@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
-import { FilePenLine, IdCard, MapPin, Plus, Users } from "lucide-react"
+import { FilePenLine, IdCard, Landmark, MapPin, Plus, Users } from "lucide-react"
 import {
   AvatarInitialsRing,
   EntityAvatarNameCell,
@@ -65,11 +65,20 @@ import {
   fetchInvestmentCountsByUserInvestorProfileId,
   mergeInvestorProfileRowsWithLinkedCounts,
 } from "./profileInvestmentCounts"
+import {
+  buildBankAccountTableRows,
+  InvestingBankAccountsTab,
+} from "./InvestingBankAccountsTab"
+import { ProfileBankSelect } from "./ProfileBankSelect"
 import { InvestingProfilesRowActions } from "./InvestingProfilesRowActions"
 import { InvestingProfilesTableToolbar } from "./InvestingProfilesTableToolbar"
 import {
+  attachStripeConnectBankToProfile,
+  fetchInvestorSharedConnectBanks,
   fetchStripeConnectRecipientStatus,
   startStripeConnectRecipientOnboarding,
+  type InvestorSharedConnectBank,
+  type StripeConnectRecipientStatus,
 } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
 import "@/modules/Syndication/usermanagement/user_management.css"
 import "@/modules/Syndication/Deals/deals-list.css"
@@ -77,7 +86,7 @@ import "@/modules/Syndication/Deals/deal-investors-tab.css"
 import "@/modules/Syndication/contacts/contacts.css"
 import "./investing-profiles.css"
 
-type ProfilesTab = "my-profiles" | "beneficiaries" | "addresses"
+type ProfilesTab = "my-profiles" | "bank-accounts" | "beneficiaries" | "addresses"
 type ListStatusTab = "active" | "archived"
 
 type BeneficiaryListRow = BeneficiaryDraft & { id: string; archived?: boolean }
@@ -104,6 +113,7 @@ const PROFILES_TABLE_COL_WIDTH = {
   profileType: "17rem",
   addedBy: "9rem",
   investments: "6.5rem",
+  bankAccount: "12rem",
   dateCreated: "8.5rem",
   beneficiaryName: "12rem",
   relationship: "8rem",
@@ -113,6 +123,23 @@ const PROFILES_TABLE_COL_WIDTH = {
   addressName: "11rem",
   actions: "5rem",
 } as const
+
+function formatProfileBankCell(
+  status: StripeConnectRecipientStatus | undefined,
+): string {
+  if (!status) return "—"
+  const bank = status.bankAccount
+  if (bank?.bankName || bank?.last4) {
+    const parts = [
+      bank.bankName?.trim() || null,
+      bank.last4 ? `···· ${bank.last4}` : null,
+    ].filter(Boolean)
+    return parts.join(" ")
+  }
+  if (status.payoutsEnabled) return "Ready"
+  if (status.accountId) return "Setup pending"
+  return "Not added"
+}
 
 function ProfileListNameCell({
   row,
@@ -174,6 +201,10 @@ export default function InvestingProfilesPage() {
   const location = useLocation()
   const hideAddProfileDraftRow = location.pathname === "/investing/profiles/add"
   const [activeTab, setActiveTab] = useState<ProfilesTab>("my-profiles")
+  const [bankSetupBusy, setBankSetupBusy] = useState(false)
+  const [banksLoading, setBanksLoading] = useState(false)
+  const [assignBusyId, setAssignBusyId] = useState<string | null>(null)
+  const stripeReturnKeyRef = useRef<string | null>(null)
   const [addBenOpen, setAddBenOpen] = useState(false)
   const [addAddressOpen, setAddAddressOpen] = useState(false)
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([])
@@ -205,37 +236,176 @@ export default function InvestingProfilesPage() {
   const [editBeneficiary, setEditBeneficiary] = useState<BeneficiaryListRow | null>(null)
   const [editingAddress, setEditingAddress] = useState<SavedAddress | null>(null)
   const [addProfileDraftTick, setAddProfileDraftTick] = useState(0)
+  const [connectByProfileId, setConnectByProfileId] = useState<
+    Record<string, StripeConnectRecipientStatus>
+  >({})
+  const [sharedBanks, setSharedBanks] = useState<InvestorSharedConnectBank[]>(
+    [],
+  )
 
-  const reloadProfileBook = useCallback(() => {
-    void (async () => {
-      try {
-        const book = await fetchMyProfileBook()
-        setProfiles(book.profiles)
-        setBeneficiaries(book.beneficiaries)
-        setSavedAddresses(book.addresses)
-      } catch {
-        // keep prior rows
-      }
-    })()
-  }, [])
-
-  const startPayoutOnboarding = useCallback(async (profileId: string) => {
+  const loadSharedBanks = useCallback(async () => {
+    setBanksLoading(true)
     try {
-      const link = await startStripeConnectRecipientOnboarding(profileId)
-      window.location.assign(link.url)
+      const banks = await fetchInvestorSharedConnectBanks()
+      setSharedBanks(banks)
+      return banks
     } catch (err) {
+      console.error("loadSharedBanks:", err)
+      setSharedBanks([])
       toast.error(
-        "Could not start bank setup",
-        err instanceof Error ? err.message : "Please try again.",
+        "Could not load bank accounts",
+        err instanceof Error ? err.message : "Please refresh and try again.",
       )
+      return [] as InvestorSharedConnectBank[]
+    } finally {
+      setBanksLoading(false)
     }
   }, [])
+
+  const loadConnectStatuses = useCallback(async (rows: InvestorProfileListRow[]) => {
+    const ids = rows
+      .filter(
+        (r) =>
+          r.id !== ADD_PROFILE_DRAFT_ROW_ID &&
+          !isInvestorProfileListRowIncomplete(r) &&
+          !r.archived,
+      )
+      .map((r) => r.id)
+    if (ids.length === 0) {
+      setConnectByProfileId({})
+      await loadSharedBanks()
+      return
+    }
+    const entries = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const status = await fetchStripeConnectRecipientStatus(id)
+          return [id, status] as const
+        } catch {
+          return null
+        }
+      }),
+    )
+    const next: Record<string, StripeConnectRecipientStatus> = {}
+    for (const entry of entries) {
+      if (entry) next[entry[0]] = entry[1]
+    }
+    setConnectByProfileId(next)
+    await loadSharedBanks()
+  }, [loadSharedBanks])
+
+  const reloadProfileBook = useCallback(async () => {
+    try {
+      const book = await fetchMyProfileBook()
+      setProfiles(book.profiles)
+      setBeneficiaries(book.beneficiaries)
+      setSavedAddresses(book.addresses)
+      await loadConnectStatuses(book.profiles)
+    } catch {
+      // keep prior rows
+    }
+  }, [loadConnectStatuses])
+
+  const resolveBankHostProfileId = useCallback(
+    (opts?: { preferWithoutBank?: boolean; accountId?: string }) => {
+      const active = profiles.filter(
+        (r) =>
+          r.id !== ADD_PROFILE_DRAFT_ROW_ID &&
+          !isInvestorProfileListRowIncomplete(r) &&
+          !r.archived,
+      )
+      if (active.length === 0) return null
+      if (opts?.accountId) {
+        const linked = active.find((r) =>
+          sharedBanks.some(
+            (b) =>
+              b.accountId === opts.accountId && b.profileIds.includes(r.id),
+          ),
+        )
+        if (linked) return linked.id
+        const fromBank = sharedBanks.find((b) => b.accountId === opts.accountId)
+        if (fromBank?.profileIds[0]) return fromBank.profileIds[0]
+      }
+      if (opts?.preferWithoutBank) {
+        const without = active.find((r) => !connectByProfileId[r.id]?.accountId)
+        if (without) return without.id
+      }
+      return active[0].id
+    },
+    [profiles, sharedBanks, connectByProfileId],
+  )
+
+  const startPayoutOnboarding = useCallback(
+    async (profileId: string, opts?: { forceNew?: boolean }) => {
+      setBankSetupBusy(true)
+      try {
+        const link = await startStripeConnectRecipientOnboarding(profileId, opts)
+        window.location.assign(link.url)
+      } catch (err) {
+        setBankSetupBusy(false)
+        toast.error(
+          "Could not start bank setup",
+          err instanceof Error ? err.message : "Please try again.",
+        )
+      }
+    },
+    [],
+  )
+
+  const startBankSetupFromTab = useCallback(
+    async (opts?: { forceNew?: boolean; accountId?: string }) => {
+      const profileId = resolveBankHostProfileId({
+        preferWithoutBank: !opts?.forceNew && !opts?.accountId,
+        accountId: opts?.accountId,
+      })
+      if (!profileId) {
+        toast.error(
+          "Add a profile first",
+          "Create an investor profile before adding a bank account.",
+        )
+        return
+      }
+      await startPayoutOnboarding(profileId, { forceNew: opts?.forceNew })
+    },
+    [resolveBankHostProfileId, startPayoutOnboarding],
+  )
+
+  const assignBankToProfile = useCallback(
+    async (profileId: string, value: string) => {
+      const next = value.trim()
+      if (!next) return
+      const current = connectByProfileId[profileId]?.accountId?.trim() || ""
+      if (current === next) return
+      setAssignBusyId(profileId)
+      try {
+        const status = await attachStripeConnectBankToProfile(profileId, next)
+        setConnectByProfileId((prev) => ({ ...prev, [profileId]: status }))
+        await loadSharedBanks()
+        toast.success(
+          "Bank selected",
+          "This profile will use the selected bank for ACH distributions.",
+        )
+      } catch (err) {
+        toast.error(
+          "Could not select bank",
+          err instanceof Error ? err.message : "Please try again.",
+        )
+      } finally {
+        setAssignBusyId(null)
+      }
+    },
+    [connectByProfileId, loadSharedBanks],
+  )
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
     const connectReturn = params.get("stripe_connect")
     const profileId = params.get("profile_id")?.trim() ?? ""
     if (!connectReturn || !profileId) return
+    const returnKey = `${connectReturn}:${profileId}:${location.search}`
+    if (stripeReturnKeyRef.current === returnKey) return
+    stripeReturnKeyRef.current = returnKey
+    setActiveTab("bank-accounts")
     void (async () => {
       if (connectReturn === "refresh") {
         try {
@@ -251,15 +421,33 @@ export default function InvestingProfilesPage() {
       } else {
         try {
           const status = await fetchStripeConnectRecipientStatus(profileId)
+          setConnectByProfileId((prev) => ({ ...prev, [profileId]: status }))
+          const bankLabel = formatProfileBankCell(status)
           if (status.payoutsEnabled) {
+            const sharedCount = status.sharedToProfileCount ?? 0
             toast.success(
-              "ACH distributions ready",
-              "Stripe confirmed this profile can receive bank payouts.",
+              "Bank account ready",
+              [
+                bankLabel !== "—" &&
+                bankLabel !== "Ready" &&
+                bankLabel !== "Not added" &&
+                bankLabel !== "Bank account on file"
+                  ? bankLabel
+                  : null,
+                "ACH distributions can use this bank.",
+                sharedCount > 0
+                  ? `Also linked to ${sharedCount} other profile${sharedCount === 1 ? "" : "s"} without a bank.`
+                  : "Choose this bank on any profile that should receive ACH.",
+              ]
+                .filter(Boolean)
+                .join(" "),
             )
           } else {
             toast.warning(
               "Bank setup pending",
-              "Stripe still needs information before this profile can receive payouts.",
+              bankLabel !== "—" && bankLabel !== "Not added"
+                ? `${bankLabel}. Finish any remaining Stripe steps if prompted.`
+                : "Finish adding your bank details before ACH distributions can be received.",
             )
           }
         } catch (err) {
@@ -269,9 +457,15 @@ export default function InvestingProfilesPage() {
           )
         }
       }
+      await reloadProfileBook()
       void navigate("/investing/profiles", { replace: true })
     })()
-  }, [location.search, navigate])
+  }, [location.search, navigate, reloadProfileBook])
+
+  useEffect(() => {
+    if (activeTab !== "bank-accounts") return
+    void loadSharedBanks()
+  }, [activeTab, loadSharedBanks])
 
   useEffect(() => {
     let cancelled = false
@@ -292,6 +486,7 @@ export default function InvestingProfilesPage() {
         setInvestmentCountByProfileId(byProfile)
         setBeneficiaries(book.beneficiaries)
         setSavedAddresses(book.addresses)
+        void loadConnectStatuses(book.profiles)
       } catch (e) {
         if (!cancelled) {
           setLoadError(
@@ -307,7 +502,7 @@ export default function InvestingProfilesPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadConnectStatuses])
 
   useEffect(() => {
     function onDealsListRefetch() {
@@ -697,12 +892,49 @@ export default function InvestingProfilesPage() {
 
   const profileViewSections = useMemo(() => {
     if (!viewModal || viewModal.kind !== "profile") return null
-    return buildInvestorProfileViewSections({
+    const sections = buildInvestorProfileViewSections({
       row: viewModal.row,
       savedAddresses,
       savedBeneficiaries: beneficiaries,
     })
-  }, [viewModal, savedAddresses, beneficiaries])
+    const connect = connectByProfileId[viewModal.row.id]
+    const bank = connect?.bankAccount
+    const achRows = [
+      {
+        label: "Status",
+        value: connect
+          ? connect.payoutsEnabled
+            ? "Ready for ACH"
+            : connect.accountId
+              ? "Setup pending"
+              : "Not added"
+          : "—",
+      },
+      {
+        label: "Bank",
+        value: bank?.bankName?.trim() || "—",
+      },
+      {
+        label: "Account",
+        value: bank?.last4 ? `···· ${bank.last4}` : "—",
+      },
+      {
+        label: "Routing",
+        value: bank?.routingNumber?.trim() || "—",
+      },
+      {
+        label: "Name on account",
+        value: bank?.accountHolderName?.trim() || "—",
+      },
+    ]
+    return [
+      ...sections,
+      {
+        heading: "ACH bank account",
+        rows: achRows,
+      },
+    ]
+  }, [viewModal, savedAddresses, beneficiaries, connectByProfileId])
 
   const viewModalConfig = useMemo(() => {
     if (!viewModal) return null
@@ -808,6 +1040,46 @@ export default function InvestingProfilesPage() {
         cell: (r) => String(r.investmentsCount ?? 0),
       },
       {
+        id: "bankAccount",
+        header: "Bank account",
+        colWidth: "14rem",
+        thClassName: "investing_profiles_col_bank",
+        tdClassName: "investing_profiles_td_bank",
+        sortValue: (r) =>
+          formatProfileBankCell(connectByProfileId[r.id]).toLowerCase(),
+        cell: (r) => {
+          if (
+            isInvestorProfileListRowIncomplete(r) ||
+            r.id === ADD_PROFILE_DRAFT_ROW_ID ||
+            r.archived
+          ) {
+            return "—"
+          }
+          const selected =
+            connectByProfileId[r.id]?.accountId?.trim() || ""
+          const readyBanks = sharedBanks.filter((b) => b.accountId)
+          const busy =
+            bankSetupBusy || assignBusyId === r.id || banksLoading
+          return (
+            <ProfileBankSelect
+              id={`profile-bank-${r.id}`}
+              ariaLabel={`Bank account for ${r.profileName || "profile"}`}
+              value={selected}
+              banks={readyBanks}
+              disabled={busy}
+              onChange={(accountId) => {
+                void assignBankToProfile(r.id, accountId)
+              }}
+              onAddBank={() => {
+                void startPayoutOnboarding(r.id, {
+                  forceNew: readyBanks.length > 0,
+                })
+              }}
+            />
+          )
+        },
+      },
+      {
         id: "dateCreated",
         header: "Date created",
         colWidth: PROFILES_TABLE_COL_WIDTH.dateCreated,
@@ -849,15 +1121,11 @@ export default function InvestingProfilesPage() {
                 void navigate(resumeTo)
                 return
               }
-              void navigate(`/investing/profiles/${encodeURIComponent(row.id)}/edit`)
+              void navigate(
+                `/investing/profiles/${encodeURIComponent(row.id)}/edit`,
+              )
             }}
             onExport={() => exportInvestorProfileRow(row)}
-            onSetupPayouts={
-              isInvestorProfileListRowIncomplete(row) ||
-              row.id === ADD_PROFILE_DRAFT_ROW_ID
-                ? undefined
-                : () => void startPayoutOnboarding(row.id)
-            }
           />
         ),
       },
@@ -867,8 +1135,27 @@ export default function InvestingProfilesPage() {
       navigate,
       openProfileView,
       profileResumeHref,
+      connectByProfileId,
+      sharedBanks,
+      bankSetupBusy,
+      banksLoading,
+      assignBusyId,
+      assignBankToProfile,
       startPayoutOnboarding,
     ],
+  )
+
+  const profileNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const row of profiles) {
+      map.set(row.id, row.profileName?.trim() || "Profile")
+    }
+    return map
+  }, [profiles])
+
+  const bankAccountRows = useMemo(
+    () => buildBankAccountTableRows(sharedBanks, profileNameById),
+    [sharedBanks, profileNameById],
   )
 
   const beneficiaryColumns: DataTableColumn<BeneficiaryListRow>[] = useMemo(
@@ -1072,6 +1359,28 @@ export default function InvestingProfilesPage() {
             </button>
             <button
               type="button"
+              id="profiles-tab-bank-accounts"
+              role="tab"
+              aria-selected={activeTab === "bank-accounts"}
+              aria-controls="profiles-panel-bank-accounts"
+              className={`um_members_tab deals_tabs_tab um_segmented_tab${activeTab === "bank-accounts" ? " um_members_tab_active" : ""}`}
+              onClick={() => {
+                setActiveTab("bank-accounts")
+                void loadSharedBanks()
+              }}
+            >
+              <Landmark
+                className="deals_tabs_icon um_segmented_tab_icon"
+                size={16}
+                strokeWidth={2}
+                aria-hidden
+              />
+              <span className="deals_tabs_label um_segmented_tab_label">
+                Bank accounts
+              </span>
+            </button>
+            <button
+              type="button"
               id="profiles-tab-beneficiaries"
               role="tab"
               aria-selected={activeTab === "beneficiaries"}
@@ -1174,6 +1483,22 @@ export default function InvestingProfilesPage() {
           </div>
           </>
         )}
+
+      {activeTab === "bank-accounts" ? (
+        <InvestingBankAccountsTab
+          rows={bankAccountRows}
+          loading={bookLoading || banksLoading}
+          setupBusy={bankSetupBusy}
+          onAddBank={() =>
+            void startBankSetupFromTab({
+              forceNew: sharedBanks.length > 0,
+            })
+          }
+          onUpdateBank={(row) =>
+            void startBankSetupFromTab({ accountId: row.accountId })
+          }
+        />
+      ) : null}
 
         {activeTab === "beneficiaries" && (
           <>

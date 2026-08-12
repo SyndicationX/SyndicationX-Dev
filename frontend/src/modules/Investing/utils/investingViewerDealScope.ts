@@ -24,11 +24,14 @@ import {
 } from "@/modules/Syndication/Deals/utils/investorEsignStatus"
 import { investorRowCommittedAmountNumeric } from "@/modules/Syndication/Deals/utils/offeringMoneyFormat"
 
-/** Draft / incomplete create-deal wizard rows are sponsor-only — hide from investors. */
+/** Draft / incomplete create-deal wizard rows are sponsor-only — hide from investors.
+ * Also drop deals the API marked unreadable (e.g. contact offering visibility). */
 export function filterDealListRowsVisibleToInvestors(
   rows: DealListRow[],
 ): DealListRow[] {
-  return rows.filter((row) => !isDealListRowIncomplete(row))
+  return rows.filter(
+    (row) => !isDealListRowIncomplete(row) && row.rosterReadable !== false,
+  )
 }
 
 /**

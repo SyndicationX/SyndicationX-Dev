@@ -130,14 +130,14 @@ export function validateDistributionFee(params: {
   if (!name)
     return {
       ok: false,
-      message: "Distribution fee name is required.",
+      message: "Acquisition fee name is required.",
     }
 
   const feeType = params.fee.type.trim()
   if (!feeType)
     return {
       ok: false,
-      message: "Distribution fee type is required.",
+      message: "Acquisition fee type is required.",
     }
 
   if (params.fee.classSplits.length === 0)

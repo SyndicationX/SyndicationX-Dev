@@ -27,6 +27,7 @@ import { AddDealAssetPage } from "./modules/Syndication/Deals/AddDealAssetPage";
 import { ClassSetupPage } from "./modules/Syndication/Deals/class-setup";
 import { DistributionSetupPage } from "./modules/Syndication/Deals/distribution-setup";
 import { DistributionDetailsPage } from "./modules/Syndication/Deals/tabs/distributions/DistributionDetailsPage";
+// import { DealInvestorDistributionsPage } from "./modules/Syndication/Deals/tabs/investors/DealInvestorDistributionsPage";
 import {
   RedirectLegacyAddInvestorClass,
   RedirectLegacyEditInvestorClass,
@@ -176,6 +177,12 @@ function App() {
                 path=":dealId/distributions/:distributionId"
                 element={<DistributionDetailsPage />}
               />
+              {/* Separate investor distributions page — commented; investor click uses popup for now.
+              <Route
+                path=":dealId/investors/:investorId/distributions"
+                element={<DealInvestorDistributionsPage />}
+              />
+              */}
               <Route
                 path=":dealId/investor-classes/new"
                 element={<RedirectLegacyAddInvestorClass />}

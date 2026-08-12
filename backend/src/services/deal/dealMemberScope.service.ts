@@ -70,6 +70,130 @@ export type ViewerDealMemberRoleKind =
   | "lp_investor"
   | null;
 
+/**
+ * Portal user ids that should be treated as the same person for co-sponsor
+ * scoping (`added_by`, contact `created_by`):
+ * - the viewer themselves
+ * - other rows with the same email
+ * - same org + same first/last name when at least one email looks scrubbed
+ *   (`redacted…` / missing `@`) — covers duplicate import accounts
+ */
+export async function listEquivalentPortalUserIdsForUser(
+  userId: string,
+): Promise<string[]> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return [];
+  const res = await pool.query<{ id: string }>(
+    `WITH me AS (
+       SELECT
+         id,
+         lower(trim(coalesce(email, ''))) AS email_norm,
+         lower(trim(coalesce(first_name, ''))) AS fn,
+         lower(trim(coalesce(last_name, ''))) AS ln,
+         organization_id
+       FROM users
+       WHERE id = $1::uuid
+     )
+     SELECT DISTINCT u.id::text AS id
+     FROM users u
+     CROSS JOIN me
+     WHERE u.id = me.id
+        OR (
+          me.email_norm <> ''
+          AND position('@' in me.email_norm) > 1
+          AND lower(trim(coalesce(u.email, ''))) = me.email_norm
+        )
+        OR (
+          me.organization_id IS NOT NULL
+          AND u.organization_id = me.organization_id
+          AND me.fn <> ''
+          AND me.ln <> ''
+          AND lower(trim(coalesce(u.first_name, ''))) = me.fn
+          AND lower(trim(coalesce(u.last_name, ''))) = me.ln
+          AND (
+            lower(trim(coalesce(u.email, ''))) LIKE 'redacted%'
+            OR position('@' in lower(trim(coalesce(u.email, '')))) < 1
+            OR me.email_norm LIKE 'redacted%'
+            OR position('@' in me.email_norm) < 1
+          )
+        )`,
+    [uid],
+  );
+  return [
+    ...new Set(
+      res.rows.map((r) => String(r.id ?? "").trim()).filter(Boolean),
+    ),
+  ];
+}
+
+/**
+ * Expand many portal user ids with {@link listEquivalentPortalUserIdsForUser}.
+ */
+export async function listEquivalentPortalUserIdsForUsers(
+  userIds: string[],
+): Promise<string[]> {
+  const seeds = [
+    ...new Set(userIds.map((id) => String(id ?? "").trim()).filter(Boolean)),
+  ];
+  if (seeds.length === 0) return [];
+  const nested = await Promise.all(
+    seeds.map((id) => listEquivalentPortalUserIdsForUser(id)),
+  );
+  return [...new Set(nested.flat().filter(Boolean))];
+}
+
+/**
+ * Portal user ids for every Co-sponsor on this deal (`deal_member` + investment
+ * role), resolved from contact/user keys, then expanded with equivalent accounts.
+ * Used so every authorized co-sponsor sees investors owned by any co-sponsor.
+ */
+export async function listCoSponsorPortalUserIdsOnDeal(
+  dealId: string,
+): Promise<string[]> {
+  const d = String(dealId ?? "").trim();
+  if (!d) return [];
+
+  const res = await pool.query<{ user_id: string }>(
+    `WITH cos AS (
+       SELECT DISTINCT trim(both from dm.contact_member_id) AS member_key
+       FROM deal_member dm
+       WHERE dm.deal_id = $1::uuid
+         AND lower(trim(dm.deal_member_role)) IN ('co-sponsor', 'co sponsor')
+         AND trim(coalesce(dm.contact_member_id, '')) <> ''
+       UNION
+       SELECT DISTINCT trim(both from di.contact_id) AS member_key
+       FROM deal_investment di
+       WHERE di.deal_id = $1::uuid
+         AND lower(trim(di.investor_role)) IN ('co-sponsor', 'co sponsor')
+         AND trim(di.contact_id) <> $2
+         AND trim(coalesce(di.contact_id, '')) <> ''
+     ),
+     by_user_id AS (
+       SELECT u.id::text AS user_id
+       FROM cos
+       INNER JOIN users u ON u.id::text = cos.member_key
+     ),
+     by_contact_email AS (
+       SELECT u.id::text AS user_id
+       FROM cos
+       INNER JOIN contact c ON c.id::text = cos.member_key
+       INNER JOIN users u
+         ON lower(trim(u.email)) = lower(trim(c.email))
+       WHERE trim(coalesce(c.email, '')) <> ''
+         AND position('@' in trim(c.email)) > 1
+     )
+     SELECT DISTINCT user_id FROM by_user_id
+     UNION
+     SELECT DISTINCT user_id FROM by_contact_email`,
+    [d, DEAL_INVESTMENT_AUTOSAVE_CONTACT],
+  );
+
+  const seedIds = res.rows
+    .map((r) => String(r.user_id ?? "").trim())
+    .filter(Boolean);
+  return listEquivalentPortalUserIdsForUsers(seedIds);
+}
+
 function classifyDealMemberRoleRaw(raw: string): {
   lead: boolean;
   admin: boolean;
@@ -199,8 +323,10 @@ export async function listDealIdsWhereViewerIsCoSponsor(
 }
 
 /**
- * Co-sponsors (not company admin, not Lead/Admin sponsor on any deal) see only CRM
- * contacts they created (`contact.created_by`).
+ * Co-sponsors (not company admin, not Lead/Admin sponsor on any deal) get a
+ * narrowed Contacts list from the Investor → Sponsor/Co-sponsor relationship
+ * (Sponsor name on deal investors), plus contacts they created. Those contacts
+ * remain editable. See `listContactsForViewerScoped`.
  */
 export async function viewerShouldSeeOnlySelfCreatedContacts(
   userId: string,

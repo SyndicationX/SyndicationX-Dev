@@ -3,6 +3,7 @@
  * Period / preferred totals follow Woodland Ridge export math (actual/365).
  */
 
+import { formatDateDdMmmYyyy } from "../../../../../../common/utils/formatDateDisplay"
 import type {
   DistributionSetupClass,
   PriorDistributionRecord,
@@ -26,18 +27,13 @@ export type DistributionListMetrics = {
   paymentDate: string
 }
 
-function formatSlashDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim())
-  if (!m) return iso || "—"
-  return `${m[2]}/${m[3]}/${m[1]}`
-}
-
 export function formatPeriodDatesLabel(startIso: string, endIso: string): string {
-  return `${formatSlashDate(startIso)} - ${formatSlashDate(endIso)}`
+  return `${formatDateDdMmmYyyy(startIso)} - ${formatDateDdMmmYyyy(endIso)}`
 }
 
+/** Payment / calendar dates: DD-MMM-YYYY (e.g. 12-Jan-2026). */
 export function formatPaymentDateLabel(iso: string): string {
-  return formatSlashDate(iso)
+  return formatDateDdMmmYyyy(iso)
 }
 
 export function sourceDisplayLabel(source: string | undefined): string {
@@ -52,7 +48,7 @@ export function typeDisplayLabel(row: PriorDistributionRecord): string {
   const src = (row.source ?? "").trim().toLowerCase()
   if (src === "fee" || src === "distribution_fee") {
     const feeType =
-      row.distributionType?.trim() || row.name?.trim() || "Distribution fee"
+      row.distributionType?.trim() || row.name?.trim() || "Acquisition fee"
     return feeType
   }
   const t = (row.distributionType ?? "").trim().toLowerCase()
@@ -66,13 +62,13 @@ export function typeDisplayLabel(row: PriorDistributionRecord): string {
 
 export function deductsFromDisplayLabel(row: PriorDistributionRecord): string {
   const src = (row.source ?? "").trim().toLowerCase()
-  if (src === "fee" || src === "distribution_fee") return "Distribution fee"
+  if (src === "fee" || src === "distribution_fee") return "Acquisition fee"
   const d = (row.deductsFrom ?? "").trim().toLowerCase()
   if (d === "accrued_pref" || d === "accrued" || !d)
     return "Deducts from accrued pref"
   if (d === "current_pref" || d === "current") return "Deducts from current pref"
   if (d === "capital") return "Deducts from capital"
-  if (d === "fee") return "Distribution fee"
+  if (d === "fee") return "Acquisition fee"
   return "Deducts from accrued pref"
 }
 

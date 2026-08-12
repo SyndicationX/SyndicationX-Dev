@@ -189,7 +189,7 @@ export function recalculatePaymentsFromPercentOfClass(
   })
 }
 
-/** Resolve class waterfall total for co-dependent % ↔ payment edits. */
+/** Resolve class waterfall total for a line (used by bulk recalc helpers). */
 export function resolveClassPayForLine(
   lines: InvestorDistributionLine[],
   target: InvestorDistributionLine,
@@ -210,23 +210,18 @@ export function resolveClassPayForLine(
 }
 
 /**
- * After editing one investor's % of class, recompute that investor's payment
- * as classPay × (% ÷ 100). Other investors are unchanged.
+ * After editing one investor's % of class, update only that field.
+ * Payment is left as-is so manual values stay independent.
  */
 export function applyPercentOfClassEdit(params: {
   lines: InvestorDistributionLine[]
   investorId: string
   nextPercent: number
-  classPaymentByClassId: Record<string, number>
+  classPaymentByClassId?: Record<string, number>
 }): InvestorDistributionLine[] {
-  const { lines, investorId, nextPercent, classPaymentByClassId } = params
+  const { lines, investorId, nextPercent } = params
   const target = lines.find((l) => l.investorId === investorId)
   if (!target) return lines
-  const classPay = resolveClassPayForLine(
-    lines,
-    target,
-    classPaymentByClassId,
-  )
   const pct = Math.max(0, Math.min(100, nextPercent))
   return lines
     .map((l) =>
@@ -234,7 +229,6 @@ export function applyPercentOfClassEdit(params: {
         ? {
             ...l,
             percentOfClass: pct,
-            payment: classPay * (pct / 100),
           }
         : l,
     )
@@ -248,35 +242,25 @@ export function applyPercentOfClassEdit(params: {
 }
 
 /**
- * After editing payment, recompute % of class as (payment ÷ classPay) × 100.
+ * After editing payment, update only that field.
+ * % of class is left as-is so manual values stay independent.
  */
 export function applyPaymentEdit(params: {
   lines: InvestorDistributionLine[]
   investorId: string
   nextPayment: number
-  classPaymentByClassId: Record<string, number>
+  classPaymentByClassId?: Record<string, number>
 }): InvestorDistributionLine[] {
-  const { lines, investorId, nextPayment, classPaymentByClassId } = params
+  const { lines, investorId, nextPayment } = params
   const target = lines.find((l) => l.investorId === investorId)
   if (!target) return lines
-  const classPay = resolveClassPayForLine(
-    lines,
-    target,
-    classPaymentByClassId,
-  )
-  const payment = Math.max(0, nextPayment)
-  const pct =
-    classPay > 0
-      ? Math.max(0, Math.min(100, (payment / classPay) * 100))
-      : 0
-  const syncedPayment = classPay > 0 ? classPay * (pct / 100) : payment
+  const payment = Math.round(Math.max(0, nextPayment) * 100) / 100
   return lines
     .map((l) =>
       l.investorId === investorId
         ? {
             ...l,
-            percentOfClass: Math.round(pct * 1000) / 1000,
-            payment: Math.round(syncedPayment * 100) / 100,
+            payment,
           }
         : l,
     )

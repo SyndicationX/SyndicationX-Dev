@@ -1,10 +1,10 @@
 import {
   buildSyndicationXEmailBrandHeaderHtml,
   buildSyndicationXEmailFooterHtml,
+  buildSyndicationXEmailSignatureText,
   SX_EMAIL_BUTTON_STYLE,
   SX_EMAIL_MUTED,
   SX_EMAIL_PAGE_BG,
-  SX_EMAIL_PRIMARY,
 } from "./emailSyndicationXLayout.js";
 
 export interface DealEsignStageNotificationTemplateVars {
@@ -50,16 +50,22 @@ function stageSubject(v: DealEsignStageNotificationTemplateVars): string {
   return `Your signed documents are ready — ${deal}`;
 }
 
+function stageHeadline(v: DealEsignStageNotificationTemplateVars): string {
+  if (v.stage === "investor_signed") return "Investor signature completed";
+  if (v.stage === "investor_turn_to_sign") return "Your documents are ready to sign";
+  return "Your signed documents are ready";
+}
+
 function stageLeadHtml(v: DealEsignStageNotificationTemplateVars): string {
   const deal = escHtml(v.dealName.trim() || "this deal");
   const investor = escHtml(v.investorDisplayName?.trim() || "An investor");
   if (v.stage === "investor_signed") {
-    return `<p style="margin:0 0 16px;"><strong>${investor}</strong> completed their investor signature on <strong>${deal}</strong>. Review and counter-sign in the deal Documents tab when all investors have signed (sequential workflow).</p>`;
+    return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;"><strong>${investor}</strong> completed their investor signature on <strong>${deal}</strong>. Review and counter-sign in the deal Documents tab when all investors have signed (sequential workflow).</p>`;
   }
   if (v.stage === "investor_turn_to_sign") {
-    return `<p style="margin:0 0 16px;">Your e-sign documents for <strong>${deal}</strong> are ready for your signature. Sign in to the investor portal to complete your subscription documents.</p>`;
+    return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;">Your e-sign documents for <strong>${deal}</strong> are ready for your signature. Sign in to the investor portal to complete your subscription documents.</p>`;
   }
-  return `<p style="margin:0 0 16px;">Your sponsor counter-signed your eSign documents for <strong>${deal}</strong>. The fully executed documents are now available in your offering documents.</p>`;
+  return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;">Your sponsor counter-signed your eSign documents for <strong>${deal}</strong>. The fully executed documents are now available in your offering documents.</p>`;
 }
 
 function stageLeadText(v: DealEsignStageNotificationTemplateVars): string {
@@ -79,35 +85,38 @@ export function buildDealEsignStageNotificationEmailHtml(
 ): string {
   const name = v.recipientDisplayName.trim() || "there";
   const brandPlain = v.senderBrand.trim() || "SyndicationX";
-  const brand = escHtml(brandPlain);
   const portalUrl = escHtml(v.portalDealUrl?.trim() ?? "");
   const cta = portalUrl
-    ? `<p style="margin:24px 0 0;text-align:center;">
+    ? `<div style="margin:24px 0;">
          <a href="${portalUrl}" style="${SX_EMAIL_BUTTON_STYLE}">Open deal</a>
-       </p>`
+       </div>`
     : "";
   const docsBlock = documentListHtml(v.documentNames);
 
+  /*
+  // PREVIOUS nested-table card chrome retained for reference — replaced with outreach-style layout
+  */
+
   return `<!DOCTYPE html>
-<html>
-<body style="margin:0;padding:0;background:${SX_EMAIL_PAGE_BG};font-family:Inter,Segoe UI,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-    <tr><td align="center" style="padding:32px 16px;">
-      <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;background:#fff;border-radius:12px;overflow:hidden;">
-        ${buildSyndicationXEmailBrandHeaderHtml()}
-        <tr><td style="padding:28px 32px;color:${SX_EMAIL_PRIMARY};font-size:15px;line-height:1.55;">
-          <p style="margin:0 0 16px;">Hi ${escHtml(name)},</p>
-          ${stageLeadHtml(v)}
-          ${docsBlock}
-          ${cta}
-          <p style="margin:24px 0 0;font-size:13px;color:${SX_EMAIL_MUTED};">
-            This message was sent to ${escHtml(v.recipientEmail.trim())}.
-          </p>
-        </td></tr>
-        ${buildSyndicationXEmailFooterHtml(brandPlain)}
-      </table>
-    </td></tr>
-  </table>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escHtml(stageSubject(v))}</title>
+</head>
+<body style="margin:0;padding:0;background:${SX_EMAIL_PAGE_BG};font-family:Arial,Helvetica,sans-serif;color:#111827;">
+<div style="max-width:560px;margin:0 auto;padding:28px 20px;">
+  ${buildSyndicationXEmailBrandHeaderHtml()}
+  <h1 style="color:#111827;font-size:26px;line-height:1.25;margin:0 0 18px 0;font-weight:700;">${escHtml(stageHeadline(v))}</h1>
+  <p style="margin:0 0 12px;font-size:16px;line-height:1.6;">Hi ${escHtml(name)},</p>
+  ${stageLeadHtml(v)}
+  ${docsBlock}
+  ${cta}
+  <p style="margin:20px 0 0;font-size:13px;color:${SX_EMAIL_MUTED};">
+    This message was sent to ${escHtml(v.recipientEmail.trim())}.
+  </p>
+  ${buildSyndicationXEmailFooterHtml(brandPlain)}
+</div>
 </body>
 </html>`;
 }
@@ -127,7 +136,9 @@ export function buildDealEsignStageNotificationEmailText(
     "",
     v.portalDealUrl?.trim() ? `Open deal: ${v.portalDealUrl.trim()}` : "",
     "",
-    `— ${v.senderBrand.trim() || "SyndicationX"}`,
+    buildSyndicationXEmailSignatureText({
+      companyName: v.senderBrand.trim() || "SyndicationX",
+    }),
   ].filter(Boolean);
   return lines.join("\n");
 }

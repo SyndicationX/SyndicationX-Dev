@@ -15,11 +15,14 @@ import {
   listContactsForViewer,
   loadContactCreatorUsersById,
   patchContactShowOfferingsForViewer,
+  patchContactAccreditationStatusForViewer,
+  patchContactKnownSinceForViewer,
   patchContactStatusForViewer,
   resolveContactDisplayFields,
   updateContactFieldsForViewer,
-  type ContactShowOfferings,
+  type ContactOfferingVisibility,
 } from "../services/contact/contact.service.js";
+import { normalizeContactOfferingVisibility } from "../services/contact/contactOfferingVisibility.service.js";
 import {
   deleteContactEmailTemplateForViewer,
   insertContactEmailTemplate,
@@ -139,13 +142,31 @@ function dedupeOwnersPreserveOrder(items: string[]): string[] {
   return out;
 }
 
-function normalizeShowOfferings(raw: unknown): "show" | "506c" | "hide" {
-  const s = String(raw ?? "show").trim().toLowerCase();
-  if (s === "506c" || s === "hide") return s;
-  return "show";
+function normalizeShowOfferingsVisibility(
+  row: ContactRow,
+): ContactOfferingVisibility | null {
+  return normalizeContactOfferingVisibility(row.showOfferingsVisibility);
+}
+
+function formatKnownSince(raw: unknown): string | null {
+  if (raw == null || raw === "") return null;
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  return m ? m[1]! : null;
 }
 
 function mapContactToJson(row: ContactRow) {
+  const showOfferingsVisibility = normalizeShowOfferingsVisibility(row);
+  const accreditationStatus =
+    row.accreditationStatus != null &&
+    String(row.accreditationStatus).trim() !== ""
+      ? String(row.accreditationStatus).trim()
+      : null;
+  const knownSince = formatKnownSince(row.knownSince);
   return {
     id: row.id,
     organizationId: row.organizationId ?? null,
@@ -171,7 +192,12 @@ function mapContactToJson(row: ContactRow) {
         ? row.createdAt.toISOString()
         : String(row.createdAt),
     status: row.status ?? "active",
-    showOfferings: normalizeShowOfferings(row.showOfferings),
+    showOfferingsVisibility,
+    show_offerings_visibility: showOfferingsVisibility,
+    accreditationStatus,
+    accreditation_status: accreditationStatus,
+    knownSince,
+    known_since: knownSince,
     lastEditReason: row.lastEditReason?.trim() || undefined,
   };
 }
@@ -626,10 +652,25 @@ export async function patchContactStatus(
   }
 }
 
-function parseShowOfferings(raw: unknown): ContactShowOfferings | null {
-  const s = bodyString(raw).trim().toLowerCase();
-  if (s === "show" || s === "506c" || s === "hide") return s;
-  return null;
+function parseShowOfferingsVisibility(
+  raw: unknown,
+): ContactOfferingVisibility | null | undefined {
+  if (raw === null) return null;
+  if (raw === undefined) return undefined;
+  const s = bodyString(raw).trim();
+  if (!s) return null;
+  return normalizeContactOfferingVisibility(s);
+}
+
+function parseKnownSinceInput(raw: unknown): string | null | undefined {
+  if (raw === null) return null;
+  if (raw === undefined) return undefined;
+  const s = bodyString(raw).trim();
+  if (!s) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return undefined;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  if (Number.isNaN(t)) return undefined;
+  return s;
 }
 
 /** PATCH /contacts/:contactId/show-offerings */
@@ -648,13 +689,13 @@ export async function patchContactShowOfferings(
     return;
   }
   const b = req.body as Record<string, unknown>;
-  const showOfferings = parseShowOfferings(
-    b.showOfferings ?? b.show_offerings,
+  const showOfferingsVisibility = parseShowOfferingsVisibility(
+    b.showOfferingsVisibility ?? b.show_offerings_visibility,
   );
-  if (!showOfferings) {
+  if (showOfferingsVisibility === undefined) {
     res.status(400).json({
       message:
-        "showOfferings must be one of: show, 506c, hide",
+        "showOfferingsVisibility must be one of: ALL_OFFERINGS, HIDE_OFFERINGS, 506C_ONLY (or empty/null to clear)",
     });
     return;
   }
@@ -663,7 +704,7 @@ export async function patchContactShowOfferings(
     const updated = await patchContactShowOfferingsForViewer(
       user.id,
       contactId,
-      showOfferings,
+      showOfferingsVisibility,
       user.userRole,
       requestedOrganizationIdFromRequest(req),
     );
@@ -690,6 +731,120 @@ export async function patchContactShowOfferings(
     res.status(500).json({
       message: "Could not update contact offerings visibility",
     });
+  }
+}
+
+/** PATCH /contacts/:contactId/accreditation-status */
+export async function patchContactAccreditationStatus(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const contactId = paramStr(req.params.contactId);
+  if (!contactId) {
+    res.status(400).json({ message: "Contact id required" });
+    return;
+  }
+  const b = req.body as Record<string, unknown>;
+  const raw = b.accreditationStatus ?? b.accreditation_status;
+  if (raw === undefined) {
+    res.status(400).json({ message: "accreditationStatus is required" });
+    return;
+  }
+  const accreditationStatus =
+    raw === null || String(raw).trim() === ""
+      ? null
+      : String(raw).trim().slice(0, 500);
+  try {
+    const updated = await patchContactAccreditationStatusForViewer(
+      user.id,
+      contactId,
+      accreditationStatus,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!updated) {
+      res.status(404).json({ message: "Contact not found or access denied" });
+      return;
+    }
+    const dealCounts = await countDealInvestmentsByContactIdForViewer({
+      viewerUserId: user.id,
+      jwtUserRole: user.userRole,
+      contactIds: [String(updated.id)],
+    });
+    logSocContactWrite({
+      operation: "update",
+      actorUserId: user.id,
+      contactId: String(updated.id),
+    });
+    res.status(200).json({
+      message: "Contact accreditation status updated",
+      contact: await mapContactToJsonWithNames(updated, dealCounts),
+    });
+  } catch (err) {
+    console.error("patchContactAccreditationStatus:", err);
+    res
+      .status(500)
+      .json({ message: "Could not update accreditation status" });
+  }
+}
+
+/** PATCH /contacts/:contactId/known-since */
+export async function patchContactKnownSince(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const contactId = paramStr(req.params.contactId);
+  if (!contactId) {
+    res.status(400).json({ message: "Contact id required" });
+    return;
+  }
+  const b = req.body as Record<string, unknown>;
+  const knownSince = parseKnownSinceInput(b.knownSince ?? b.known_since);
+  if (knownSince === undefined) {
+    res.status(400).json({
+      message: "knownSince must be YYYY-MM-DD or null/empty to clear",
+    });
+    return;
+  }
+  try {
+    const updated = await patchContactKnownSinceForViewer(
+      user.id,
+      contactId,
+      knownSince,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!updated) {
+      res.status(404).json({ message: "Contact not found or access denied" });
+      return;
+    }
+    const dealCounts = await countDealInvestmentsByContactIdForViewer({
+      viewerUserId: user.id,
+      jwtUserRole: user.userRole,
+      contactIds: [String(updated.id)],
+    });
+    logSocContactWrite({
+      operation: "update",
+      actorUserId: user.id,
+      contactId: String(updated.id),
+    });
+    res.status(200).json({
+      message: "Contact known since updated",
+      contact: await mapContactToJsonWithNames(updated, dealCounts),
+    });
+  } catch (err) {
+    console.error("patchContactKnownSince:", err);
+    res.status(500).json({ message: "Could not update known since" });
   }
 }
 

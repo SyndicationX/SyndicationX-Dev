@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:cleanup": "node scripts/cleanup-db-keep-platform-admin.mjs",
+    "audit:investors-added": "tsx scripts/audit-deal-investors-added.ts",
     "test": "tsx --test tests/**/*.test.ts"
   },
   "keywords": [],

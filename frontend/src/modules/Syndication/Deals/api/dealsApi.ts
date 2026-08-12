@@ -2447,6 +2447,11 @@ function normalizeInvestorRowApi(
       "—",
     ),
     ...(() => {
+      const email = firstDefined(raw, ["addedByEmail", "added_by_email"])
+      if (email == null || !String(email).trim()) return {}
+      return { addedByEmail: String(email).trim() }
+    })(),
+    ...(() => {
       const adder = firstDefined(raw, ["addedByUserId", "added_by_user_id"]);
       if (adder == null || !String(adder).trim()) return {}
       return { addedByUserId: String(adder).trim() }

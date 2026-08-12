@@ -129,8 +129,8 @@ export async function isViewerCoSponsorOnDeal(
 }
 
 /**
- * Co-sponsors (and only co-sponsors on this deal) see investors they added.
- * Lead / admin sponsors see the full roster (emails redacted for co-sponsor-added rows).
+ * Co-sponsors see investors associated with them via Sponsor name on the deal
+ * (Investor → Sponsor/Co-sponsor). Lead / admin sponsors see the full roster.
  */
 export async function shouldScopeInvestorsToCoSponsorAddedOnly(
   dealId: string,
@@ -140,9 +140,8 @@ export async function shouldScopeInvestorsToCoSponsorAddedOnly(
 }
 
 /**
- * Co-sponsors only see investors they added (`deal_lp_investor.added_by` and/or
- * `deal_member.added_by` for that contact). Applies to merged LP rows and raw
- * `deal_investment` rows (same contact + id rules).
+ * Co-sponsors see investors whose Sponsor name relationship resolves to them
+ * (including equivalent portal accounts).
  */
 export async function filterMergedLpInvestorsForCoSponsorViewer(
   dealId: string,
@@ -191,7 +190,7 @@ export function syntheticInvestmentFromDealLpInvestor(
     dealId: m.dealId,
     offeringId: "",
     contactId: m.contactMemberId,
-    contactDisplayName: "",
+    contactDisplayName: String(m.investorName ?? "").trim(),
     profileId: m.profileId?.trim() ?? "",
     userInvestorProfileId: m.userInvestorProfileId ?? null,
     investor_role: investorRoleFromDealLpInvestorRow(m),
@@ -339,11 +338,13 @@ function syntheticLpRosterWithInvestmentFinancials(
 }
 
 /**
- * LP tab list: latest `deal_investment` per contact (LP role) plus `deal_lp_investor`
- * rows whose contact has no LP investment row (prefer investment for financials).
- * For LP-investor-only contacts, financials use the latest `deal_investment` row for
- * non-amount fields; **committed** is the sum of all `deal_investment` rows for that
- * contact on this deal (cumulative / multiple rows).
+ * Investors tab list: union of everyone on this deal from
+ * `deal_lp_investor` and `deal_investment` (one row per person).
+ *
+ * Prefer an LP-role `deal_investment` when present; otherwise the latest
+ * investment of any role; otherwise a synthetic row from the LP roster.
+ * For LP contacts, **committed** is the sum of all `deal_investment` rows for
+ * that contact on this deal (cumulative / multiple rows).
  */
 export async function listMergedLpInvestorsForDeal(
   dealId: string,
@@ -403,39 +404,50 @@ export async function listMergedLpInvestorsForDeal(
     return rawToCanonical.get(k) ?? `id:${k}`;
   }
 
-  const invCanonicalKeys = new Set<string>();
-  for (const k of latestInv.keys()) {
-    const c = canonicalOf(k);
-    if (c) invCanonicalKeys.add(c);
-  }
-  const anyRoleByCanonical = new Map<string, DealInvestmentRow>();
-  for (const [k, inv] of latestInvAnyRole) {
+  /** One preferred investment row per person (LP role wins when available). */
+  const preferredInvByCanonical = new Map<string, DealInvestmentRow>();
+  for (const [k, inv] of latestInv) {
     const c = canonicalOf(k);
     if (!c) continue;
-    const prev = anyRoleByCanonical.get(c);
-    if (!prev || new Date(inv.createdAt) > new Date(prev.createdAt))
-      anyRoleByCanonical.set(c, inv);
+    preferredInvByCanonical.set(
+      c,
+      pickPreferredLpInvestmentRow(preferredInvByCanonical.get(c), inv),
+    );
+  }
+  for (const [k, inv] of latestInvAnyRole) {
+    const c = canonicalOf(k);
+    if (!c || preferredInvByCanonical.has(c)) continue;
+    preferredInvByCanonical.set(c, inv);
   }
 
-  const invKeys = new Set(latestInv.keys());
-  const rows: DealInvestmentRow[] = [];
-
-  for (const inv of latestInv.values()) rows.push(inv);
-
+  const rosterByCanonical = new Map<string, DealLpInvestorRow>();
   for (const m of roster) {
     const k = normalizeContactKey(m.contactMemberId);
     if (!k) continue;
-    const canonical = canonicalOf(k);
-    if (invKeys.has(k) || (canonical && invCanonicalKeys.has(canonical)))
-      continue;
-    const fin =
-      latestInvAnyRole.get(k) ??
-      (canonical ? anyRoleByCanonical.get(canonical) : undefined);
-    rows.push(
-      fin
-        ? syntheticLpRosterWithInvestmentFinancials(m, fin)
-        : syntheticInvestmentFromDealLpInvestor(m),
-    );
+    const c = canonicalOf(k);
+    if (!c) continue;
+    const prev = rosterByCanonical.get(c);
+    if (!prev || new Date(m.updatedAt) > new Date(prev.updatedAt))
+      rosterByCanonical.set(c, m);
+  }
+
+  const rows: DealInvestmentRow[] = [];
+  const coveredCanonical = new Set<string>();
+
+  for (const [canonical, inv] of preferredInvByCanonical) {
+    const rosterRow = rosterByCanonical.get(canonical);
+    if (rosterRow && !isLpInvestorRole(inv.investor_role)) {
+      rows.push(syntheticLpRosterWithInvestmentFinancials(rosterRow, inv));
+    } else {
+      rows.push(inv);
+    }
+    coveredCanonical.add(canonical);
+  }
+
+  for (const [canonical, m] of rosterByCanonical) {
+    if (coveredCanonical.has(canonical)) continue;
+    rows.push(syntheticInvestmentFromDealLpInvestor(m));
+    coveredCanonical.add(canonical);
   }
 
   const withTotals = rows.map((r) => {
@@ -561,6 +573,7 @@ export async function buildLpInvestorsFromMerged(
   const withAddedBy = await enrichInvestorApiRowsWithAddedBy(
     dealId,
     investorsMerged,
+    viewerUserId,
   );
   const investors = viewerUserId?.trim()
     ? await redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
@@ -771,11 +784,16 @@ export async function upsertDealLpInvestor(
   const distributionAllocationPct = String(
     input.distributionAllocationPercent ?? "",
   ).trim();
+  const investorName = await resolveInvestorNameForUpsert({
+    contactMemberId: cid,
+    contactDisplayName: input.contactDisplayName,
+  });
 
   const [row] = await db
     .insert(dealLpInvestor)
     .values({
       dealId,
+      investorName,
       addedBy: input.addedByUserId,
       contactMemberId: cid,
       email: resolvedEmail || null,
@@ -793,6 +811,7 @@ export async function upsertDealLpInvestor(
     .onConflictDoUpdate({
       target: [dealLpInvestor.dealId, dealLpInvestor.contactMemberId],
       set: {
+        investorName,
         addedBy: sql`COALESCE(${dealLpInvestor.addedBy}, ${input.addedByUserId}::uuid)`,
         email: resolvedEmail || null,
         role: roleToStore,
@@ -867,11 +886,16 @@ export async function updateDealLpInvestorById(
   const distributionAllocationPct = String(
     input.distributionAllocationPercent ?? "",
   ).trim();
+  const investorName = await resolveInvestorNameForUpsert({
+    contactMemberId: cid,
+    contactDisplayName: input.contactDisplayName,
+  });
 
   const [row] = await db
     .update(dealLpInvestor)
     .set({
       contactMemberId: cid,
+      investorName,
       email: resolvedEmail || null,
       role: roleToStore,
       profileId,
@@ -974,6 +998,7 @@ async function resolveDisplayNameForContactMemberId(
   }
   const [cRow] = await db
     .select({
+      fullName: contact.fullName,
       firstName: contact.firstName,
       lastName: contact.lastName,
       email: contact.email,
@@ -982,9 +1007,21 @@ async function resolveDisplayNameForContactMemberId(
     .where(sql`${contact.id}::text = ${cid}`)
     .limit(1);
   if (!cRow) return "";
+  const full = String(cRow.fullName ?? "").trim();
+  if (full) return full;
   const name = `${String(cRow.firstName ?? "").trim()} ${String(cRow.lastName ?? "").trim()}`.trim();
   if (name) return name;
   return String(cRow.email ?? "").trim();
+}
+
+/** Prefer client display name; else resolve from contact / user. */
+async function resolveInvestorNameForUpsert(params: {
+  contactMemberId: string;
+  contactDisplayName?: string | null;
+}): Promise<string> {
+  const fromClient = String(params.contactDisplayName ?? "").trim();
+  if (fromClient && fromClient !== "—") return fromClient;
+  return resolveDisplayNameForContactMemberId(params.contactMemberId);
 }
 
 /** API shape for Edit LP investor — always sourced from `deal_lp_investor`. */
@@ -1005,7 +1042,9 @@ export async function mapDealLpInvestorRowToEditApi(
   investorKind: "lp_roster"
 }> {
   const contactId = String(row.contactMemberId ?? "").trim();
-  const displayName = await resolveDisplayNameForContactMemberId(contactId);
+  const storedName = String(row.investorName ?? "").trim();
+  const displayName =
+    storedName || (await resolveDisplayNameForContactMemberId(contactId));
   const email =
     String(row.email ?? "").trim() ||
     (await resolveEmailForContactMemberId(contactId));

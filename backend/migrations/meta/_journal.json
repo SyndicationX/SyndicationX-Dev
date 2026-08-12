@@ -512,6 +512,41 @@
       "when": 1894200000000,
       "tag": "0073_distribution_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1894250000000,
+      "tag": "0074_contact_offering_visibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1894300000000,
+      "tag": "0075_drop_contact_show_offerings",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1894350000000,
+      "tag": "0076_deal_lp_investor_investor_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1894400000000,
+      "tag": "0077_deal_distribution_funding",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1894450000000,
+      "tag": "0078_user_investor_profiles_shared_stripe_connect",
+      "breakpoints": true
     }
   ]
 }

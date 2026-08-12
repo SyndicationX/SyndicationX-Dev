@@ -11,6 +11,8 @@ export const dealLpInvestor = pgTable(
   "deal_lp_investor",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    /** Denormalized investor full name (from contact / user / client display name). */
+    investorName: text("investor_name").notNull().default(""),
     dealId: uuid("deal_id")
       .notNull()
       .references(() => addDealForm.id, { onDelete: "cascade" }),

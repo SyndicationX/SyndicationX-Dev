@@ -457,7 +457,7 @@ export type DealViewerScope = {
 export async function listAddDealFormsForViewer(
   scope: DealViewerScope,
 ): Promise<AddDealFormRow[]> {
-  if (scope.lpInvestorEmailScopedDealIds?.length) {
+  if (scope.lpInvestorEmailScopedDealIds != null) {
     return listAddDealFormsByIds(scope.lpInvestorEmailScopedDealIds);
   }
   if (scope.coSponsorDashboardDealIds?.length) {

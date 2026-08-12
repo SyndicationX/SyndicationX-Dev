@@ -1,5 +1,6 @@
 import {
   boolean,
+  date,
   jsonb,
   pgTable,
   text,
@@ -40,11 +41,13 @@ export const contact = pgTable("contact", {
   status: varchar("status", { length: 32 }).notNull().default("active"),
   /**
    * Per-contact offering visibility for the investor portal.
-   * `show` | `506c` | `hide`
+   * `ALL_OFFERINGS` | `HIDE_OFFERINGS` | `506C_ONLY` — nullable when unset.
    */
-  showOfferings: varchar("show_offerings", { length: 32 })
-    .notNull()
-    .default("show"),
+  showOfferingsVisibility: varchar("show_offerings_visibility", { length: 32 }),
+  /** Accreditation status label; nullable when unset. */
+  accreditationStatus: text("accreditation_status"),
+  /** Date the relationship with this contact was established; nullable when unset. */
+  knownSince: date("known_since"),
   lastEditReason: text("last_edit_reason"),
   createdBy: uuid("created_by")
     .notNull()

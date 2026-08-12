@@ -1,6 +1,9 @@
 /**
  * Shared SyndicationX transactional email chrome
  * Outlook / Edge / Gmail compatible version
+ *
+ * Signature layout follows a two-column style:
+ *   [logo] | name / title / company / email / phone
  */
 
 export const SX_EMAIL_PRIMARY = "#00477a";
@@ -21,8 +24,8 @@ export const SX_EMAIL_BUTTON_STYLE = `
 /** Subtle secondary text */
 export const SX_EMAIL_MUTED = "#64748b";
 
-/** Card / page background */
-export const SX_EMAIL_PAGE_BG = "#f4f6f8";
+/** Page background — clean white like outreach-style emails */
+export const SX_EMAIL_PAGE_BG = "#ffffff";
 
 /**
  * IMPORTANT:
@@ -32,9 +35,6 @@ export const SX_EMAIL_PAGE_BG = "#f4f6f8";
 const EMAIL_LOGO_PATH =
   "https://syndicationx.com/assets/sx_logo_width_reduced-BOPxOxjB.png";
 
-/**
- * Escape URL for safe HTML attribute usage
- */
 function escapeAttrUrl(u: string): string {
   return u
     .replace(/&/g, "&amp;")
@@ -42,191 +42,217 @@ function escapeAttrUrl(u: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function escHtmlText(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function emailLogoSrc(): string {
+  const override = process.env.EMAIL_LOGO_URL?.trim();
+  return override || EMAIL_LOGO_PATH;
+}
+
+export interface SyndicationXEmailSignatureVars {
+  /** Display name in signature (right column). */
+  senderName?: string;
+  /** Job / role line under the name. */
+  senderTitle?: string;
+  /** Company line (defaults to SyndicationX). */
+  companyName?: string;
+  /** Mailto link text. */
+  senderEmail?: string;
+  /** Tel link text. */
+  senderPhone?: string;
+}
+
+function resolveSignatureVars(
+  overrides?: SyndicationXEmailSignatureVars,
+): Required<
+  Pick<
+    SyndicationXEmailSignatureVars,
+    "senderName" | "senderTitle" | "companyName"
+  >
+> &
+  Pick<SyndicationXEmailSignatureVars, "senderEmail" | "senderPhone"> {
+  const senderName =
+    overrides?.senderName?.trim() ||
+    process.env.EMAIL_SENDER_NAME?.trim() ||
+    process.env.SENDER_DISPLAY_NAME?.trim() ||
+    "SyndicationX";
+  const senderTitle =
+    overrides?.senderTitle?.trim() ||
+    process.env.EMAIL_SENDER_TITLE?.trim() ||
+    "Investor Portal";
+  const companyName =
+    overrides?.companyName?.trim() ||
+    process.env.EMAIL_SENDER_COMPANY?.trim() ||
+    "SyndicationX";
+  const senderEmail =
+    overrides?.senderEmail?.trim() ||
+    process.env.SENDER_EMAIL_ID?.trim() ||
+    "";
+  const senderPhone =
+    overrides?.senderPhone?.trim() ||
+    process.env.EMAIL_SENDER_PHONE?.trim() ||
+    "";
+  return { senderName, senderTitle, companyName, senderEmail, senderPhone };
+}
+
 /**
- * Build logo block
- * Table layout used for Outlook / Edge compatibility
+ * Left: SyndicationX logo · vertical rule · right: name, title, company, email, phone
+ * (table layout for Outlook compatibility)
  */
-export function buildSyndicationXEmailLogoImgHtml(): string {
-  try {
-    const override = process.env.EMAIL_LOGO_URL?.trim();
+export function buildSyndicationXEmailSignatureHtml(
+  overrides?: SyndicationXEmailSignatureVars,
+): string {
+  const v = resolveSignatureVars(overrides);
+  const src = emailLogoSrc();
+  const name = escHtmlText(v.senderName);
+  const title = escHtmlText(v.senderTitle);
+  const company = escHtmlText(v.companyName);
+  const email = v.senderEmail ? escHtmlText(v.senderEmail) : "";
+  const phone = v.senderPhone ? escHtmlText(v.senderPhone) : "";
+  const emailHref = v.senderEmail
+    ? `mailto:${escapeAttrUrl(v.senderEmail)}`
+    : "";
+  const phoneHref = v.senderPhone
+    ? `tel:${escapeAttrUrl(v.senderPhone.replace(/[^\d+]/g, ""))}`
+    : "";
 
-    const src = override || EMAIL_LOGO_PATH;
+  const emailRow = email
+    ? `<a href="${emailHref}" style="color:#007AFF;text-decoration:underline;font-size:14px;line-height:1.45;font-family:Arial,Helvetica,sans-serif;">${email}</a><br />`
+    : "";
+  const phoneRow = phone
+    ? `<a href="${phoneHref}" style="color:#007AFF;text-decoration:underline;font-size:14px;line-height:1.45;font-family:Arial,Helvetica,sans-serif;">${phone}</a>`
+    : "";
 
-    console.log("====================================");
-    console.log("EMAIL LOGO DEBUG");
-    console.log("override =====>", override);
-    console.log("EMAIL_LOGO_PATH =====>", EMAIL_LOGO_PATH);
-    console.log("final src =====>", src);
-    console.log("====================================");
-
-    if (!src) {
-      console.log("Logo src missing");
-      return "";
-    }
-
-    const html = `
-<table
-  role="presentation"
-  width="100%"
-  cellspacing="0"
-  cellpadding="0"
-  border="0"
->
-  <tr>
-    <td align="center" style="padding:20px 0 10px 0;">
-
-      <img
+  const logoCell = src
+    ? `<img
         src="${escapeAttrUrl(src)}"
         alt="SyndicationX"
-        width="220"
+        width="140"
         border="0"
-        style="
-          display:block;
-          width:220px;
-          height:auto;
-          border:0;
-          outline:none;
-          text-decoration:none;
-        "
-      />
+        style="display:block;width:140px;max-width:140px;height:auto;border:0;outline:none;text-decoration:none;"
+      />`
+    : `<span style="font-family:Georgia,Times,'Times New Roman',serif;font-size:18px;font-weight:700;color:${SX_EMAIL_PRIMARY};">SyndicationX</span>`;
 
+  return `
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 0 0;border-collapse:collapse;">
+  <tr>
+    <td valign="middle" style="padding:0 18px 0 0;vertical-align:middle;">
+      ${logoCell}
+    </td>
+    <td width="1" valign="stretch" style="width:1px;border-left:1px solid #d1d5db;padding:0;font-size:0;line-height:0;">&nbsp;</td>
+    <td valign="middle" style="padding:0 0 0 18px;vertical-align:middle;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+      <div style="font-size:15px;font-weight:700;line-height:1.3;color:#111827;margin:0 0 8px 0;">${name}</div>
+      <div style="border-top:1px solid #d1d5db;width:100%;max-width:220px;margin:0 0 8px 0;line-height:0;font-size:0;">&nbsp;</div>
+      <div style="font-size:14px;line-height:1.45;color:#374151;margin:0;">${title}</div>
+      <div style="font-size:14px;line-height:1.45;color:#374151;margin:0 0 6px 0;">${company}</div>
+      ${emailRow}
+      ${phoneRow}
     </td>
   </tr>
 </table>`;
+}
 
-    console.log("Generated logo HTML =====>");
-    console.log(html);
-
-    return html;
-  } catch (error) {
-    console.error("Error generating email logo HTML =====>", error);
-    return "";
-  }
+/** Plain-text counterpart for multipart emails. */
+export function buildSyndicationXEmailSignatureText(
+  overrides?: SyndicationXEmailSignatureVars,
+): string {
+  const v = resolveSignatureVars(overrides);
+  const lines = [v.senderName, v.senderTitle, v.companyName];
+  if (v.senderEmail) lines.push(v.senderEmail);
+  if (v.senderPhone) lines.push(v.senderPhone);
+  return lines.join("\n");
 }
 
 /**
- * Brand header
+ * Build logo block (signature uses a smaller inline logo; this remains for callers).
+ */
+export function buildSyndicationXEmailLogoImgHtml(): string {
+  /*
+  // PREVIOUS centered logo block
+  const html = `
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+  <tr>
+    <td align="center" style="padding:20px 0 10px 0;">
+      <img src="..." alt="SyndicationX" width="220" ... />
+    </td>
+  </tr>
+</table>`;
+  */
+  const src = emailLogoSrc();
+  if (!src) return "";
+  return `
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0;">
+  <tr>
+    <td align="left" style="padding:0;">
+      <img
+        src="${escapeAttrUrl(src)}"
+        alt="SyndicationX"
+        width="140"
+        border="0"
+        style="display:block;width:140px;max-width:140px;height:auto;border:0;outline:none;text-decoration:none;"
+      />
+    </td>
+  </tr>
+</table>`;
+}
+
+/**
+ * Brand header — outreach-style emails start with the body headline; no top brand bar.
  */
 export function buildSyndicationXEmailBrandHeaderHtml(): string {
-  const html = `
-<div
-  style="
-    margin:0 0 22px 0;
-    padding-bottom:18px;
-    border-bottom:1px solid #e2e8f0;
-  "
->
-  <span
-    style="
-      font-family:Arial,Helvetica,sans-serif;
-      font-size:20px;
-      font-weight:700;
-      color:${SX_EMAIL_PRIMARY};
-      letter-spacing:-0.03em;
-    "
-  >
+  /*
+  // PREVIOUS brand header
+  return `
+<div style="margin:0 0 22px 0;padding-bottom:18px;border-bottom:1px solid #e2e8f0;">
+  <span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${SX_EMAIL_PRIMARY};letter-spacing:-0.03em;">
     SyndicationX
   </span>
 </div>`;
-
-  console.log("Brand header HTML =====>");
-  console.log(html);
-
-  return html;
+  */
+  return "";
 }
 
 /**
- * Standard footer
+ * Standard footer — two-column signature (logo | contact details).
  */
 export function buildSyndicationXEmailFooterHtml(
-  senderBrandEsc: string
+  senderBrandEsc?: string,
 ): string {
-  const logo = buildSyndicationXEmailLogoImgHtml();
-
-  const html = `
-<p
-  style="
-    font-size:14px;
-    line-height:1.5;
-    color:${SX_EMAIL_MUTED};
-    margin-top:28px;
-    padding-top:20px;
-    border-top:1px solid #f1f5f9;
-    font-family:Arial,Helvetica,sans-serif;
-  "
->
-  — ${senderBrandEsc}
-</p>
-
+  /*
+  // PREVIOUS footer
+  return `
+<p style="font-size:14px;...">— ${senderBrandEsc}</p>
 ${logo}
-
-<p
-  style="
-    font-size:11px;
-    line-height:1.45;
-    color:#94a3b8;
-    margin:16px 0 0 0;
-    font-family:Arial,Helvetica,sans-serif;
-    text-align:center;
-  "
->
-  You received this email because of activity on SyndicationX.
-</p>`;
-
-  console.log("Footer HTML =====>");
-  console.log(html);
-
-  return html;
+<p style="font-size:11px;...">You received this email because of activity on SyndicationX.</p>`;
+  */
+  const companyName = senderBrandEsc
+    ? senderBrandEsc
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+    : undefined;
+  return buildSyndicationXEmailSignatureHtml(
+    companyName ? { companyName } : undefined,
+  );
 }
 
 /**
- * Auth footer
+ * Auth footer — same signature layout (replaces “Thanks, The SyndicationX team” + logo).
  */
 export function buildSyndicationXEmailAuthFooterHtml(): string {
-  const logo = buildSyndicationXEmailLogoImgHtml();
-
-  const html = `
-<p
-  style="
-    font-size:16px;
-    line-height:1.5;
-    color:#1e293b;
-    margin-top:28px;
-    padding-top:20px;
-    border-top:1px solid #f1f5f9;
-    font-family:Arial,Helvetica,sans-serif;
-  "
->
-  Thanks,
-  <br />
-
-  <span
-    style="
-      color:#475569;
-      font-weight:600;
-    "
-  >
-    The SyndicationX team
-  </span>
-</p>
-
+  /*
+  // PREVIOUS auth footer
+  return `
+<p style="...">Thanks,<br /><span>The SyndicationX team</span></p>
 ${logo}
-
-<p
-  style="
-    font-size:11px;
-    line-height:1.45;
-    color:#94a3b8;
-    margin:16px 0 0 0;
-    font-family:Arial,Helvetica,sans-serif;
-    text-align:center;
-  "
->
-  © 2026 SyndicationX · All rights reserved
-</p>`;
-
-  console.log("Auth footer HTML =====>");
-  console.log(html);
-
-  return html;
+<p style="...">© 2026 SyndicationX · All rights reserved</p>`;
+  */
+  return buildSyndicationXEmailSignatureHtml();
 }

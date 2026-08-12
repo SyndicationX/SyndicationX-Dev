@@ -32,6 +32,16 @@ export type SigninResult = SigninSuccess | SigninFailure;
 export const INVALID_SIGNIN_CREDENTIALS_MESSAGE =
   "Invalid email or password";
 
+/** Email exists and signup is complete, but sign-in credentials failed. */
+export const ACCOUNT_EXISTS_RESET_PASSWORD_MESSAGE =
+  "Your account already exists. Please reset your password to sign in.";
+
+function isUserSignupCompleted(
+  value: string | null | undefined,
+): boolean {
+  return String(value ?? "").trim().toLowerCase() === "true";
+}
+
 /**
  * Sign-in by email only (username lookup disabled).
  */
@@ -67,8 +77,14 @@ export async function signInWithPassword(
       return { ok: false, message: INVALID_SIGNIN_CREDENTIALS_MESSAGE };
     }
     const user_table = row.user;
+    const signupCompleted = isUserSignupCompleted(
+      user_table.userSignupCompleted,
+    );
 
     if (!user_table.passwordHash || user_table.passwordHash.trim() === "") {
+      if (signupCompleted) {
+        return { ok: false, message: ACCOUNT_EXISTS_RESET_PASSWORD_MESSAGE };
+      }
       return { ok: false, message: INVALID_SIGNIN_CREDENTIALS_MESSAGE };
     }
 
@@ -87,13 +103,17 @@ export async function signInWithPassword(
       user_table.passwordHash,
     );
     if (!passwordMatch) {
+      if (isUserSignupCompleted(usertable.userSignupCompleted)) {
+        return {
+          ok: false,
+          message:
+            "Your account setup is not complete. Finish registration before signing in.",
+        };
+      }
       return { ok: false, message: INVALID_SIGNIN_CREDENTIALS_MESSAGE };
     }
 
-    const signupCompleted = String(usertable.userSignupCompleted ?? "")
-      .trim()
-      .toLowerCase();
-    if (signupCompleted !== "true") {
+    if (!isUserSignupCompleted(usertable.userSignupCompleted)) {
       return {
         ok: false,
         message:
@@ -175,6 +195,7 @@ export async function signInWithPassword(
       await mergeLpInvestorFlagsIntoUserPayload(enrichedDetail, {
         email: user_table.email,
         portalRole: user_table.role,
+        userId: String(user_table.id),
       }),
     ];
 

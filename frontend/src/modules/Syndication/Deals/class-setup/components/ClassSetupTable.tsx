@@ -173,7 +173,7 @@ export function ClassSetupTable({
               <th
                 scope="col"
                 className="r"
-                title="Sum of fund-approved investments for this class"
+                title="Sum of funded investments for this class (fund-approved or funds received)"
               >
                 Funded
               </th>
@@ -421,7 +421,7 @@ function TypeSection({
               <td className="r">
                 <span
                   className="cs_num_ro"
-                  title="From fund-approved investments for this class"
+                  title="From funded investments for this class (fund-approved or funds received)"
                 >
                   {formatCurrencyTableDisplay(c.actuallyFunded)}
                 </span>

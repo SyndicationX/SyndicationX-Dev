@@ -86,16 +86,20 @@ export interface DealInvestorRow {
   /** Timestamp when this investment row was first created (invested). */
   investedAtIso?: string
   /** Portal user who added this investor (`deal_lp_investor` / `deal_member.added_by`). */
+  /** Sponsor / Co-sponsor display name for this investor on the deal (Sponsor name column). */
   addedByDisplayName?: string
-  /** `users.id` of the sponsor who added this investor (when API sends it). */
+  /** Email for the Sponsor/Co-sponsor associated with this investor. */
+  addedByEmail?: string
+  /** Portal `users.id` of the Sponsor/Co-sponsor associated with this investor. */
   addedByUserId?: string
-  /** True when `addedByUserId` is a Lead / Admin / Co-sponsor on this deal’s roster. */
+  /** True when that sponsor user is a Lead / Admin / Co-sponsor on this deal’s roster. */
   addedByIsSponsorOnDeal?: boolean
-  /** True when `addedByUserId` is a Co-sponsor on this deal (lead/admin email redaction). */
+  /** True when that sponsor user is a Co-sponsor on this deal (lead/admin email redaction). */
   addedByIsCoSponsorOnDeal?: boolean
   /**
-   * Deal Members tab: total committed (USD) on other investors this member added to the
-   * roster (excludes their own commitment). From API `addedInvestorsCommitted`.
+   * Deal Members “Investors added”: sum of Investors-tab Committed amounts for
+   * investors whose Sponsor name is this member on this deal (excludes own).
+   * From API `addedInvestorsCommitted`.
    */
   addedInvestorsCommitted?: string
   /**

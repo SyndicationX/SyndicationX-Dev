@@ -20,6 +20,7 @@ import {
   resolveDealViewerScope,
   type DealViewerScope,
 } from "../../services/deal/dealAccess.service.js";
+import { filterDealIdsByContactOfferingVisibility } from "../../services/contact/contactOfferingVisibility.service.js";
 import { assignCreatorToDeal } from "../../services/deal/assigningDealUser.service.js";
 import { assignCreatorAsLeadSponsorOnDeal } from "../../services/deal/dealMember.service.js";
 import {
@@ -298,14 +299,60 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
           res.status(403).json({ message: "Not allowed" });
           return;
         }
+        /**
+         * Non-admins must not receive the full org dump — that bypassed
+         * co-sponsor / LP scope and CRM offering visibility (506c-only / hide).
+         * Intersect viewer-scoped deals with the requested organization.
+         */
+        const scoped = await listDealsForViewer(scope);
+        rows = scoped.filter(
+          (r) =>
+            String(r.organizationId ?? "").trim() === orgParam ||
+            scope.organizationId == null ||
+            String(r.organizationId ?? "").trim() ===
+              String(scope.organizationId ?? "").trim(),
+        );
+        // If org filter emptied a valid co-sponsor/LP set (legacy null org_id),
+        // keep the viewer-scoped list instead of falling back to all org deals.
+        if (rows.length === 0 && scoped.length > 0) rows = scoped;
+      } else {
+        rows = await listAddDealFormsByOrganizationId(orgParam);
       }
-      rows = await listAddDealFormsByOrganizationId(orgParam);
     } else {
       rows = await listDealsForViewer(scope);
     }
 
     if (includeParticipantDeals && rows.length > 0) {
       rows = await filterDealsVisibleToInvestorParticipants(rows, scope);
+    }
+
+    /**
+     * Final CRM offering-visibility pass for every list path (orgId shortcut,
+     * co-sponsor, participant). Platform admins skip.
+     */
+    if (!scope.isPlatformAdmin && rows.length > 0) {
+      const emailNorm =
+        includeParticipantViewerEmailNorm ||
+        String(
+          (
+            await db
+              .select({ email: users.email })
+              .from(users)
+              .where(eq(users.id, user.id))
+              .limit(1)
+          )[0]?.email ?? "",
+        )
+          .trim()
+          .toLowerCase();
+      if (emailNorm) {
+        const allowedIds = new Set(
+          await filterDealIdsByContactOfferingVisibility(
+            emailNorm,
+            rows.map((r) => String(r.id ?? "")),
+          ),
+        );
+        rows = rows.filter((r) => allowedIds.has(String(r.id ?? "")));
+      }
     }
 
     const dealIds = rows.map((r) => String(r.id ?? ""));
@@ -341,31 +388,36 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
       }
     }
 
-    const dealsPayload = await Promise.all(
-      rows.map(async (r: AddDealFormRow) => {
-        const id = String(r.id);
-        const n = lpInvestorCounts.get(id) ?? 0;
-        const enriched = await enrichDealListRowForApi(r);
-        const listRow = {
-          ...mapRowToJson(r, {
-            investmentRowCount: n,
-          }).listRow,
-          ...enriched,
-        };
-        const withRole = !shouldAttachLpRole
-          ? listRow
-          : {
-              ...listRow,
-              yourRole: lpRoleByDealId.get(id) ?? "LP Investor",
-            };
-        if (!includeParticipantDeals) return withRole;
-        const rosterReadable = await assertDealIdReadableOrAssignedParticipant(
-          id,
-          scope,
-        );
-        return { ...withRole, rosterReadable };
-      }),
-    );
+    const dealsPayload = (
+      await Promise.all(
+        rows.map(async (r: AddDealFormRow) => {
+          const id = String(r.id);
+          const n = lpInvestorCounts.get(id) ?? 0;
+          const enriched = await enrichDealListRowForApi(r);
+          const listRow = {
+            ...mapRowToJson(r, {
+              investmentRowCount: n,
+            }).listRow,
+            ...enriched,
+          };
+          const withRole = !shouldAttachLpRole
+            ? listRow
+            : {
+                ...listRow,
+                yourRole: lpRoleByDealId.get(id) ?? "LP Investor",
+              };
+          if (!includeParticipantDeals) return withRole;
+          const readable = await assertDealIdReadableOrAssignedParticipant(
+            id,
+            scope,
+          );
+          // Do not return deals the viewer cannot open (e.g. contact offering
+          // visibility Hide / 506c-only) — avoids "Deal not found" on click.
+          if (!readable) return null;
+          return { ...withRole, rosterReadable: true as const };
+        }),
+      )
+    ).filter((row): row is NonNullable<typeof row> => row != null);
 
     res.status(200).json({
       deals: dealsPayload,

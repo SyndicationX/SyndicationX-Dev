@@ -5,18 +5,13 @@ import {
   type DataTableColumn,
 } from "@/common/components/data-table/DataTable"
 import { TableCompactAmountCell } from "@/common/components/card-compact-amount/CardCompactAmount"
+import { formatDateDdMmmYyyy } from "@/common/utils/formatDateDisplay"
 import type { MyDistributionPaymentRow } from "@/modules/Syndication/Deals/distribution-setup/api/myDistributionsApi"
 import { parseMoneyDigits } from "@/modules/Syndication/Deals/utils/offeringMoneyFormat"
 import "@/modules/Syndication/Deals/tabs/distributions/distributions-tab.css"
 
 function formatDistributionDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
+  return formatDateDdMmmYyyy(iso)
 }
 
 function sourceLabel(source: string | undefined): string {

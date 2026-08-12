@@ -77,9 +77,15 @@ export function listWorkspaceDocumentsForOfferingPreview(
     if (isEsignTemplateDocumentsSection(sec)) continue
     for (const d of sec.nestedDocuments) {
       if (isInvestorEsignWorkspaceDocument(d)) continue
-      const scope = effectiveDocumentSharedWithScope(d, sec)
+      const scoped = applyHiddenByDefaultWhenNoAudience(d)
+      const scope = effectiveDocumentSharedWithScope(scoped, sec)
       if (!sectionVisibleOnOfferingPreview(scope, ctx)) continue
-      tryAdd(d)
+      if (
+        ctx.isLpDealWorkspace &&
+        !nestedDocumentHasSharedAudience(scoped)
+      )
+        continue
+      tryAdd(scoped)
     }
   }
 
@@ -98,7 +104,7 @@ export function listWorkspaceDocumentsForOfferingPreview(
 export type SectionSharedWithScope = OfferingPreviewDocSharedWithScope
 
 export function sectionSharedWithDisplay(scope: SectionSharedWithScope): string {
-  if (scope === "not_visible") return "Not visible to anyone"
+  if (scope === "not_visible") return "Hidden by default"
   if (scope === "lp_investor") return "LP portal only"
   return "Offering link"
 }
@@ -128,7 +134,8 @@ function parseSharedWithScope(
   if (rawScope === "offering_page") return "offering_page"
   if (rawScope === "not_visible") return "not_visible"
   const vis = legacyVisibility.trim().toLowerCase()
-  if (vis.includes("not visible")) return "not_visible"
+  if (vis.includes("not visible") || vis.includes("hidden by default"))
+    return "not_visible"
   if (vis.includes("lp") && vis.includes("investor")) return "lp_investor"
   if (vis.includes("offering") && (vis.includes("link") || vis.includes("page")))
     return "offering_page"
@@ -171,7 +178,8 @@ export type NestedPreviewDocument = {
    * Overrides the section scope for this file when set.
    * `offering_page`: offering link + preview (+ LPs when signed in).
    * `lp_investor`: LP portal only.
-   * `not_visible`: hidden from investors / offering link (sponsor workspace only).
+   * `not_visible` / Hidden by default: hidden from investors / offering link until
+   * Shared With recipients are chosen (sponsor workspace only).
    */
   sharedWithScope?: SectionSharedWithScope
   /**
@@ -186,6 +194,34 @@ export type NestedPreviewDocument = {
   esignTemplateFileId?: string
   esignAwaitingSponsorSignature?: boolean
   esignSponsorSigned?: boolean
+}
+
+/** True when Shared With has at least one recipient / All Investors. */
+export function nestedDocumentHasSharedAudience(
+  doc: Pick<
+    NestedPreviewDocument,
+    | "sharedDealClassIds"
+    | "sharedInvestorIds"
+    | "sharedWithAllInvestors"
+    | "sharedSponsorUserIds"
+  >,
+): boolean {
+  if (doc.sharedWithAllInvestors) return true
+  if (doc.sharedDealClassIds.length > 0) return true
+  if (doc.sharedInvestorIds.length > 0) return true
+  if ((doc.sharedSponsorUserIds?.length ?? 0) > 0) return true
+  return false
+}
+
+/**
+ * Docs with no Shared With audience stay Hidden by default until recipients are chosen.
+ */
+export function applyHiddenByDefaultWhenNoAudience(
+  doc: NestedPreviewDocument,
+): NestedPreviewDocument {
+  if (nestedDocumentHasSharedAudience(doc)) return doc
+  if (doc.sharedWithScope === "not_visible") return doc
+  return { ...doc, sharedWithScope: "not_visible" }
 }
 
 export type OfferingPreviewSection = {
@@ -731,7 +767,7 @@ function normalizeNested(
       : undefined
   const esignAwaitingSponsorSignature = Boolean(raw.esignAwaitingSponsorSignature)
   const esignSponsorSigned = Boolean(raw.esignSponsorSigned)
-  return {
+  return applyHiddenByDefaultWhenNoAudience({
     id,
     name,
     url,
@@ -749,7 +785,7 @@ function normalizeNested(
     ...(esignTemplateFileId ? { esignTemplateFileId } : {}),
     ...(esignAwaitingSponsorSignature ? { esignAwaitingSponsorSignature: true } : {}),
     ...(esignSponsorSigned ? { esignSponsorSigned: true } : {}),
-  }
+  })
 }
 
 function normalizeSection(raw: unknown): OfferingPreviewSection | null {

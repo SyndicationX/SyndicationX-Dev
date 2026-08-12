@@ -92,6 +92,33 @@ export const addDealForm = pgTable("add_deal_form", {
    * payment rows. Split cascade derived from class_setup_json.promote.
    */
   distributionSetupJson: text("distribution_setup_json").notNull().default("{}"),
+  /**
+   * Stripe Connect account (Accounts v2) that funds ACH distributions for this deal.
+   * Lead/admin sponsor onboards bank details; payouts debit this account, not platform SaaS billing.
+   */
+  stripeDistributionFundingAccountId: text(
+    "stripe_distribution_funding_account_id",
+  ),
+  stripeDistributionFundingStatus: text("stripe_distribution_funding_status")
+    .notNull()
+    .default("not_started"),
+  stripeDistributionFundingDetailsSubmitted: boolean(
+    "stripe_distribution_funding_details_submitted",
+  )
+    .notNull()
+    .default(false),
+  stripeDistributionFundingPayoutsEnabled: boolean(
+    "stripe_distribution_funding_payouts_enabled",
+  )
+    .notNull()
+    .default(false),
+  stripeDistributionFundingSetupByUserId: uuid(
+    "stripe_distribution_funding_setup_by_user_id",
+  ),
+  stripeDistributionFundingUpdatedAt: timestamp(
+    "stripe_distribution_funding_updated_at",
+    { withTimezone: true },
+  ),
 });
 
 export type AddDealFormRow = typeof addDealForm.$inferSelect;

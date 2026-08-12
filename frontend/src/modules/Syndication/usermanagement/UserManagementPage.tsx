@@ -93,6 +93,10 @@ import { buildMembersCsv, downloadMembersCsv, exportAuditLinesForMembers } from 
 import { notifyMembersExportAudit } from "./membersExportNotifyApi";
 import { buildTableExportFilename } from "../../../common/utils/tableExportFilename";
 import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../common/utils/displayEmail";
+import {
   getCurrentSessionUserEmail,
   openSendMailDraft,
   parseEmailInput,
@@ -1776,7 +1780,7 @@ export default function UserManagementPage({
                   const initials = initialsFromRow(row);
                   const displayName = memberUserCellPrimaryLabel(row);
                   const rawEmail = String(row.email ?? "").trim();
-                  const email = formatValue(row.email);
+                  const email = displayEmail(row.email);
                   const menuOpen = actionMenuRowId === rowId;
                   const rowUserStatus = userStatusForUi(row);
                   const rowAccountStatus = accountStatusForUi(row);
@@ -1822,7 +1826,7 @@ export default function UserManagementPage({
                             >
                               {displayName}
                             </span>
-                            {rawEmail.includes("@") ? (
+                            {isDisplayableEmail(rawEmail) ? (
                               <a
                                 href={`mailto:${encodeURIComponent(rawEmail)}`}
                                 className="um_user_meta_email um_user_meta_email_link"
@@ -1830,7 +1834,9 @@ export default function UserManagementPage({
                                 {rawEmail}
                               </a>
                             ) : (
-                              <span className="um_user_meta_email">{email}</span>
+                              <span className="um_user_meta_email um_status_muted">
+                                {email}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -2082,7 +2088,7 @@ export default function UserManagementPage({
               <ViewReadonlyField
                 Icon={Mail}
                 label="Email"
-                value={formatValue(viewRow.email)}
+                value={displayEmail(viewRow.email)}
               />
               <ViewReadonlyField
                 Icon={User}
@@ -2174,7 +2180,7 @@ export default function UserManagementPage({
               <ViewReadonlyField
                 Icon={Mail}
                 label="Email"
-                value={formatValue(editRow.email)}
+                value={displayEmail(editRow.email)}
               />
             </div>
             <form onSubmit={submitEditMember}>
@@ -2350,7 +2356,7 @@ export default function UserManagementPage({
               <ViewReadonlyField
                 Icon={Mail}
                 label="Email"
-                value={formatValue(suspendRow.email)}
+                value={displayEmail(suspendRow.email)}
               />
             </div>
             <form onSubmit={submitSuspendMember}>

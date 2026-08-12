@@ -166,19 +166,16 @@ function normalizeBundle(raw: Record<string, unknown>): DistributionSetupBundle 
       const investorPayments = paymentsRaw
         .map((p) => {
           const pay = asRecord(p)
-          const payment = moneyField(pay.payment, "")
+          const payment = moneyField(pay.payment, "0")
           const investorId = str(pay.investorId ?? pay.investor_id)
-          if (!investorId || !payment) return null
+          const contactId = str(pay.contactId ?? pay.contact_id)
+          const userEmail = str(pay.userEmail ?? pay.user_email).toLowerCase()
+          // Keep lines that identify an investor somehow (id, contact, or email).
+          if (!investorId && !contactId && !userEmail) return null
           return {
-            investorId,
-            ...(str(pay.contactId ?? pay.contact_id)
-              ? { contactId: str(pay.contactId ?? pay.contact_id) }
-              : {}),
-            ...(str(pay.userEmail ?? pay.user_email)
-              ? {
-                  userEmail: str(pay.userEmail ?? pay.user_email).toLowerCase(),
-                }
-              : {}),
+            investorId: investorId || contactId || userEmail,
+            ...(contactId ? { contactId } : {}),
+            ...(userEmail ? { userEmail } : {}),
             investorName:
               str(pay.investorName ?? pay.investor_name) || "—",
             classId: str(pay.classId ?? pay.class_id),

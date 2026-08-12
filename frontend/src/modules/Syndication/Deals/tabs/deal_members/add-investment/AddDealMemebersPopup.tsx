@@ -26,6 +26,10 @@ import {
 } from "react"
 import type { ReactNode } from "react"
 import { toast } from "../../../../../../common/components/Toast"
+import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../../../../common/utils/displayEmail"
 import { presentFormValidationError } from "../../../../../../common/utils/formValidationFocus"
 import { formatUsPhoneStoredForUi } from "../../../../../../common/phone/usPhoneNumber"
 import {
@@ -73,6 +77,11 @@ import {
   buildDirectoryMemberRosterDropdownOption,
 } from "./dealRosterContactDuplicate"
 import {
+  ensureSelectedMemberDropdownOption,
+  resolveInvestorMemberSelectValue,
+  selectedInvestorDropdownLabel,
+} from "./resolveInvestorMemberSelectValue"
+import {
   addMemberDraftEligibleForBackendAutosave,
   addMemberDraftHasContent,
   clearAddMemberDraft,
@@ -83,7 +92,7 @@ import {
 import type { DealInvestorClass } from "../../../types/deal-investor-class.types"
 import { rowDisplayName } from "../../../../usermanagement/memberAdminShared"
 import {
-  formatPercentTypeInput,
+  formatPercentTypeInputBare,
   moneyAmountOnBlur,
   moneyAmountOnChange,
   sanitizePercentTypingInput,
@@ -125,16 +134,18 @@ const DROPDOWN_TRIGGER_PILL =
 
 function contactOptionLabel(c: ContactRow): string {
   const name = [c.firstName, c.lastName].filter(Boolean).join(" ").trim()
-  if (name && c.email.trim()) return `${name} — ${c.email.trim()}`
-  if (c.email.trim()) return c.email.trim()
+  if (name && isDisplayableEmail(c.email))
+    return `${name} — ${displayEmail(c.email)}`
+  if (isDisplayableEmail(c.email)) return displayEmail(c.email)
   return name || "Contact"
 }
 
 function buildMemberLabel(u: Record<string, unknown>): string {
   const name = rowDisplayName(u)
   const email = String(u.email ?? "").trim()
-  if (name && name !== "—" && email) return `${name} — ${email}`
-  if (email) return email
+  if (name && name !== "—" && isDisplayableEmail(email))
+    return `${name} — ${displayEmail(email)}`
+  if (isDisplayableEmail(email)) return displayEmail(email)
   return name !== "—" ? name : "—"
 }
 
@@ -164,7 +175,7 @@ function InvFormField({
 }: {
   id: string
   label: string
-  Icon: LucideIcon
+  Icon?: LucideIcon
   children: ReactNode
   tight?: boolean
   labelSuffix?: ReactNode
@@ -172,7 +183,9 @@ function InvFormField({
   return (
     <div className={tight ? "um_field add_contact_field_tight" : "um_field"}>
       <label htmlFor={id} className="um_field_label_row">
-        <Icon className="um_field_label_icon" size={17} aria-hidden />
+        {Icon ? (
+          <Icon className="um_field_label_icon" size={17} aria-hidden />
+        ) : null}
         <span>{label}</span>
         {labelSuffix}
       </label>
@@ -187,6 +200,30 @@ function withInvitationMailPolicy(
 ): AddInvestmentFormValues {
   if (!blockInvites) return f
   return { ...f, sendInvitationMail: "no" }
+}
+
+function toPercentInputValue(raw: string | undefined | null): string {
+  const t = sanitizePercentTypingInput(String(raw ?? ""))
+  if (!t) return ""
+  const n = parseFloat(t)
+  if (!Number.isFinite(n)) return ""
+  return Math.max(0, Math.min(100, n)).toFixed(2)
+}
+
+function normalizePercentFormFields(
+  f: AddInvestmentFormValues,
+): AddInvestmentFormValues {
+  return {
+    ...f,
+    percentOfClassOwnership: toPercentInputValue(f.percentOfClassOwnership),
+    percentOfClassDistributions: toPercentInputValue(
+      f.percentOfClassDistributions,
+    ),
+    entityOwnershipPercent: toPercentInputValue(f.entityOwnershipPercent),
+    distributionAllocationPercent: toPercentInputValue(
+      f.distributionAllocationPercent,
+    ),
+  }
 }
 
 function emptyForm(): AddInvestmentFormValues {
@@ -467,7 +504,13 @@ export function AddInvestmentModal({
       ? { investorRole: LP_INVESTOR_ROLE_VALUE }
       : {}
     if (mode === "edit" && initialValues) {
-      setForm({ ...emptyForm(), ...initialValues, ...lpRolePatch })
+      setForm(
+        normalizePercentFormFields({
+          ...emptyForm(),
+          ...initialValues,
+          ...lpRolePatch,
+        }),
+      )
       setBackendInvestmentId(null)
       backendInvestmentIdRef.current = null
       setBackendLpInvestorId(null)
@@ -486,12 +529,14 @@ export function AddInvestmentModal({
     }
     const restored = loadAddMemberDraft(dealId)
     if (mode === "add" && restored && addMemberDraftHasContent(restored)) {
-      setForm({
-        ...emptyForm(),
-        ...restored.form,
-        offeringId: restored.form.offeringId?.trim() || "primary",
-        ...lpRolePatch,
-      })
+      setForm(
+        normalizePercentFormFields({
+          ...emptyForm(),
+          ...restored.form,
+          offeringId: restored.form.offeringId?.trim() || "primary",
+          ...lpRolePatch,
+        }),
+      )
       if (isInvestorEntry) {
         setBackendInvestmentId(null)
         backendInvestmentIdRef.current = null
@@ -961,17 +1006,18 @@ export function AddInvestmentModal({
     ],
   )
 
-  const memberSelectValue = useMemo(() => {
-    const id = form.contactId.trim()
-    if (!id) return ""
-    if (contactRows.some((c) => c.id === id))
-      return `${PREFIX_CONTACT}${id}`
-    if (memberRows.some((u) => String(u.id) === id))
-      return `${PREFIX_USER}${id}`
-    if (MEMBER_SELECT_OPTIONS.some((o) => o.value === id))
-      return `${PREFIX_USER}${id}`
-    return id
-  }, [form.contactId, contactRows, memberRows])
+  const memberSelectValue = useMemo(
+    () =>
+      resolveInvestorMemberSelectValue({
+        contactId: form.contactId,
+        contactEmail: form.contactEmail,
+        contactRows,
+        memberRows,
+        prefixContact: PREFIX_CONTACT,
+        prefixUser: PREFIX_USER,
+      }),
+    [form.contactId, form.contactEmail, contactRows, memberRows],
+  )
 
   const memberDropdownSections = useMemo((): DropdownSelectSection[] => {
     const lsId = leadSponsorContactId?.trim() ?? ""
@@ -1058,15 +1104,91 @@ export function AddInvestmentModal({
         options: directoryOptions,
       })
     }
-    return sections
+    return ensureSelectedMemberDropdownOption({
+      sections,
+      value: memberSelectValue,
+      fallbackLabel: selectedInvestorDropdownLabel({
+        displayName: form.contactDisplayName,
+        email: form.contactEmail,
+      }),
+    })
   }, [
     contactRows,
     memberRows,
     isInvestorEntry,
     leadSponsorContactId,
     form.investorRole,
+    form.contactDisplayName,
+    form.contactEmail,
     memberRosterForGate,
     excludeRowIdForLeadSponsorGate,
+    memberSelectValue,
+  ])
+
+  /** After contacts/members load on edit, keep the investor selected with email shown. */
+  useEffect(() => {
+    const id = form.contactId.trim()
+    if (!id) return
+    if (contactRows.length === 0 && memberRows.length === 0) return
+    const resolved = resolveInvestorMemberSelectValue({
+      contactId: id,
+      contactEmail: form.contactEmail,
+      contactRows,
+      memberRows,
+      prefixContact: PREFIX_CONTACT,
+      prefixUser: PREFIX_USER,
+    })
+    if (!resolved) return
+
+    let nextId = id
+    let nextEmail = String(form.contactEmail ?? "").trim()
+    let nextName = String(form.contactDisplayName ?? "").trim()
+    if (resolved.startsWith(PREFIX_CONTACT)) {
+      nextId = resolved.slice(PREFIX_CONTACT.length).trim()
+      const c = contactRows.find(
+        (row) =>
+          String(row.id).trim().toLowerCase() === nextId.toLowerCase(),
+      )
+      if (c) {
+        if (!nextEmail && isDisplayableEmail(c.email))
+          nextEmail = String(c.email).trim()
+        if (!nextName || nextName === "—") {
+          const label = contactOptionLabel(c)
+          nextName = label.split(" — ")[0]?.trim() || label
+        }
+      }
+    } else if (resolved.startsWith(PREFIX_USER)) {
+      nextId = resolved.slice(PREFIX_USER.length).trim()
+      const u = memberRows.find(
+        (row) =>
+          String(row.id ?? "")
+            .trim()
+            .toLowerCase() === nextId.toLowerCase(),
+      )
+      if (u) {
+        const em = String(u.email ?? "").trim()
+        if (!nextEmail && isDisplayableEmail(em)) nextEmail = em
+        if (!nextName || nextName === "—") {
+          const label = buildMemberLabel(u)
+          nextName = label.split(" — ")[0]?.trim() || label
+        }
+      }
+    }
+
+    const patchNext: Partial<AddInvestmentFormValues> = {}
+    if (nextId && nextId !== id) patchNext.contactId = nextId
+    if (nextEmail && nextEmail !== String(form.contactEmail ?? "").trim())
+      patchNext.contactEmail = nextEmail
+    if (nextName && nextName !== String(form.contactDisplayName ?? "").trim())
+      patchNext.contactDisplayName = nextName
+    if (Object.keys(patchNext).length > 0) patch(patchNext)
+  }, [
+    form.contactId,
+    form.contactEmail,
+    form.contactDisplayName,
+    contactRows,
+    memberRows,
+    patch,
   ])
 
   const handleContactCreated = useCallback(
@@ -1113,7 +1235,7 @@ export function AddInvestmentModal({
     if (!t) return ""
     const n = parseFloat(t)
     if (!Number.isFinite(n)) return ""
-    return `${Math.max(0, Math.min(100, n)).toFixed(2)}%`
+    return Math.max(0, Math.min(100, n)).toFixed(2)
   }
 
   function percentValuesEqual(a: string, b: string): boolean {
@@ -1703,7 +1825,6 @@ export function AddInvestmentModal({
                       <InvFormField
                         id="add-inv-pct-ownership"
                         label="Percent of class (ownership)"
-                        Icon={Percent}
                         tight
                       >
                         <input
@@ -1711,10 +1832,10 @@ export function AddInvestmentModal({
                           type="text"
                           className="deals_add_inv_field_pill"
                           inputMode="decimal"
-                          placeholder="0.00%"
+                          placeholder="0.00"
                           value={form.percentOfClassOwnership ?? ""}
                           onChange={(e) => {
-                            const next = formatPercentTypeInput(
+                            const next = formatPercentTypeInputBare(
                               e.target.value,
                               100,
                             )
@@ -1755,7 +1876,6 @@ export function AddInvestmentModal({
                       <InvFormField
                         id="add-inv-pct-distributions"
                         label="Percent of class (distributions)"
-                        Icon={Percent}
                         tight
                       >
                         <input
@@ -1763,12 +1883,12 @@ export function AddInvestmentModal({
                           type="text"
                           className="deals_add_inv_field_pill"
                           inputMode="decimal"
-                          placeholder="0.00%"
+                          placeholder="0.00"
                           value={form.percentOfClassDistributions ?? ""}
                           onChange={(e) =>
                             patch({
                               percentOfClassDistributions:
-                                formatPercentTypeInput(e.target.value, 100),
+                                formatPercentTypeInputBare(e.target.value, 100),
                             })
                           }
                           onBlur={(e) =>
@@ -1787,7 +1907,7 @@ export function AddInvestmentModal({
                     <div className="add_contact_name_grid">
                       <InvFormField
                         id="add-inv-entity-ownership"
-                        label="Entity Ownership %"
+                        label="Entity Ownership"
                         Icon={Percent}
                         tight
                       >
@@ -1796,11 +1916,11 @@ export function AddInvestmentModal({
                           type="text"
                           className="deals_add_inv_field_pill"
                           inputMode="decimal"
-                          placeholder="0.00%"
+                          placeholder="0.00"
                           value={form.entityOwnershipPercent ?? ""}
                           onChange={(e) =>
                             patch({
-                              entityOwnershipPercent: formatPercentTypeInput(
+                              entityOwnershipPercent: formatPercentTypeInputBare(
                                 e.target.value,
                                 100,
                               ),
@@ -1813,7 +1933,7 @@ export function AddInvestmentModal({
                               ),
                             })
                           }
-                          aria-label="Entity Ownership %"
+                          aria-label="Entity Ownership"
                         />
                       </InvFormField>
 
@@ -1828,12 +1948,12 @@ export function AddInvestmentModal({
                           type="text"
                           className="deals_add_inv_field_pill"
                           inputMode="decimal"
-                          placeholder="0.00%"
+                          placeholder="0.00"
                           value={form.distributionAllocationPercent ?? ""}
                           onChange={(e) =>
                             patch({
                               distributionAllocationPercent:
-                                formatPercentTypeInput(e.target.value, 100),
+                                formatPercentTypeInputBare(e.target.value, 100),
                             })
                           }
                           onBlur={(e) =>

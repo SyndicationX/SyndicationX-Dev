@@ -69,6 +69,7 @@ async function userDetailsShapeWithDealParticipant(
   return mergeLpInvestorFlagsIntoUserPayload(enriched, {
     email: u.email as string | undefined,
     portalRole: u.role as string | undefined,
+    userId,
   });
 }
 

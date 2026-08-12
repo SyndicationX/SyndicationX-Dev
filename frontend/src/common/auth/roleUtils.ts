@@ -137,8 +137,9 @@ export function isDealParticipantUser(): boolean {
 }
 
 /**
- * Investing-only shell when `deal_lp_investor` matched the user’s email with an LP role
- * (`lp_investor_nav` from {@link mergeLpInvestorFlagsIntoUserPayload} — not `deal_member`).
+ * Investing-only shell when session has `lp_investor_nav` (LP-only users).
+ * Dual investor + Lead/Admin/Co-sponsor users get `lp_investor_nav` false so they
+ * can switch to syndicating.
  */
 export function isLpInvestorSessionUser(): boolean {
   const u = getStoredSessionUserRecord();

@@ -88,7 +88,7 @@ export interface DistributionSetupPromote {
   shares: Record<string, string[]>
 }
 
-/** Class percentage row for a Distribution Fee allocation. */
+/** Class percentage row for an Acquisition Fee allocation. */
 export interface DistributionFeeClassSplit {
   classId: string
   /** Percent of fee cash (0–100). */
@@ -96,7 +96,7 @@ export interface DistributionFeeClassSplit {
 }
 
 /**
- * Distribution Fee tab config — fee name + cash window + class split.
+ * Acquisition Fee tab config — fee name + cash window + class split.
  * Class split is user-defined (not assumed GP-only).
  */
 export interface DistributionFeeConfig {
@@ -129,7 +129,7 @@ export interface DistributionSetupBundle {
   priorDistributions: PriorDistributionRecord[]
   classes: DistributionSetupClass[]
   promote: DistributionSetupPromote
-  /** Optional fee allocation configured on the Distribution Fee tab. */
+  /** Optional fee allocation configured on the Acquisition Fee tab. */
   distributionFee?: DistributionFeeConfig
 }
 

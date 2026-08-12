@@ -40,6 +40,10 @@ export function InvestingProfilesRowActions({
   onEdit,
   onExport,
   onSetupPayouts,
+  bankSetupLabel = "Add bank account",
+  onUseExistingBank,
+  useExistingBankLabel = "Use existing bank",
+  onAddDifferentBank,
 }: {
   displayName: string
   kind: RowEntityKind
@@ -50,8 +54,15 @@ export function InvestingProfilesRowActions({
   onView?: () => void
   onEdit?: () => void
   onExport?: () => void
-  /** Opens Stripe-hosted bank onboarding for ACH distributions. */
+  /** Opens hosted bank setup so this profile can receive ACH distributions. */
   onSetupPayouts?: () => void
+  /** Menu label for bank setup (Add vs Update). */
+  bankSetupLabel?: string
+  /** Reuse a bank already linked on another profile. */
+  onUseExistingBank?: () => void
+  useExistingBankLabel?: string
+  /** Start a new Stripe bank for this profile (different from shared ones). */
+  onAddDifferentBank?: () => void
 }) {
   const { viewTitle, editTitle, archiveTitle, exportTitle } = labels(kind)
   const resumeLabel = incompleteDraft ? "Resume" : editTitle
@@ -183,6 +194,24 @@ export function InvestingProfilesRowActions({
                   View
                 </button>
               </li>
+              {kind === "profile" && onUseExistingBank ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="um_kebab_menuitem"
+                    role="menuitem"
+                    onClick={() => run(onUseExistingBank)}
+                  >
+                    <Landmark
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    {useExistingBankLabel}
+                  </button>
+                </li>
+              ) : null}
               {kind === "profile" && onSetupPayouts ? (
                 <li role="none">
                   <button
@@ -197,7 +226,25 @@ export function InvestingProfilesRowActions({
                       strokeWidth={2}
                       aria-hidden
                     />
-                    Set up ACH distributions
+                    {bankSetupLabel}
+                  </button>
+                </li>
+              ) : null}
+              {kind === "profile" && onAddDifferentBank ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="um_kebab_menuitem"
+                    role="menuitem"
+                    onClick={() => run(onAddDifferentBank)}
+                  >
+                    <Landmark
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    Add different bank
                   </button>
                 </li>
               ) : null}
