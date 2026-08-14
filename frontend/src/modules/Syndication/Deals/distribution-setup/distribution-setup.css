@@ -1408,7 +1408,19 @@
 }
 
 .deals_dist_setup_page .ds_fee_complete_row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
   margin-top: 0.35rem;
+}
+
+.deals_dist_setup_page .ds_fee_complete_row .ds_primary_btn {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 1rem;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 /* Creatable Type combobox — input that behaves like a dropdown */

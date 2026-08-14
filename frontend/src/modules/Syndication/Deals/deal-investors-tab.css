@@ -1133,6 +1133,32 @@
   min-width: 0;
 }
 
+.deal_inv_table_panel .um_table.deal_inv_table thead th.deal_inv_th_profile,
+.deal_inv_table_panel .um_table.deal_inv_table tbody td.deal_inv_td_profile,
+.deal_inv_table_panel .deal_inv_table.um_table_members tbody td.deal_inv_td_profile {
+  min-width: 11rem;
+  max-width: 16rem;
+  width: 14rem;
+  vertical-align: middle;
+  white-space: normal !important;
+  overflow: visible;
+  text-overflow: clip;
+  height: auto;
+  min-height: 2.75rem;
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+.deal_inv_profile_full_text {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+  font-size: 0.8125rem;
+  color: var(--um-text, #1f2937);
+}
+
 .deal_inv_table_panel .deal_inv_td_committed {
   max-width: 9em;
   font-variant-numeric: tabular-nums;

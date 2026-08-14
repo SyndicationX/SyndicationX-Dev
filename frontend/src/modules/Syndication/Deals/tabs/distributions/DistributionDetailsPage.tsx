@@ -68,9 +68,6 @@ import {
   DealInvestorViewModal,
   type DealInvestorViewDistributionContext,
 } from "../investors/DealInvestorViewModal"
-import {
-  investorProfileLabel,
-} from "../../constants/investor-profile"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import { isPlatformAdmin } from "../../../../../common/auth/roleUtils"
 import { AchPayoutConfirmModal } from "./AchPayoutConfirmModal"
@@ -150,18 +147,14 @@ function blurFormatPercentClamped(raw: string): string {
   return Math.max(0, Math.min(100, n)).toFixed(2)
 }
 
-/** My Profiles display name, then entity subtitle, then profile type label. */
+/** Profile column temporarily hidden — keep helper with column when re-enabled.
 function distributionInvestorProfileLabel(
   row: DealInvestorRow | null | undefined,
 ): string {
   if (!row) return "—"
-  const named = String(row.userInvestorProfileName ?? "").trim()
-  if (named) return named
-  const subtitle = String(row.entitySubtitle ?? "").trim()
-  if (subtitle && subtitle !== "—") return subtitle
-  const fromId = investorProfileLabel(String(row.profileId ?? "").trim())
-  return fromId !== "—" ? fromId : "—"
+  return dealInvestorProfileDisplayName(row)
 }
+*/
 
 function linesFromStoredPayments(
   distribution: PriorDistributionRecord,
@@ -897,40 +890,41 @@ export function DistributionDetailsPage() {
           )
         },
       },
-      {
-        id: "profile",
-        header: (
-          <span className="deal_dist_th_stack_label">
-            <span>Profile</span>
-            <span>name</span>
-          </span>
-        ),
-        colWidth: "7.5rem",
-        thClassName: "deal_dist_th_profile",
-        tdClassName: "deal_dist_td_profile",
-        sortValue: (row) => {
-          const dealRow =
-            investors.find((inv) => inv.id === row.investorId) ?? null
-          return distributionInvestorProfileLabel(dealRow).toLowerCase()
-        },
-        cell: (row) => {
-          const dealRow =
-            investors.find((inv) => inv.id === row.investorId) ?? null
-          const label = distributionInvestorProfileLabel(dealRow)
-          return (
-            <span
-              className={
-                label === "—"
-                  ? "um_status_muted deal_dist_profile_name"
-                  : "deal_dist_profile_name"
-              }
-              title={label !== "—" ? label : undefined}
-            >
-              {label}
-            </span>
-          )
-        },
-      },
+      // Profile column temporarily hidden (same as Investors tab).
+      // {
+      //   id: "profile",
+      //   header: (
+      //     <span className="deal_dist_th_stack_label">
+      //       <span>Profile</span>
+      //       <span>name</span>
+      //     </span>
+      //   ),
+      //   colWidth: "7.5rem",
+      //   thClassName: "deal_dist_th_profile",
+      //   tdClassName: "deal_dist_td_profile",
+      //   sortValue: (row) => {
+      //     const dealRow =
+      //       investors.find((inv) => inv.id === row.investorId) ?? null
+      //     return distributionInvestorProfileLabel(dealRow).toLowerCase()
+      //   },
+      //   cell: (row) => {
+      //     const dealRow =
+      //       investors.find((inv) => inv.id === row.investorId) ?? null
+      //     const label = distributionInvestorProfileLabel(dealRow)
+      //     return (
+      //       <span
+      //         className={
+      //           label === "—"
+      //             ? "um_status_muted deal_dist_profile_name"
+      //             : "deal_dist_profile_name"
+      //         }
+      //         title={label !== "—" ? label : undefined}
+      //       >
+      //         {label}
+      //       </span>
+      //     )
+      //   },
+      // },
       {
         id: "class",
         header: "Class",

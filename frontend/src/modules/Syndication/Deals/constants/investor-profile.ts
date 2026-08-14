@@ -71,6 +71,16 @@ export function investorProfileLabel(value: string): string {
   return row?.label ?? value
 }
 
+/**
+ * Profile column: Investing → Profiles `profile_name` only (not profile type).
+ */
+export function dealInvestorProfileDisplayName(row: {
+  userInvestorProfileName?: string | null
+}): string {
+  const named = String(row.userInvestorProfileName ?? "").trim()
+  return named || "—"
+}
+
 /** Resolve profile select `value` from a display label (e.g. when API only sent `entitySubtitle`). */
 export function investorProfileIdFromLabel(label: string): string {
   if (!label?.trim()) return ""

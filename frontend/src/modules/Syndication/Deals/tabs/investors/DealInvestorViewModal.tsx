@@ -34,7 +34,10 @@ import { formatDateDdMmmYyyy } from "../../../../../common/utils/formatDateDispl
 import { displayEmail } from "../../../../../common/utils/displayEmail"
 import { fetchDealInvestors } from "../../api/dealsApi"
 import { fetchDistributionSetup } from "../../distribution-setup/api/distributionSetupApi"
-import { investorRoleLabel } from "../../constants/investor-profile"
+import {
+  dealInvestorProfileDisplayName,
+  investorRoleLabel,
+} from "../../constants/investor-profile"
 import {
   dealInvestorStatusDisplayLabel,
   investorFundedColumnLabel,
@@ -153,9 +156,7 @@ function resolveInvestorClassDisplay(
 }
 
 function investmentProfileLabel(row: DealInvestorRow): string {
-  const named = String(row.userInvestorProfileName ?? "").trim()
-  if (named) return named
-  return displayOrDash(row.entitySubtitle)
+  return dealInvestorProfileDisplayName(row)
 }
 
 function countersignedDisplay(row: DealInvestorRow): string {

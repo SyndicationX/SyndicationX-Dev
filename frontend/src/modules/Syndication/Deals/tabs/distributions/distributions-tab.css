@@ -581,11 +581,59 @@
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_name,
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_source,
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_type,
-.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_deducts,
-.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_period {
+.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_deducts {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_period,
+.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_period {
+  width: auto;
+  min-width: 10.5rem !important;
+  max-width: 13rem;
+  vertical-align: middle;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.deal_dist_period_cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.12rem;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.deal_dist_period_name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--um-text, #1f2937);
+  letter-spacing: 0.01em;
+}
+
+.deal_dist_period_range {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 0.28rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.deal_dist_period_date {
+  color: var(--um-text, #1f2937);
+  font-weight: 500;
+}
+
+.deal_dist_period_arrow {
+  color: #9ca3af;
+  font-weight: 400;
+  flex-shrink: 0;
 }
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_name_link {
@@ -624,12 +672,6 @@
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_payments {
   width: 11rem;
   min-width: 11rem !important;
-}
-
-.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_period,
-.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_period {
-  width: auto;
-  min-width: 12rem !important;
 }
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_paydate,

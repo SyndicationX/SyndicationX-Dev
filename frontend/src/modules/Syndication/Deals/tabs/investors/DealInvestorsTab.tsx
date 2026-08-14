@@ -666,7 +666,7 @@ function DealInvestorsPopulated({
         const mailLabel =
           r.invitationMailSent === true ? "email sent" : "not sent";
         const haystack =
-          `${r.displayName} ${r.entitySubtitle} ${r.userDisplayName} ${r.userEmail} ${r.addedByDisplayName ?? ""} ${mailLabel} ${investorFundedColumnLabel(r)}`.toLowerCase();
+          `${r.displayName} ${r.entitySubtitle} ${r.userInvestorProfileName ?? ""} ${r.userDisplayName} ${r.userEmail} ${r.addedByDisplayName ?? ""} ${mailLabel} ${investorFundedColumnLabel(r)}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       if (filterClass) {
@@ -1094,6 +1094,22 @@ function DealInvestorsPopulated({
         cell: (row) => <DealInvestorRoleCell row={row} />,
       },
       */
+      // Profile column temporarily hidden (show profile_name only when linked).
+      // {
+      //   id: "profile",
+      //   header: "Profile",
+      //   colWidth: "14rem",
+      //   thClassName: "deal_inv_th_profile",
+      //   tdClassName: "deal_inv_td_profile",
+      //   sortValue: (row) =>
+      //     dealInvestorProfileDisplayName(row).toLowerCase(),
+      //   cell: (row) => {
+      //     const text = dealInvestorProfileDisplayName(row)
+      //     if (!text || text === "—")
+      //       return <span className="um_status_muted">—</span>
+      //     return <span className="deal_inv_profile_full_text">{text}</span>
+      //   },
+      // },
       {
         id: "investorClass",
         align: "center",
@@ -1139,6 +1155,7 @@ function DealInvestorsPopulated({
             <InvestorClassPillsDisplay
               pillSource={pillSource}
               titleForTooltip={titleForTooltip}
+              disableHoverTooltip
             />
           );
         },
@@ -1838,7 +1855,9 @@ function DealInvestorsPopulated({
           forceHorizontalScroll
           columns={columns}
           rows={filtered}
-          getRowKey={(row, i) => row.id || `inv-${dealId}-${i}`}
+          getRowKey={(row, i) =>
+            row.id ? `${row.id}::${i}` : `inv-${dealId}-${i}`
+          }
           getRowClassName={(row) =>
             investorRowShowsDraftBadge(row) ? "deal_inv_row_draft" : undefined
           }
@@ -2069,17 +2088,22 @@ export const DealInvestorsTab = forwardRef<
   ]);
 
   const mergedInvestors = useMemo(() => {
-    const combined = [...(payload?.investors ?? []), ...localAddedInvestors];
-    const lpOnly = combined.filter((r) => isLpInvestorsTabRow(r));
+    const combined = [...(payload?.investors ?? []), ...localAddedInvestors]
+    /**
+     * Investors API (`lpInvestorsOnly=1`) is already the tab list — one row per
+     * investment. Do not drop rows with a second FE role filter (that was hiding
+     * valid commitments when role metadata differed).
+     */
+    const fromApi = combined.filter((r) => r.id !== ADD_MEMBER_DRAFT_ROW_ID)
     const scopedLpOnly = scopeDealInvestorRowsForViewer(
-      lpOnly,
+      fromApi,
       effectiveViewerRole,
       sessionUserId,
-    );
+    )
     const draftRedundantWithApi = isAddMemberSessionDraftRedundantWithApiRows(
       dealId,
       combined,
-    );
+    )
     const showDraft =
       sessionDraftRow &&
       !draftRedundantWithApi &&
@@ -2087,9 +2111,9 @@ export const DealInvestorsTab = forwardRef<
       !editLpRow &&
       !addInvestmentOpen &&
       !addLpInvestorOpen &&
-      isLpInvestorsTabRow(sessionDraftRow);
-    if (showDraft) return [...scopedLpOnly, sessionDraftRow];
-    return scopedLpOnly;
+      isLpInvestorsTabRow(sessionDraftRow)
+    if (showDraft) return [...scopedLpOnly, sessionDraftRow]
+    return scopedLpOnly
   }, [
     dealId,
     payload,

@@ -27,8 +27,136 @@ export type DistributionListMetrics = {
   paymentDate: string
 }
 
+const MONTH_LONG = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const
+
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const
+
+function parseIsoLocalDate(iso: string): Date | null {
+  const s = String(iso ?? "").trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
+  const d = new Date(`${s}T12:00:00`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** Period table dates: `01 Aug 2026` (spaces, no dashes). */
+export function formatPeriodDateDdMmmYyyy(iso: string): string {
+  const d = parseIsoLocalDate(iso)
+  if (!d) {
+    const fallback = formatDateDdMmmYyyy(iso)
+    return fallback === "—" ? "—" : fallback.replace(/-/g, " ")
+  }
+  const day = String(d.getDate()).padStart(2, "0")
+  const mon = MONTH_SHORT[d.getMonth()] ?? "Jan"
+  return `${day} ${mon} ${d.getFullYear()}`
+}
+
+/** Short period date when year is shown in the period name: `01 Aug`. */
+export function formatPeriodDateDdMmm(iso: string): string {
+  const d = parseIsoLocalDate(iso)
+  if (!d) {
+    const full = formatPeriodDateDdMmmYyyy(iso)
+    if (full === "—") return "—"
+    return full.replace(/\s+\d{4}$/, "")
+  }
+  const day = String(d.getDate()).padStart(2, "0")
+  const mon = MONTH_SHORT[d.getMonth()] ?? "Jan"
+  return `${day} ${mon}`
+}
+
+/**
+ * Calendar label above the date range (e.g. "August 2026", "Q3 2026").
+ * Returns null when the window is irregular / not a clean named period.
+ */
+export function formatPeriodCalendarLabel(
+  startIso: string,
+  endIso: string,
+  period?: DistributionPeriod | string | null,
+): string | null {
+  const start = parseIsoLocalDate(startIso)
+  const end = parseIsoLocalDate(endIso)
+  if (!start || !end) return null
+
+  const kind =
+    period === "monthly" || period === "quarterly" || period === "annual"
+      ? period
+      : null
+
+  if (kind === "monthly" || (!kind && sameCalendarMonth(start, end))) {
+    if (!sameCalendarMonth(start, end)) return null
+    if (start.getDate() !== 1) return null
+    const lastDay = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()
+    if (end.getDate() !== lastDay) return null
+    return `${MONTH_LONG[start.getMonth()]} ${start.getFullYear()}`
+  }
+
+  if (kind === "quarterly" || (!kind && isFullCalendarQuarter(start, end))) {
+    if (!isFullCalendarQuarter(start, end)) return null
+    const q = Math.floor(start.getMonth() / 3) + 1
+    return `Q${q} ${start.getFullYear()}`
+  }
+
+  if (kind === "annual" || (!kind && isFullCalendarYear(start, end))) {
+    if (!isFullCalendarYear(start, end)) return null
+    return String(start.getFullYear())
+  }
+
+  return null
+}
+
+function sameCalendarMonth(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+}
+
+function isFullCalendarQuarter(start: Date, end: Date): boolean {
+  if (start.getFullYear() !== end.getFullYear()) return false
+  if (start.getDate() !== 1) return false
+  const q = Math.floor(start.getMonth() / 3)
+  if (start.getMonth() !== q * 3) return false
+  const endMonth = q * 3 + 2
+  if (end.getMonth() !== endMonth) return false
+  const lastDay = new Date(end.getFullYear(), endMonth + 1, 0).getDate()
+  return end.getDate() === lastDay
+}
+
+function isFullCalendarYear(start: Date, end: Date): boolean {
+  return (
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === 0 &&
+    start.getDate() === 1 &&
+    end.getMonth() === 11 &&
+    end.getDate() === 31
+  )
+}
+
+/** Plain-text period range for CSV / titles: `01 Aug 2026 → 31 Aug 2026`. */
 export function formatPeriodDatesLabel(startIso: string, endIso: string): string {
-  return `${formatDateDdMmmYyyy(startIso)} - ${formatDateDdMmmYyyy(endIso)}`
+  return `${formatPeriodDateDdMmmYyyy(startIso)} → ${formatPeriodDateDdMmmYyyy(endIso)}`
 }
 
 /** Payment / calendar dates: DD-MMM-YYYY (e.g. 12-Jan-2026). */

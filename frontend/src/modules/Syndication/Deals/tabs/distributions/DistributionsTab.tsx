@@ -38,6 +38,7 @@ import {
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 // import { DistributionFeeTab } from "./DistributionFeeTab"
 import { DistributionRowActions } from "./DistributionRowActions"
+import { DistributionPeriodCell } from "./DistributionPeriodCell"
 import { downloadDistributionsExportCsv } from "./utils/distributionsExportCsv"
 import { sanitizePriorDistributions } from "./utils/investorPreferredAllocation"
 import {
@@ -45,7 +46,7 @@ import {
   deductsFromDisplayLabel,
   distributionDisplayName,
   formatPaymentDateLabel,
-  formatPeriodDatesLabel,
+  formatPeriodCalendarLabel,
   sourceDisplayLabel,
   typeDisplayLabel,
   type DistributionListMetrics,
@@ -598,16 +599,22 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       },
       {
         id: "period",
-        header: "Period dates",
-        colWidth: "12rem",
+        header: "Period",
+        colWidth: "11.5rem",
         thClassName: "deal_dist_th_period",
         tdClassName: "deal_dist_td_period",
         sortValue: (row) => row.metrics.periodStart,
-        cell: (row) =>
-          formatPeriodDatesLabel(
-            row.metrics.periodStart,
-            row.metrics.periodEnd,
-          ),
+        cell: (row) => (
+          <DistributionPeriodCell
+            startIso={row.metrics.periodStart}
+            endIso={row.metrics.periodEnd}
+            periodName={formatPeriodCalendarLabel(
+              row.metrics.periodStart,
+              row.metrics.periodEnd,
+              row.period,
+            )}
+          />
+        ),
       },
       {
         id: "paymentDate",

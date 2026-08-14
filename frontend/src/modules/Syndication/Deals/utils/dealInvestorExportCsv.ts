@@ -1,5 +1,8 @@
 import { formatMemberUsername } from "../../usermanagement/memberAdminShared"
-import { investorRoleLabel } from "../constants/investor-profile"
+import {
+  dealInvestorProfileDisplayName,
+  investorRoleLabel,
+} from "../constants/investor-profile"
 import type { DealInvestorRow } from "../types/deal-investors.types"
 import {
   displayAddedInvestorsCommittedAmount,
@@ -67,7 +70,7 @@ export function buildDealInvestorsExportCsv(
     const roleForCsv = investorRoleLabel(row.investorRole ?? "")
     const line = [
       row.displayName,
-      row.entitySubtitle,
+      dealInvestorProfileDisplayName(row),
       roleForCsv,
       invClass,
       dealInvestorStatusForTable(row),

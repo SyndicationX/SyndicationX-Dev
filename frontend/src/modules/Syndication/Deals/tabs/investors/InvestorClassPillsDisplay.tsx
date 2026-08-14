@@ -16,9 +16,12 @@ const MAX_VISIBLE_CLASS_PILLS = 2
 export function InvestorClassPillsDisplay({
   pillSource,
   titleForTooltip,
+  disableHoverTooltip = false,
 }: {
   pillSource: string
   titleForTooltip: string
+  /** When true, render pills only (no hover tooltip). */
+  disableHoverTooltip?: boolean
 }) {
   const tokens = useMemo(
     () => parseInvestorClassTokens(pillSource),
@@ -56,6 +59,8 @@ export function InvestorClassPillsDisplay({
     </div>
   )
 
+  if (disableHoverTooltip) return row
+
   const tooltipPanel =
     overTwo && hiddenTokens.length > 0 ? (
       <ul className="deal_inv_class_tooltip_list">
@@ -67,7 +72,6 @@ export function InvestorClassPillsDisplay({
       <p className="deal_inv_class_tooltip_p">{titleForTooltip}</p>
     )
 
-  /* Always wrap: hover shows full class list / deal line; inline trigger uses pointer cursor */
   return (
     <FormTooltip
       className="deal_inv_class_pills_tooltip_root deal_inv_class_pills_tooltip_always"
