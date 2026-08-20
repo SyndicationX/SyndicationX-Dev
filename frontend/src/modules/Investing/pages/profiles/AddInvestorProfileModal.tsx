@@ -527,28 +527,19 @@ function AchDistributionBankFields({
         Icon={CircleDollarSign}
         error={fieldError.achBankAccountType}
       >
-        <select
+        <DealsCreateDropdownSelect
           id="ap-ach-type"
-          className={invClass(
-            "um_field_select deals_add_inv_field_control",
-            Boolean(fieldError.achBankAccountType),
-          )}
+          options={ACH_BANK_ACCOUNT_TYPE_OPTIONS}
           value={form.achBankAccountType}
-          onChange={(e) =>
-            patch({ achBankAccountType: e.target.value }, "achBankAccountType")
-          }
-          aria-invalid={Boolean(fieldError.achBankAccountType)}
-          aria-describedby={
+          onChange={(v) => patch({ achBankAccountType: v }, "achBankAccountType")}
+          placeholder="Select account type"
+          invalid={Boolean(fieldError.achBankAccountType)}
+          ariaLabel="Type of bank account"
+          ariaDescribedBy={
             fieldError.achBankAccountType ? "ap-ach-type-err" : undefined
           }
-        >
-          <option value="">Select account type</option>
-          {ACH_BANK_ACCOUNT_TYPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          triggerClassName="deals_add_inv_field_control"
+        />
       </InvestingFormField>
       <InvestingFormField
         id="ap-ach-routing"
@@ -2051,29 +2042,34 @@ export function AddInvestorProfileModal({
                 }
                 error={fieldError.profileType}
               >
-                <select
+                <DealsCreateDropdownSelect
                   id="ap-profile-type"
-                  className={invClass(
-                    "um_field_select deals_add_inv_field_control",
-                    Boolean(fieldError.profileType),
-                  )}
+                  options={[
+                    { value: PROFILE_TYPE_INDIVIDUAL, label: "Individual" },
+                    {
+                      value: PROFILE_TYPE_ENTITY_CUSTODIAN,
+                      label: "Custodian IRA or custodian based 401(k)",
+                    },
+                    {
+                      value: PROFILE_TYPE_JOINT_TENANCY,
+                      label: "Joint tenancy",
+                    },
+                    {
+                      value: PROFILE_TYPE_ENTITY_LLC_CORP_TRUST,
+                      label:
+                        "LLC, corp, partnership, trust, solo 401(k), or checkbook IRA",
+                    },
+                  ]}
                   value={profileTypeSelectValue(form)}
-                  onChange={(e) => handleProfileTypeChange(e.target.value)}
-                  aria-invalid={Boolean(fieldError.profileType)}
-                  aria-describedby={
+                  onChange={handleProfileTypeChange}
+                  placeholder="Select profile type"
+                  invalid={Boolean(fieldError.profileType)}
+                  ariaLabel="Profile type"
+                  ariaDescribedBy={
                     fieldError.profileType ? "ap-profile-type-err" : undefined
                   }
-                >
-                  <option value="">Select profile type</option>
-                  <option value={PROFILE_TYPE_INDIVIDUAL}>Individual</option>
-                  <option value={PROFILE_TYPE_ENTITY_CUSTODIAN}>
-                    Custodian IRA or custodian based 401(k)
-                  </option>
-                  <option value={PROFILE_TYPE_JOINT_TENANCY}>Joint tenancy</option>
-                  <option value={PROFILE_TYPE_ENTITY_LLC_CORP_TRUST}>
-                    LLC, corp, partnership, trust, solo 401(k), or checkbook IRA
-                  </option>
-                </select>
+                  triggerClassName="deals_add_inv_field_control"
+                />
               </InvestingFormField>
             </div>
           )}
@@ -2208,22 +2204,15 @@ export function AddInvestorProfileModal({
                     label="Federal tax classification"
                     Icon={FileText}
                   >
-                    <select
+                    <DealsCreateDropdownSelect
                       id="ap-ent-federal-tax"
-                      className="um_field_select deals_add_inv_field_control"
+                      options={FEDERAL_TAX_CLASSIFICATION_OPTIONS}
                       value={form.federalTaxClassification}
-                      onChange={(e) =>
-                        patch({ federalTaxClassification: e.target.value })
-                      }
-                      aria-label="Federal tax classification"
-                    >
-                      <option value="">Select</option>
-                      {FEDERAL_TAX_CLASSIFICATION_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => patch({ federalTaxClassification: v })}
+                      placeholder="Select"
+                      ariaLabel="Federal tax classification"
+                      triggerClassName="deals_add_inv_field_control"
+                    />
                   </InvestingFormField>
                   <InvestingFormField
                     id="ap-ent-ira-partner-ein"
@@ -2454,29 +2443,19 @@ export function AddInvestorProfileModal({
                     }
                     error={fieldError.entitySubType}
                   >
-                    <select
+                    <DealsCreateDropdownSelect
                       id="ap-entity-type"
-                      className={invClass(
-                        "um_field_select deals_add_inv_field_control",
-                        Boolean(fieldError.entitySubType),
-                      )}
+                      options={ENTITY_SUBTYPE_OPTIONS}
                       value={form.entitySubType}
-                      onChange={(e) =>
-                        patch({ entitySubType: e.target.value }, "entitySubType")
-                      }
-                      aria-label="Entity, trust, or plan type"
-                      aria-invalid={Boolean(fieldError.entitySubType)}
-                      aria-describedby={
+                      onChange={(v) => patch({ entitySubType: v }, "entitySubType")}
+                      placeholder="Select"
+                      invalid={Boolean(fieldError.entitySubType)}
+                      ariaLabel="Entity, trust, or plan type"
+                      ariaDescribedBy={
                         fieldError.entitySubType ? "ap-entity-type-err" : undefined
                       }
-                    >
-                      <option value="">Select</option>
-                      {ENTITY_SUBTYPE_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      triggerClassName="deals_add_inv_field_control"
+                    />
                   </InvestingFormField>
                   <InvestingFormField
                     id="ap-ent-federal-no"
@@ -2488,29 +2467,21 @@ export function AddInvestorProfileModal({
                     Icon={FileText}
                     error={fieldError.federalTaxClassification}
                   >
-                    <select
+                    <DealsCreateDropdownSelect
                       id="ap-ent-federal-no"
-                      className={invClass(
-                        "um_field_select deals_add_inv_field_control",
-                        Boolean(fieldError.federalTaxClassification),
-                      )}
+                      options={FEDERAL_TAX_CLASSIFICATION_OPTIONS}
                       value={form.federalTaxClassification}
-                      onChange={(e) =>
+                      onChange={(v) =>
                         patch(
-                          { federalTaxClassification: e.target.value },
+                          { federalTaxClassification: v },
                           "federalTaxClassification",
                         )
                       }
-                      aria-label="Federal tax classification"
-                      aria-invalid={Boolean(fieldError.federalTaxClassification)}
-                    >
-                      <option value="">Select</option>
-                      {FEDERAL_TAX_CLASSIFICATION_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Select"
+                      invalid={Boolean(fieldError.federalTaxClassification)}
+                      ariaLabel="Federal tax classification"
+                      triggerClassName="deals_add_inv_field_control"
+                    />
                   </InvestingFormField>
                   <InvestingFormField
                     id="ap-entity-disregarded"
@@ -3028,12 +2999,16 @@ export function AddInvestorProfileModal({
                   />
                 }
               >
-                <select
+                <DealsCreateDropdownSelect
                   id="ap-dm"
-                  className="um_field_select deals_add_inv_field_control"
+                  options={[
+                    { value: "ach", label: "ACH (recommended)" },
+                    { value: "check", label: "Check" },
+                    { value: "other", label: "Other" },
+                  ]}
                   value={form.distributionMethod}
-                  onChange={(e) => {
-                    const v = e.target.value as DistributionMethod
+                  onChange={(next) => {
+                    const v = next as DistributionMethod
                     const clearedAch = {
                       achRoutingNumber: "",
                       achAccountNumber: "",
@@ -3080,11 +3055,9 @@ export function AddInvestorProfileModal({
                             ] as const),
                     )
                   }}
-                >
-                  <option value="ach">ACH (recommended)</option>
-                  <option value="check">Check</option>
-                  <option value="other">Other</option>
-                </select>
+                  ariaLabel="Distribution method"
+                  triggerClassName="deals_add_inv_field_control"
+                />
               </InvestingFormField>
               {form.distributionMethod === "check" ? (
                 <>

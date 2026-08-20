@@ -301,6 +301,27 @@ export function getStripePublicConfig(): {
   };
 }
 
+const LOCALHOST_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])$/i;
+
+function stripEnvUrl(raw: string): string {
+  return raw.trim().replace(/^['"]+|['"]+$/g, "").replace(/\/$/, "");
+}
+
+function parseHttpOrigin(raw: string): URL | null {
+  const cleaned = stripEnvUrl(raw);
+  if (!cleaned) return null;
+  try {
+    const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned)
+      ? cleaned
+      : `http://${cleaned}`;
+    const url = new URL(withProtocol);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveFrontendOrigin(): string {
   // This app uses BASE_URL as the SPA / portal origin for Stripe redirects.
   const raw =
@@ -310,5 +331,58 @@ export function resolveFrontendOrigin(): string {
     process.env.CLIENT_URL?.trim() ||
     process.env.PUBLIC_APP_URL?.trim() ||
     "";
-  return raw.replace(/\/$/, "");
+  return stripEnvUrl(raw);
+}
+
+/**
+ * Origin Stripe Account Links / Checkout may redirect back to.
+ * Live mode requires https:// and forbids localhost.
+ */
+export function resolveStripeRedirectOrigin(testMode: boolean):
+  | { ok: true; origin: string }
+  | { ok: false; status: number; message: string } {
+  const candidates = [
+    process.env.STRIPE_RETURN_ORIGIN,
+    process.env.FRONTEND_URL,
+    process.env.APP_URL,
+    process.env.CLIENT_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.BASE_URL,
+  ]
+    .map((value) => parseHttpOrigin(value ?? ""))
+    .filter((url): url is URL => Boolean(url));
+
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      status: 503,
+      message: "BASE_URL must be configured for bank setup.",
+    };
+  }
+
+  const chosen =
+    candidates.find((url) => {
+      if (LOCALHOST_HOST_RE.test(url.hostname)) return testMode;
+      if (!testMode && url.protocol !== "https:") return false;
+      return true;
+    }) ?? null;
+
+  if (!chosen) {
+    if (!testMode && candidates.some((url) => LOCALHOST_HOST_RE.test(url.hostname))) {
+      return {
+        ok: false,
+        status: 503,
+        message:
+          "Stripe live mode cannot use localhost return URLs. Use test API keys (sk_test_...) for local bank setup, or set STRIPE_RETURN_ORIGIN to an https:// public origin (for example an ngrok URL for this app).",
+      };
+    }
+    return {
+      ok: false,
+      status: 503,
+      message:
+        "Stripe return URLs must start with https:// in live mode (http:// localhost is only allowed with test keys). Set STRIPE_RETURN_ORIGIN or FRONTEND_URL to a valid https origin.",
+    };
+  }
+
+  return { ok: true, origin: chosen.origin };
 }

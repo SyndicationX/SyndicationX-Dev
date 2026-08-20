@@ -264,6 +264,20 @@ export async function mergeDealLpRosterIntoFullInvestorRows(
  * Does **not** collapse multiple investments for the same contact into one line —
  * each commitment is listed separately with its own amount.
  */
+/** Lead / Admin / Co-sponsor — Deal Members roles (not LP-only). */
+function isDealMembersSponsorRole(raw: string | null | undefined): boolean {
+  const s = String(raw ?? "").trim().toLowerCase();
+  return (
+    s === "lead sponsor" ||
+    s === "admin sponsor" ||
+    s === "co-sponsor"
+  );
+}
+
+/**
+ * Investors tab: each LP commitment, plus Lead/Admin/Co only when they are also
+ * investors (on the LP roster or have a positive commitment).
+ */
 export async function listMergedLpInvestorsForDeal(
   dealId: string,
 ): Promise<DealInvestmentRow[]> {
@@ -320,7 +334,18 @@ export async function listMergedLpInvestorsForDeal(
   for (const inv of investments) {
     const k = normalizeContactKey(inv.contactId ?? "");
     const canonical = k ? canonicalOf(k) : "";
-    // Keep each investment's own id/amount so multiple commitments stay distinct.
+    const role = inv.investor_role ?? "";
+    const onLpRoster = Boolean(canonical && rosterByCanonical.has(canonical));
+    const lpRole = isLpInvestorRole(role);
+    const sponsorRole = isDealMembersSponsorRole(role);
+    const committed = committedNumericFromDealInvestmentRow(inv);
+
+    // LP commitments always show. Lead/Admin/Co only when they are also investors.
+    const include =
+      lpRole || onLpRoster || (sponsorRole && committed > 0);
+
+    if (!include) continue;
+
     rows.push(inv);
     if (canonical) coveredCanonical.add(canonical);
   }

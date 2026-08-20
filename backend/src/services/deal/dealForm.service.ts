@@ -452,6 +452,12 @@ export type DealViewerScope = {
    * on roster and has no other `deal_member` roles). Company/platform admins excluded upstream.
    */
   coSponsorDashboardDealIds: string[] | null;
+  /**
+   * Investing Mode (and LP-email-scoped viewers): apply CRM Contacts Visibility
+   * (`show_offerings_visibility`) even for Lead / Admin / Co / company roles.
+   * Syndicating workspace lists skip this so sponsors still see every org deal.
+   */
+  enforceContactOfferingVisibility: boolean;
 };
 
 export async function listAddDealFormsForViewer(

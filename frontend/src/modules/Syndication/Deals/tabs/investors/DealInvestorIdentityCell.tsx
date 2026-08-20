@@ -7,14 +7,24 @@ import {
 } from "../../../../../common/utils/displayEmail"
 
 function investorInitials(r: DealInvestorRow): string {
-  const name = String(r.displayName ?? "").trim()
+  const name = investorNameLabel(r)
   const parts = name.split(/\s+/).filter(Boolean)
   if (parts.length >= 2)
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-  if (name.length >= 2) return name.slice(0, 2).toUpperCase()
-  const sub = String(r.entitySubtitle ?? "").trim()
-  if (sub.length >= 2) return sub.slice(0, 2).toUpperCase()
+    return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
+  if (name.length >= 2 && name !== "—") return name.slice(0, 2).toUpperCase()
+  const e = String(r.userEmail ?? "").trim()
+  if (isDisplayableEmail(e) && e.length >= 2) return e.slice(0, 2).toUpperCase()
   return "?"
+}
+
+/** Investor name: first + last when set, otherwise display name. */
+function investorNameLabel(row: DealInvestorRow): string {
+  const first = String(row.firstName ?? "").trim()
+  const last = String(row.lastName ?? "").trim()
+  const fromParts = [first, last].filter(Boolean).join(" ").trim()
+  if (fromParts) return fromParts
+  const display = String(row.displayName ?? "").trim()
+  return display || "—"
 }
 
 export function DealInvestorIdentityCell({
@@ -28,27 +38,27 @@ export function DealInvestorIdentityCell({
   onNameClick?: (row: DealInvestorRow) => void
 }) {
   const initials = investorInitials(row)
-  const displayName = String(row.displayName ?? "").trim() || "—"
+  const investorName = investorNameLabel(row)
   const email = String(row.userEmail ?? "").trim()
   const emailUsable = isDisplayableEmail(email)
   const entitySubtitle = String(row.entitySubtitle ?? "").trim()
-  const line2 = emailUsable
+  const emailLine = emailUsable
     ? email
     : email || !entitySubtitle
       ? displayEmail(email)
       : entitySubtitle
-  const line2IsMuted =
-    line2 === "—" || line2 === EMAIL_UNAVAILABLE_LABEL
-  const line2Title =
+  const emailIsMuted =
+    emailLine === "—" || emailLine === EMAIL_UNAVAILABLE_LABEL
+  const emailTitle =
     emailUsable && entitySubtitle
       ? `${email} · ${entitySubtitle}`
-      : !line2IsMuted
-        ? line2
+      : !emailIsMuted
+        ? emailLine
         : undefined
 
-  const isClickable = Boolean(onNameClick && displayName !== "—")
+  const isClickable = Boolean(onNameClick && investorName !== "—")
   const nameClass = `deal_inv_identity_line1${
-    displayName === "—" ? " um_status_muted" : ""
+    investorName === "—" ? " um_status_muted" : ""
   }${isClickable ? " deal_inv_identity_name_btn" : ""}`
 
   return (
@@ -62,21 +72,21 @@ export function DealInvestorIdentityCell({
             <button
               type="button"
               className={nameClass}
-              title={`View details for ${displayName}`}
-              aria-label={`View details for ${displayName}`}
+              title={`View details for ${investorName}`}
+              aria-label={`View details for ${investorName}`}
               onClick={(e) => {
                 e.stopPropagation()
                 onNameClick?.(row)
               }}
             >
-              {displayName}
+              {investorName}
             </button>
           ) : (
             <span
               className={nameClass}
-              title={displayName !== "—" ? displayName : undefined}
+              title={investorName !== "—" ? investorName : undefined}
             >
-              {displayName}
+              {investorName}
             </span>
           )}
           {isDraft ? (
@@ -91,11 +101,11 @@ export function DealInvestorIdentityCell({
         </div>
         <span
           className={`deal_inv_identity_line2 deal_inv_identity_ellipsis${
-            line2IsMuted ? " um_status_muted" : ""
+            emailIsMuted ? " um_status_muted" : ""
           }`}
-          title={line2Title}
+          title={emailTitle}
         >
-          {line2}
+          {emailLine}
         </span>
       </div>
     </div>

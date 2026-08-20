@@ -288,6 +288,8 @@ type ResolvedPortalUser = {
   displayName: string;
   userDisplayName: string;
   userEmail: string;
+  firstName: string;
+  lastName: string;
 };
 
 /**
@@ -313,6 +315,8 @@ export async function resolveUsersByContactIds(
         displayName: memberName(id),
         userDisplayName: "—",
         userEmail: asEmail,
+        firstName: "",
+        lastName: "",
       });
       continue;
     }
@@ -340,6 +344,8 @@ export async function resolveUsersByContactIds(
       displayName: label,
       userDisplayName: label,
       userEmail: email,
+      firstName: String(u.firstName ?? "").trim(),
+      lastName: String(u.lastName ?? "").trim(),
     });
   }
   const notInUsers = ids.filter((id) => !m.has(id.toLowerCase()));
@@ -355,16 +361,17 @@ export async function resolveUsersByContactIds(
       .where(inArray(contact.id, notInUsers));
     for (const c of contactRows) {
       const key = String(c.id).toLowerCase();
-      const displayName = [c.firstName, c.lastName]
-        .filter(Boolean)
-        .join(" ")
-        .trim()
-        || "—";
+      const firstName = String(c.firstName ?? "").trim();
+      const lastName = String(c.lastName ?? "").trim();
+      const displayName =
+        [firstName, lastName].filter(Boolean).join(" ").trim() || "—";
       const email = c.email?.trim() || "—";
       m.set(key, {
         displayName,
         userDisplayName: "—",
         userEmail: email,
+        firstName,
+        lastName,
       });
     }
   }
@@ -787,6 +794,8 @@ export function mapRowToInvestorApi(
       entitySubtitle: profileLabel(row.profileId),
       userDisplayName: "—",
       userEmail: "—",
+      firstName: "",
+      lastName: "",
       investorClass: row.investorClass?.trim() || "—",
       investorRole: row.investor_role?.trim() || "",
       status: row.status?.trim() || "—",
@@ -849,6 +858,8 @@ export function mapRowToInvestorApi(
     entitySubtitle: profileLabel(row.profileId),
     userDisplayName,
     userEmail,
+    firstName: String(res?.firstName ?? "").trim(),
+    lastName: String(res?.lastName ?? "").trim(),
     investorClass: row.investorClass?.trim() || "—",
     investorRole: row.investor_role?.trim() || "",
     status: row.status?.trim() || "—",

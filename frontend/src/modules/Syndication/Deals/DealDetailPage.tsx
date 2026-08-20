@@ -49,7 +49,7 @@ import { LpDealDetailsPage } from "@/modules/Investing/pages/deals/deal-details"
 import { refreshInvestmentDealDocumentsPreview } from "@/modules/Investing/pages/investments/utils/refreshInvestmentDealDocumentsPreview"
 import { applyOfferingInvestorPreviewJsonFromServer } from "./utils/offeringPreviewServerState"
 import { clearOfferingPreviewRuntime } from "./utils/offeringPreviewRuntimeStore"
-import { invitationMailSentOptimisticKeys } from "./utils/dealInvitationMailStatus"
+import { invitationMailSentOptimisticKeys, omitInvitationMailKeys } from "./utils/dealInvitationMailStatus"
 import { dealStageChipCompactClassName } from "./utils/dealStageChip"
 import { ADD_MEMBER_DRAFT_ROW_ID } from "./tabs/deal_members/add-investment/addMemberDraftInvestorRow"
 import {
@@ -156,6 +156,8 @@ export function DealDetailPage() {
   const [invitationMailSentByRowId, setInvitationMailSentByRowId] = useState<
     Record<string, true>
   >({})
+  const [invitationMailSendingByRowId, setInvitationMailSendingByRowId] =
+    useState<Record<string, true>>({})
   const dealInvestorsTabRef = useRef<DealInvestorsTabHandle>(null)
   const [deal, setDeal] = useState<DealRecord | null | undefined>(undefined)
   const [dealDetailApi, setDealDetailApi] = useState<DealDetailApi | null>(null)
@@ -577,27 +579,35 @@ export function DealDetailPage() {
         return
       }
       if (!dealId) return
+      const sendingKeys = invitationMailSentOptimisticKeys(row)
+      setInvitationMailSendingByRowId((prev) => ({ ...prev, ...sendingKeys }))
       const name = row.displayName?.trim()
-      const result = await postDealMemberInvitationEmail(dealId, {
-        to_email: email!,
-        member_display_name: name && name !== "—" ? name : undefined,
-        invitation_source: "deal_member",
-        deal_member_role: dealRowRoleLabelForInvitationEmail(row),
-        contact_member_id: row.contactId?.trim() || undefined,
-      })
-      if (result.ok) {
-        setInvitationMailSentByRowId((prev) => ({
-          ...prev,
-          ...invitationMailSentOptimisticKeys(row),
-        }))
-        toast.success(
-          "Invitation sent",
-          "The deal invitation email was sent (with this row’s role) using your server email settings.",
+      try {
+        const result = await postDealMemberInvitationEmail(dealId, {
+          to_email: email!,
+          member_display_name: name && name !== "—" ? name : undefined,
+          invitation_source: "deal_member",
+          deal_member_role: dealRowRoleLabelForInvitationEmail(row),
+          contact_member_id: row.contactId?.trim() || undefined,
+        })
+        if (result.ok) {
+          setInvitationMailSentByRowId((prev) => ({
+            ...prev,
+            ...sendingKeys,
+          }))
+          toast.success(
+            "Invitation sent",
+            "The deal invitation email was sent (with this row’s role) using your server email settings.",
+          )
+          setDealMembersRefreshKey((k) => k + 1)
+          void dealInvestorsTabRef.current?.refetchInvestors()
+        } else {
+          toast.error("Could not send email", result.message)
+        }
+      } finally {
+        setInvitationMailSendingByRowId((prev) =>
+          omitInvitationMailKeys(prev, sendingKeys),
         )
-        setDealMembersRefreshKey((k) => k + 1)
-        void dealInvestorsTabRef.current?.refetchInvestors()
-      } else {
-        toast.error("Could not send email", result.message)
       }
     },
     [dealId],
@@ -803,6 +813,7 @@ export function DealDetailPage() {
                 sharedInvestmentModalOpen={sharedInvestmentModalOpen}
                 investorsRefreshKey={dealMembersRefreshKey}
                 invitationMailStatusByRowId={invitationMailSentByRowId}
+                invitationMailSendingByRowId={invitationMailSendingByRowId}
                 onAddMember={() => {
                   setInvestmentModalEntry("member")
                   setRestoreAddMemberSessionDraft(false)

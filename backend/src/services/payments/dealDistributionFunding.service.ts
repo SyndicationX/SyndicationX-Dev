@@ -1,7 +1,10 @@
 import Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { db } from "../../database/db.js";
-import { resolveFrontendOrigin } from "../../config/stripe.config.js";
+import {
+  getStripeConfig,
+  resolveStripeRedirectOrigin,
+} from "../../config/stripe.config.js";
 import { addDealForm, users } from "../../schema/schema.js";
 import { getStripeClient } from "../billing/companyBilling.service.js";
 import { isPortalUserLeadOrAdminSponsorOnDeal } from "../deal/dealMemberScope.service.js";
@@ -14,15 +17,15 @@ import {
   resolveConnectBankAccountSummary,
   type ConnectBankAccountSummary,
 } from "./connectBankAccountSummary.js";
+import {
+  V2_ACCOUNT_INCLUDE,
+  V2_ONBOARDING_CONFIGURATIONS,
+  hasMerchantCardPayments,
+  v2RecipientWithMerchantConfiguration,
+} from "./connectV2AccountConfig.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const V2_ACCOUNT_INCLUDE = [
-  "configuration.recipient",
-  "identity",
-  "requirements",
-] as const;
 
 type ConnectRecipientAccount = Awaited<
   ReturnType<
@@ -232,14 +235,11 @@ export async function createDealDistributionFundingOnboardingLink(params: {
     .where(eq(users.id, userId))
     .limit(1);
 
-  const frontend = resolveFrontendOrigin();
-  if (!frontend) {
-    return {
-      ok: false,
-      status: 503,
-      message: "BASE_URL must be configured for bank setup.",
-    };
-  }
+  const redirect = resolveStripeRedirectOrigin(
+    getStripeConfig()?.testMode ?? false,
+  );
+  if (!redirect.ok) return redirect;
+  const frontend = redirect.origin;
 
   const stripe = getStripeClient();
   try {
@@ -262,15 +262,7 @@ export async function createDealDistributionFundingOnboardingLink(params: {
                 "Deal bank account for investor ACH distributions",
             },
           },
-          configuration: {
-            recipient: {
-              capabilities: {
-                stripe_balance: {
-                  stripe_transfers: { requested: true },
-                },
-              },
-            },
-          },
+          configuration: v2RecipientWithMerchantConfiguration(),
           metadata: {
             flow: "deal_distribution_funding",
             dealId,
@@ -278,12 +270,18 @@ export async function createDealDistributionFundingOnboardingLink(params: {
           },
           include: [...V2_ACCOUNT_INCLUDE],
         },
-        { idempotencyKey: `deal_dist_funding_v2_${dealId}` },
+        { idempotencyKey: `deal_dist_funding_v2m_${dealId}` },
       );
       accountId = account.id;
       await persistDealFundingFromAccount(dealId, account, userId);
     } else {
       account = await retrieveConnectAccount(accountId);
+      if (!hasMerchantCardPayments(account)) {
+        account = await stripe.v2.core.accounts.update(accountId, {
+          configuration: v2RecipientWithMerchantConfiguration(),
+          include: [...V2_ACCOUNT_INCLUDE],
+        });
+      }
       await persistDealFundingFromAccount(dealId, account, userId);
     }
 
@@ -293,7 +291,7 @@ export async function createDealDistributionFundingOnboardingLink(params: {
       use_case: {
         type: "account_onboarding",
         account_onboarding: {
-          configurations: ["recipient"],
+          configurations: [...V2_ONBOARDING_CONFIGURATIONS],
           refresh_url: `${frontend}/deals/${encodedDeal}?tab=distributions&stripe_deal_funding=refresh`,
           return_url: `${frontend}/deals/${encodedDeal}?tab=distributions&stripe_deal_funding=return`,
           collection_options: {

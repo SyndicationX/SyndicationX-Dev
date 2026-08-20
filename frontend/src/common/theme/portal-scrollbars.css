@@ -136,16 +136,24 @@
   background-clip: padding-box;
 }
 
-/* Keep intentional hidden scrollbars (tab strips, etc.) */
+/* Keep intentional hidden scrollbars (tab strips, Documents custom bar). */
 .deals_tabs_scroll,
 .um_segmented_tabs_scroll,
-.tabs_scroll_strip_scroll {
+.tabs_scroll_strip_scroll,
+.deal_docs_ui_table_scroll,
+.data_table_scroll_region.data_table_scroll_region--floating-hscroll,
+.deals_list_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll,
+.deal_inv_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll {
   scrollbar-width: none;
 }
 
 .deals_tabs_scroll::-webkit-scrollbar,
 .um_segmented_tabs_scroll::-webkit-scrollbar,
-.tabs_scroll_strip_scroll::-webkit-scrollbar {
+.tabs_scroll_strip_scroll::-webkit-scrollbar,
+.deal_docs_ui_table_scroll::-webkit-scrollbar,
+.data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
+.deals_list_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
+.deal_inv_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;

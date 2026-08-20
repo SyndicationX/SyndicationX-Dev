@@ -38,6 +38,7 @@ import {
 import { assignCreatorAsLeadSponsorOnDeal } from "./dealMember.service.js";
 import { listLpInvestorDealIdsForUserEmail, listInvestingParticipantDealIdsForUser } from "../investing/lpInvestorAccess.service.js";
 import { isDealAllowedByContactOfferingVisibility } from "../contact/contactOfferingVisibility.service.js";
+import { isInvestingPortalRequest } from "../../middleware/portalMode.middleware.js";
 
 export type { DealViewerScope } from "./dealForm.service.js";
 
@@ -126,6 +127,15 @@ export async function resolveDealViewerScope(
     }
   }
 
+  /**
+   * Contacts Visibility (Show / Hide / 506(c) only) applies in Investing Mode for
+   * LP investors and for Lead, Admin, Co-sponsor, company member, and company admin.
+   * Pure LP email scope always enforces it. Platform admins skip.
+   */
+  const enforceContactOfferingVisibility =
+    !isPlatformAdmin &&
+    (isInvestingPortalRequest() || lpInvestorEmailScopedDealIds != null);
+
   return {
     userId,
     organizationId,
@@ -134,6 +144,7 @@ export async function resolveDealViewerScope(
     assignedParticipationOnly,
     lpInvestorEmailScopedDealIds,
     coSponsorDashboardDealIds,
+    enforceContactOfferingVisibility,
   };
 }
 
@@ -185,21 +196,21 @@ export async function dealAccessibleToViewerScope(
   const dealSecType = dealRow.secType;
 
   /**
-   * CRM contact “Offering Visibility” (Hide / 506c-only) gates **investor** deal
-   * access only. Sponsors with syndication workspace access (deal roster /
-   * co-sponsor dashboard / org deals / company admin) must still open the deal —
-   * otherwise Lead / Co-sponsor users who also have a CRM contact row get
-   * “Deal not found”.
+   * CRM Contacts Visibility (Hide / 506c-only) gates Investing Mode deal access
+   * for LP investors and for Lead / Admin / Co / company roles who switched modes.
+   * Syndicating workspace access still bypasses it so sponsors can open org deals.
    */
   async function passesContactOfferingVisibility(): Promise<boolean> {
     if (scope.isPlatformAdmin) return true;
-    if (await viewerHasSyndicationDealWorkspaceAccess(dealRow, scope))
-      return true;
-    if (
-      scope.assignedParticipationOnly &&
-      (await isUserAssignedToDeal(scope.userId, dealId))
-    ) {
-      return true;
+    if (!scope.enforceContactOfferingVisibility) {
+      if (await viewerHasSyndicationDealWorkspaceAccess(dealRow, scope))
+        return true;
+      if (
+        scope.assignedParticipationOnly &&
+        (await isUserAssignedToDeal(scope.userId, dealId))
+      ) {
+        return true;
+      }
     }
     const emailNorm = await viewerEmailNormForScope(scope);
     if (!emailNorm) return true;

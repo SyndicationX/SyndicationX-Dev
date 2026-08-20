@@ -2,7 +2,10 @@ import Stripe from "stripe";
 import { and, eq, isNull, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../../database/db.js";
-import { resolveFrontendOrigin } from "../../config/stripe.config.js";
+import {
+  getStripeConfig,
+  resolveStripeRedirectOrigin,
+} from "../../config/stripe.config.js";
 import {
   dealInvestment,
   investorDistributionPayouts,
@@ -16,6 +19,12 @@ import {
   type ConnectBankAccountSummary,
 } from "./connectBankAccountSummary.js";
 import {
+  V2_ACCOUNT_INCLUDE,
+  V2_ONBOARDING_CONFIGURATIONS,
+  hasMerchantCardPayments,
+  v2RecipientWithMerchantConfiguration,
+} from "./connectV2AccountConfig.js";
+import {
   debitDealFundingAccountForDistribution,
   handleDealDistributionFundingWebhookEvent,
   requireDealDistributionFundingSource,
@@ -23,12 +32,6 @@ import {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const V2_ACCOUNT_INCLUDE = [
-  "configuration.recipient",
-  "identity",
-  "requirements",
-] as const;
 
 type ConnectRecipientAccount = Awaited<
   ReturnType<
@@ -416,14 +419,11 @@ export async function createInvestorConnectOnboardingLink(params: {
     return { ok: false, status: 404, message: "Investor profile not found" };
   }
 
-  const frontend = resolveFrontendOrigin();
-  if (!frontend) {
-    return {
-      ok: false,
-      status: 503,
-      message: "BASE_URL must be configured for bank setup.",
-    };
-  }
+  const redirect = resolveStripeRedirectOrigin(
+    getStripeConfig()?.testMode ?? false,
+  );
+  if (!redirect.ok) return redirect;
+  const frontend = redirect.origin;
 
   const stripe = getStripeClient();
   try {
@@ -433,8 +433,8 @@ export async function createInvestorConnectOnboardingLink(params: {
     let account: ConnectRecipientAccount;
     if (!accountId) {
       const idempotencyKey = params.forceNew
-        ? `investor_connect_v2_${profileId}_${randomUUID()}`
-        : `investor_connect_v2_${profileId}`;
+        ? `investor_connect_v2m_${profileId}_${randomUUID()}`
+        : `investor_connect_v2m_${profileId}`;
       account = await stripe.v2.core.accounts.create(
         {
           contact_email: row.email,
@@ -453,15 +453,7 @@ export async function createInvestorConnectOnboardingLink(params: {
                 "Investor distributions from private investment offerings",
             },
           },
-          configuration: {
-            recipient: {
-              capabilities: {
-                stripe_balance: {
-                  stripe_transfers: { requested: true },
-                },
-              },
-            },
-          },
+          configuration: v2RecipientWithMerchantConfiguration(),
           metadata: {
             flow: "investor_distribution_recipient",
             investorUserId: userId,
@@ -478,6 +470,12 @@ export async function createInvestorConnectOnboardingLink(params: {
         .where(eq(userInvestorProfiles.id, profileId));
     } else {
       account = await retrieveConnectRecipientAccount(accountId);
+      if (!hasMerchantCardPayments(account)) {
+        account = await stripe.v2.core.accounts.update(accountId, {
+          configuration: v2RecipientWithMerchantConfiguration(),
+          include: [...V2_ACCOUNT_INCLUDE],
+        });
+      }
       await syncConnectAccount(account);
     }
 
@@ -487,7 +485,7 @@ export async function createInvestorConnectOnboardingLink(params: {
       use_case: {
         type: "account_onboarding",
         account_onboarding: {
-          configurations: ["recipient"],
+          configurations: [...V2_ONBOARDING_CONFIGURATIONS],
           refresh_url: `${frontend}/investing/profiles?stripe_connect=refresh&profile_id=${encodedProfile}`,
           return_url: `${frontend}/investing/profiles?stripe_connect=return&profile_id=${encodedProfile}`,
           collection_options: {

@@ -51,7 +51,7 @@ import {
 } from "../../../utils/dealInvestorExportCsv"
 import { buildTableExportFilename } from "../../../../../../common/utils/tableExportFilename"
 import { dealInvestorStatusDisplayLabel } from "../../../utils/dealInvestorTableDisplay"
-import { applyInvitationMailSentMarks } from "../../../utils/dealInvitationMailStatus"
+import { applyInvitationMailSentMarks, rowInvitationMailMarkedSent } from "../../../utils/dealInvitationMailStatus"
 import {
   displayAddedInvestorsCommittedAmount,
   displayInvestorCommittedAmount,
@@ -120,6 +120,8 @@ interface DealMembersTabProps {
    * until the members API includes invitation mail status.
    */
   invitationMailStatusByRowId?: Record<string, true>
+  /** Rows currently sending invitation email — Email status shows a loader. */
+  invitationMailSendingByRowId?: Record<string, true>
 }
 
 export function DealMembersTab({
@@ -137,6 +139,7 @@ export function DealMembersTab({
   onViewMember,
   investorsRefreshKey = 0,
   invitationMailStatusByRowId,
+  invitationMailSendingByRowId,
 }: DealMembersTabProps) {
   const navigate = useNavigate()
   const [rows, setRows] = useState<DealInvestorRow[]>([])
@@ -650,7 +653,15 @@ export function DealMembersTab({
               ? 1
               : 0,
         tdClassName: "deal_inv_td_mail_status",
-        cell: (r) => <InviteMailStatusBadge row={r} />,
+        cell: (r) => (
+          <InviteMailStatusBadge
+            row={r}
+            sending={rowInvitationMailMarkedSent(
+              r,
+              invitationMailSendingByRowId,
+            )}
+          />
+        ),
       },
       {
         id: "actions",
@@ -664,6 +675,10 @@ export function DealMembersTab({
               row={r}
               draftRow={r.id === ADD_MEMBER_DRAFT_ROW_ID}
               invitationMailSent={r.invitationMailSent === true}
+              invitationMailSending={rowInvitationMailMarkedSent(
+                r,
+                invitationMailSendingByRowId,
+              )}
               offeringLinkAvailable={offeringLinkAvailable}
               offeringLinkBlockedBecauseDraft={offeringLinkBlockedBecauseDraft}
               onView={handleViewMember}
@@ -688,6 +703,7 @@ export function DealMembersTab({
     onSendMemberInvitationMail,
     onDeleteMember,
     handleViewMember,
+    invitationMailSendingByRowId,
   ])
 
   function handleExportDealMembers(selected: DealInvestorRow[]) {

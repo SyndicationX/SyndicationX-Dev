@@ -10,6 +10,7 @@ import {
 } from "react";
 import { DataTablePagination } from "../DataTablePagination/DataTablePagination";
 import { attachHorizontalScrollBehavior } from "../../utils/horizontalScrollRegion";
+import { FloatingTableHScroll } from "./FloatingTableHScroll";
 import "./data-table.css";
 
 export type DataTableColumn<T> = {
@@ -89,6 +90,14 @@ type DataTableProps<T> = {
    * Skipped when the table body is empty. Pass `false` to opt out.
    */
   forceHorizontalScroll?: boolean;
+  /**
+   * Floating left/right arrows that stay in the visible page area while the
+   * user scrolls the list vertically (so they do not have to reach the native
+   * scrollbar at the bottom of a tall table).
+   */
+  floatingHorizontalScroll?: boolean;
+  /** Accessible name for the floating left/right control group. */
+  floatingHorizontalScrollLabel?: string;
 };
 
 function sortHeaderLabel(header: ReactNode, columnId: string): string {
@@ -142,11 +151,15 @@ function TableScrollRegion({
   children,
   measureKey,
   forceHorizontalScroll = false,
+  floatingHorizontalScroll = false,
+  floatingHorizontalScrollLabel = "Columns",
 }: {
   className: string;
   children: ReactNode;
   measureKey: string;
   forceHorizontalScroll?: boolean;
+  floatingHorizontalScroll?: boolean;
+  floatingHorizontalScrollLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [overflowX, setOverflowX] = useState(false);
@@ -199,14 +212,25 @@ function TableScrollRegion({
     overflowX || forceHorizontalScroll
       ? "data_table_scroll_region--overflow-x"
       : "",
+    floatingHorizontalScroll ? "data_table_scroll_region--floating-hscroll" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <div ref={ref} className={regionClass}>
-      {children}
-    </div>
+    <>
+      <div ref={ref} className={regionClass}>
+        {children}
+      </div>
+      {floatingHorizontalScroll ? (
+        <FloatingTableHScroll
+          scrollerRef={ref}
+          syncKey={measureKey}
+          active={overflowX || forceHorizontalScroll}
+          ariaLabel={floatingHorizontalScrollLabel}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -228,6 +252,8 @@ export function DataTable<T>({
   isLoading = false,
   stripedRows = true,
   forceHorizontalScroll: forceHorizontalScrollProp,
+  floatingHorizontalScroll = false,
+  floatingHorizontalScrollLabel = "Columns",
 }: DataTableProps<T>) {
   const forceHorizontalScroll =
     forceHorizontalScrollProp ?? visualVariant === "members";
@@ -560,6 +586,10 @@ export function DataTable<T>({
       forceHorizontalScroll={
         forceHorizontalScroll && rows.length > 0 && !isLoading
       }
+      floatingHorizontalScroll={
+        floatingHorizontalScroll && rows.length > 0 && !isLoading
+      }
+      floatingHorizontalScrollLabel={floatingHorizontalScrollLabel}
     >
       {tableEl}
     </TableScrollRegion>

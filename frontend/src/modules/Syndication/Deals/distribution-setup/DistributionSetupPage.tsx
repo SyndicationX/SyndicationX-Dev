@@ -70,6 +70,8 @@ import {
 } from "./utils/hurdleCalculations"
 import { resolveDealInvestmentDateIso } from "./utils/resolveDealInvestmentDate"
 import {
+  allocateInvestorDistributionLines,
+  fillClassPaymentsFromStoredPercents,
   investorCapitalForDistribution,
   resolveInvestorClass,
 } from "../tabs/distributions/utils/investorDistributionAllocation"
@@ -830,7 +832,14 @@ export function DistributionSetupPage() {
         perClassPaid: sim.perClass,
         otherAdjustment: other,
       })
-      if (lines.length > 0) return classTotalsFromInvestorLines(lines)
+      const extra = fillClassPaymentsFromStoredPercents({
+        investors: dealInvestors,
+        classes: bundle.classes,
+        perClass: sim.perClass,
+        alreadyCoveredClassIds: lines.map((l) => l.classId),
+      })
+      const merged = [...lines, ...extra]
+      if (merged.length > 0) return classTotalsFromInvestorLines(merged)
     }
 
     // Fallback: waterfall class nets + Other by actuallyFunded weight.
@@ -932,19 +941,27 @@ export function DistributionSetupPage() {
         const invPayload = await fetchDealInvestors(dealId, {
           lpInvestorsOnly: false,
         })
+        const roster = invPayload.investors ?? []
         const prefLines = allocateInvestorsByPreferredDue({
           distributionAmount: amount,
           periodStartIso: windowForRun.start,
           periodEndIso: windowForRun.end,
           dayCountMode,
           defaultAccrualStartIso: investmentDate || undefined,
-          investors: invPayload.investors ?? [],
+          investors: roster,
           classes: bundle.classes,
           perClassPaid: sim.perClass,
           otherAdjustment: other,
         })
-        if (prefLines.length > 0) {
-          investorPayments = prefLines.map((l) => ({
+        const extra = fillClassPaymentsFromStoredPercents({
+          investors: roster,
+          classes: bundle.classes,
+          perClass: sim.perClass,
+          alreadyCoveredClassIds: prefLines.map((l) => l.classId),
+        })
+        const merged = [...prefLines, ...extra]
+        if (merged.length > 0) {
+          investorPayments = merged.map((l) => ({
             investorId: l.investorId,
             ...(l.contactId ? { contactId: l.contactId } : {}),
             ...(l.userEmail ? { userEmail: l.userEmail } : {}),
@@ -1015,6 +1032,8 @@ export function DistributionSetupPage() {
     const feeCheck = validateDistributionFee({
       fee: distributionFee,
       requireComplete: true,
+      classes: bundle.classes,
+      investors: dealInvestors,
     })
     if (!feeCheck.ok) {
       toast.error("Acquisition fee", feeCheck.message)
@@ -1103,7 +1122,6 @@ export function DistributionSetupPage() {
           lpInvestorsOnly: false,
         })
         const investors = invPayload.investors ?? []
-        const lines: NonNullable<typeof investorPayments> = []
         for (const cls of bundle.classes) {
           const classCash = classPaid[cls.id] ?? 0
           if (classCash <= 0.005) continue
@@ -1114,36 +1132,32 @@ export function DistributionSetupPage() {
             )
             return resolved?.id === cls.id
           })
-          if (inClass.length === 0) continue
-          const weights = inClass.map((inv) =>
-            Math.max(0, investorCapitalForDistribution(inv)),
-          )
-          const payCents = allocateCentsByWeight({
-            totalCents: Math.round(classCash * 100),
-            weights: weights.some((w) => w > 0) ? weights : inClass.map(() => 1),
-          })
-          const classCap = weights.reduce((a, b) => a + b, 0)
-          inClass.forEach((inv, i) => {
-            const capital = investorCapitalForDistribution(inv)
-            const payment = (payCents[i] ?? 0) / 100
-            if (payment <= 0) return
-            lines.push({
-              investorId: String(inv.id ?? ""),
-              ...(inv.contactId ? { contactId: String(inv.contactId) } : {}),
-              ...(inv.userEmail
-                ? { userEmail: String(inv.userEmail) }
-                : {}),
-              investorName: String(inv.displayName ?? "").trim() || "—",
-              classId: cls.id,
-              className: cls.name || "—",
-              capital,
-              percentOfClass:
-                classCap > 0 ? roundMoney((capital / classCap) * 100) : 0,
-              payment,
-            })
-          })
+          if (inClass.length === 0) {
+            toast.error(
+              "Cannot complete",
+              `${cls.name || "A class"} has a percentage allocated but no class investors. Distributions are class-scoped, so that class is not paid and this distribution is not paid to other classes either.`,
+            )
+            return
+          }
         }
-        if (lines.length > 0) investorPayments = lines
+        const lines = allocateInvestorDistributionLines({
+          investors,
+          classes: bundle.classes,
+          perClass: classPaid,
+        })
+        if (lines.length > 0) {
+          investorPayments = lines.map((l) => ({
+            investorId: l.investorId,
+            ...(l.contactId ? { contactId: l.contactId } : {}),
+            ...(l.userEmail ? { userEmail: l.userEmail } : {}),
+            investorName: l.investorName,
+            classId: l.classId,
+            className: l.className,
+            capital: l.capital,
+            percentOfClass: l.percentOfClass,
+            payment: l.payment,
+          }))
+        }
       } catch {
         // Backend fallback still runs without client lines.
       }
@@ -1355,6 +1369,7 @@ export function DistributionSetupPage() {
               <DistributionFeePanel
                 fee={distributionFee}
                 classes={bundle.classes}
+                investors={dealInvestors}
                 completing={completing}
                 onComplete={() => void handleCompleteFee()}
                 onChange={(next) =>

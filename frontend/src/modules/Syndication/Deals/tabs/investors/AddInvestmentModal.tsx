@@ -606,21 +606,16 @@ export function AddInvestmentModal({
                       Icon={Briefcase}
                       tight
                     >
-                      <select
+                      <DropdownSelect
+                        {...MODAL_DROPDOWN_SELECT_PROPS}
                         id="add-inv-offering"
-                        className="um_field_select deals_add_inv_field_control"
+                        options={offeringOptions}
                         value={form.offeringId}
-                        onChange={(e) =>
-                          patch({ offeringId: e.target.value })
-                        }
-                        aria-label="Select offering"
-                      >
-                        {offeringOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => patch({ offeringId: v })}
+                        placeholder="Select offering"
+                        ariaLabel="Select offering"
+                        triggerClassName={DROPDOWN_TRIGGER_PILL}
+                      />
                     </InvFormField>
 
                     <InvFormField
@@ -662,21 +657,18 @@ export function AddInvestmentModal({
                       Icon={IdCard}
                       tight
                     >
-                      <select
+                      <DropdownSelect
+                        {...MODAL_DROPDOWN_SELECT_PROPS}
                         id="add-inv-profile"
-                        className="um_field_select deals_add_inv_field_control"
+                        options={INVESTOR_PROFILE_SELECT_OPTIONS.filter(
+                          (o) => o.value,
+                        ).map((o) => ({ value: o.value, label: o.label }))}
                         value={form.profileId}
-                        onChange={(e) =>
-                          patch({ profileId: e.target.value })
-                        }
-                        aria-label="Profile"
-                      >
-                        {INVESTOR_PROFILE_SELECT_OPTIONS.map((o) => (
-                          <option key={o.value || "p-empty"} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => patch({ profileId: v })}
+                        placeholder="Select"
+                        ariaLabel="Profile"
+                        triggerClassName={DROPDOWN_TRIGGER_PILL}
+                      />
                     </InvFormField>
 
                     <InvFormField
@@ -685,38 +677,34 @@ export function AddInvestmentModal({
                       Icon={Shield}
                       tight
                     >
-                      <select
+                      <DropdownSelect
+                        {...MODAL_DROPDOWN_SELECT_PROPS}
                         id="add-inv-role"
-                        className="um_field_select deals_add_inv_field_control"
+                        options={INVESTOR_ROLE_SELECT_OPTIONS.filter(
+                          (o) => o.value,
+                        ).map((o) => ({ value: o.value, label: o.label }))}
                         value={form.investorRole}
-                        onChange={(e) =>
-                          patch({ investorRole: e.target.value })
-                        }
-                        aria-label="Role"
-                      >
-                        {INVESTOR_ROLE_SELECT_OPTIONS.map((o) => (
-                          <option key={o.value || "p-empty"} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => patch({ investorRole: v })}
+                        placeholder="Select"
+                        ariaLabel="Role"
+                        triggerClassName={DROPDOWN_TRIGGER_PILL}
+                      />
                     </InvFormField>
                   </div>
 
                   <InvFormField id="add-inv-status" label="Status" Icon={Activity}>
-                    <select
+                    <DropdownSelect
+                      {...MODAL_DROPDOWN_SELECT_PROPS}
                       id="add-inv-status"
-                      className="um_field_select deals_add_inv_field_control"
+                      options={INVESTMENT_STATUS_SELECT_OPTIONS.filter(
+                        (o) => o.value,
+                      ).map((o) => ({ value: o.value, label: o.label }))}
                       value={form.status}
-                      onChange={(e) => patch({ status: e.target.value })}
-                      aria-label="Status"
-                    >
-                      {INVESTMENT_STATUS_SELECT_OPTIONS.map((o) => (
-                        <option key={o.value || "s-empty"} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => patch({ status: v })}
+                      placeholder="Select status"
+                      ariaLabel="Status"
+                      triggerClassName={DROPDOWN_TRIGGER_PILL}
+                    />
                   </InvFormField>
 
                   <InvFormField
@@ -734,27 +722,26 @@ export function AddInvestmentModal({
                       ) : null
                     }
                   >
-                    <select
+                    <DropdownSelect
+                      {...MODAL_DROPDOWN_SELECT_PROPS}
                       id="add-inv-class"
-                      className="um_field_select deals_add_inv_field_control"
+                      options={investorClassOptions.filter((o) => o.value)}
                       value={form.investorClass}
                       disabled={
                         !investorClassesReady || dealClasses.length === 0
                       }
-                      onChange={(e) =>
-                        patch({ investorClass: e.target.value })
+                      onChange={(v) => patch({ investorClass: v })}
+                      placeholder={
+                        !investorClassesReady
+                          ? "Loading investor classes…"
+                          : "Select investor class"
                       }
-                      aria-label="Investor class"
-                      aria-describedby={
+                      ariaLabel="Investor class"
+                      ariaDescribedBy={
                         noDealClasses ? "add-inv-class-hint" : undefined
                       }
-                    >
-                      {investorClassOptions.map((o) => (
-                        <option key={o.value || "ic-empty"} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      triggerClassName={DROPDOWN_TRIGGER_PILL}
+                    />
                     {noDealClasses ? (
                       <p id="add-inv-class-hint" className="visually_hidden">
                         {INVESTOR_CLASS_UNAVAILABLE_HINT}

@@ -24,6 +24,10 @@ export interface DealInvestorRow {
   userDisplayName: string
   /** Portal user email — second line in identity cell */
   userEmail: string
+  /** Portal / contact first name — shown under email in Investor column */
+  firstName?: string
+  /** Portal / contact last name — shown under email in Investor column */
+  lastName?: string
   investorClass: string
   /** Percent of class (ownership), e.g. `25.00%`. Optional. */
   percentOfClassOwnership?: string

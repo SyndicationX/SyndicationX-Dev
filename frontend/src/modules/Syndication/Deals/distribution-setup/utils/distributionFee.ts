@@ -1,4 +1,5 @@
 import { parseMoneyDigits } from "../../utils/offeringMoneyFormat"
+import { resolveInvestorClass } from "../../tabs/distributions/utils/investorDistributionAllocation"
 import type {
   DistributionFeeClassSplit,
   DistributionFeeConfig,
@@ -9,6 +10,21 @@ import {
   getPeriodWindow,
   periodFromFactor,
 } from "./distributionPeriod"
+
+export type FeeClassSplitInvestorRef = {
+  investorClass?: string | null
+}
+
+export type FeeClassSplitStatus = {
+  classId: string
+  className: string
+  percent: number
+  /** True when a positive percentage is entered for this class. */
+  mentioned: boolean
+  investorCount: number
+  /** Mentioned class with at least one assigned investor. */
+  payable: boolean
+}
 
 /** Built-in fee type presets — empty so sponsors type/create their own. */
 export const DEFAULT_DISTRIBUTION_FEE_TYPE_OPTIONS = [] as const
@@ -118,9 +134,74 @@ export function feeClassSplitTotal(splits: DistributionFeeClassSplit[]): number 
   )
 }
 
+/** Count deal investors assigned to each Class Setup class. */
+export function countFeeClassInvestors(params: {
+  classes: DistributionSetupClass[]
+  investors?: FeeClassSplitInvestorRef[] | null
+}): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const cls of params.classes) counts.set(cls.id, 0)
+  for (const inv of params.investors ?? []) {
+    const cls = resolveInvestorClass(inv.investorClass ?? "", params.classes)
+    if (!cls) continue
+    counts.set(cls.id, (counts.get(cls.id) ?? 0) + 1)
+  }
+  return counts
+}
+
+/**
+ * Class-scoped Class Split status: a class is payable only when it has a
+ * percentage and at least one investor. Empty mentioned classes do not
+ * spill their share to other classes.
+ */
+export function listFeeClassSplitStatuses(params: {
+  classes: DistributionSetupClass[]
+  splits: DistributionFeeClassSplit[]
+  investors?: FeeClassSplitInvestorRef[] | null
+}): FeeClassSplitStatus[] {
+  const counts = countFeeClassInvestors(params)
+  return params.classes.map((cls) => {
+    const split = params.splits.find((s) => s.classId === cls.id)
+    const n = parseFeePercent(split?.percent ?? "0")
+    const percent = Number.isFinite(n) ? n : 0
+    const mentioned = percent > 0
+    const investorCount = counts.get(cls.id) ?? 0
+    return {
+      classId: cls.id,
+      className: cls.name || "Class",
+      percent,
+      mentioned,
+      investorCount,
+      payable: mentioned && investorCount > 0,
+    }
+  })
+}
+
+export function feeClassSplitBlockedNames(
+  statuses: FeeClassSplitStatus[],
+): string[] {
+  return statuses
+    .filter((s) => s.mentioned && s.investorCount === 0)
+    .map((s) => s.className)
+}
+
+function blockedClassSplitMessage(names: string[]): string {
+  if (names.length === 0) return ""
+  const listed =
+    names.length === 1
+      ? names[0]!
+      : names.length === 2
+        ? `${names[0]} and ${names[1]}`
+        : `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`
+  const verb = names.length === 1 ? "has" : "have"
+  return `${listed} ${verb} a percentage allocated but no class investors. Distributions are class-scoped, so that class is not paid and this distribution is not paid to other classes either.`
+}
+
 export function validateDistributionFee(params: {
   fee: DistributionFeeConfig
   requireComplete?: boolean
+  classes?: DistributionSetupClass[]
+  investors?: FeeClassSplitInvestorRef[] | null
 }): { ok: boolean; message: string } {
   const name = params.fee.name.trim()
   const requireComplete = params.requireComplete === true || name.length > 0
@@ -174,6 +255,21 @@ export function validateDistributionFee(params: {
       ok: false,
       message: "Period end date must be on or after the period start date.",
     }
+
+  if (params.classes?.length) {
+    const blocked = feeClassSplitBlockedNames(
+      listFeeClassSplitStatuses({
+        classes: params.classes,
+        splits: params.fee.classSplits,
+        investors: params.investors,
+      }),
+    )
+    if (blocked.length > 0)
+      return {
+        ok: false,
+        message: blockedClassSplitMessage(blocked),
+      }
+  }
 
   return { ok: true, message: "" }
 }

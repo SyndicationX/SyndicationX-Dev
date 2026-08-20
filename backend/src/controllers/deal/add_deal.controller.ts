@@ -88,6 +88,7 @@ import {
   sanitizeGalleryCoverImageUrl,
 } from "../../utils/sanitizeGalleryCoverImageUrl.js";
 import { requireDealMultipartFiles, optionalDealMultipartFiles } from "../../utils/dealMultipartUpload.util.js";
+import { validateOfferingDocumentUploadFiles } from "../../utils/uploadFileValidation.js";
 import { formatDdMmmYyyy } from "../../utils/formatDdMmmYyyy.js";
 import {
   encryptOfferingPreviewDealId,
@@ -270,15 +271,27 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
     let includeParticipantViewerEmailNorm = "";
 
     if (includeParticipantDeals) {
-      if (!scope.seesAllDeals) {
-        const [uRow] = await db
-          .select({ email: users.email })
-          .from(users)
-          .where(eq(users.id, user.id))
-          .limit(1);
-        includeParticipantViewerEmailNorm = String(uRow?.email ?? "")
-          .trim()
-          .toLowerCase();
+      const [uRow] = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, user.id))
+        .limit(1);
+      includeParticipantViewerEmailNorm = String(uRow?.email ?? "")
+        .trim()
+        .toLowerCase();
+      /**
+       * Company admin / company member / Lead-Admin workspace users: Investing
+       * Mode still lists their workspace deals, then Contacts Visibility
+       * (Show / Hide / 506(c) only) decides which of those deals stay visible.
+       * LP-only viewers keep the participant + sponsor-scoped list.
+       */
+      const investingUsesWorkspaceDeals =
+        scope.seesAllDeals ||
+        (scope.lpInvestorEmailScopedDealIds == null &&
+          !scope.assignedParticipationOnly);
+      if (investingUsesWorkspaceDeals) {
+        rows = await listDealsForViewerIncludingAssignedParticipation(scope);
+      } else {
         const participantDealIds = includeParticipantViewerEmailNorm
           ? await listInvestingParticipantDealIdsForUser({
               userId: user.id,
@@ -289,8 +302,6 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
           participantDealIds.length > 0
             ? await listAddDealFormsByIds(participantDealIds)
             : [];
-      } else {
-        rows = await listDealsForViewerIncludingAssignedParticipation(scope);
       }
     } else if (orgParam && DEALS_ORG_UUID_RE.test(orgParam)) {
       if (!scope.isPlatformAdmin) {
@@ -327,10 +338,11 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
     }
 
     /**
-     * Final CRM offering-visibility pass for every list path (orgId shortcut,
-     * co-sponsor, participant). Platform admins skip.
+     * Investing Mode (and LP-email-scoped viewers): apply CRM Contacts Visibility.
+     * Syndicating lists skip this so Lead / Admin / Co / company roles still see
+     * every workspace deal.
      */
-    if (!scope.isPlatformAdmin && rows.length > 0) {
+    if (scope.enforceContactOfferingVisibility && rows.length > 0) {
       const emailNorm =
         includeParticipantViewerEmailNorm ||
         String(
@@ -1019,6 +1031,11 @@ export async function postDealOfferingDocumentUploads(
   const fileList = Array.isArray(files) ? files : [];
   if (!fileList.length) {
     res.status(400).json({ message: "No files uploaded." });
+    return;
+  }
+  const typeCheck = validateOfferingDocumentUploadFiles(fileList);
+  if (!typeCheck.ok) {
+    res.status(400).json({ message: typeCheck.message });
     return;
   }
   try {

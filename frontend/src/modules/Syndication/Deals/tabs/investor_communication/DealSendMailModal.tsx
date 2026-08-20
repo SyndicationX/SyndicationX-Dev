@@ -1,7 +1,6 @@
 import {
   Eye,
   Info,
-  ListChecks,
   Loader2,
   Mail,
   Pencil,
@@ -11,15 +10,19 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { getSessionUserEmail } from "../../../../../common/auth/sessionUserEmail"
+import { getSessionUserId } from "../../../../../common/auth/sessionUserId"
 import {
   getCurrentSessionUserEmail,
   parseEmailInput,
 } from "../../../../../common/features/send-mail"
 import { toast } from "../../../../../common/components/Toast"
 import {
+  fetchDealInvestorClasses,
   fetchDealInvestors,
   fetchDealMembers,
 } from "../../api/dealsApi"
+import { parseViewerDealMemberRoleFromApi } from "../../utils/dealDetailTabVisibility"
 import {
   loadEmailTemplates,
   type EmailTemplateRow,
@@ -28,9 +31,11 @@ import {
   SendMailEmailPreviewModal,
   type SendMailEmailPreviewPayload,
 } from "../../../contacts/components/SendMailEmailPreviewModal"
+import { DealMailRecipientPicker } from "./DealMailRecipientPicker"
 import {
-  groupLabelForDealMailRecipient,
-  mergeDealInvestorsAndMembersToRecipients,
+  buildDealMailRecipients,
+  deliveryEmailsForRecipients,
+  mergeDealInvestorRowsForMail,
   type DealMailRecipient,
 } from "./dealMailRecipients"
 import { postDealInvestorCommunicationMail } from "./investorCommunicationApi"
@@ -67,6 +72,8 @@ export function DealSendMailModal({
   const [sendMailEmailPreview, setSendMailEmailPreview] =
     useState<SendMailEmailPreviewPayload | null>(null)
   const [sending, setSending] = useState(false)
+  const [viewerIsCosponsor, setViewerIsCosponsor] = useState(false)
+  const [releaseConfirmOpen, setReleaseConfirmOpen] = useState(false)
 
   const senderEmail = useMemo(() => getCurrentSessionUserEmail(), [])
 
@@ -80,36 +87,73 @@ export function DealSendMailModal({
     [emailTemplates, selectedTemplateId],
   )
 
-  const allRecipientsSelected =
-    recipients.length > 0 &&
-    recipients.every((r) => selectedRecipientIds.has(r.id))
+  const selectedDeliveryEmails = useMemo(
+    () => deliveryEmailsForRecipients(selectedRecipients),
+    [selectedRecipients],
+  )
+
+  const selectedReleaseCount = useMemo(
+    () =>
+      selectedRecipients.filter((r) => r.requiresCosponsorRelease).length,
+    [selectedRecipients],
+  )
+
+  const selectedOwnLpCount = useMemo(
+    () =>
+      selectedRecipients.filter(
+        (r) => r.classKind === "lp" && !r.requiresCosponsorRelease,
+      ).length,
+    [selectedRecipients],
+  )
 
   useEffect(() => {
     if (!open || !dealId.trim()) return
     let cancelled = false
     setLoadingRecipients(true)
     setSelectedRecipientIds(new Set())
+    setViewerIsCosponsor(false)
+    setReleaseConfirmOpen(false)
     const preselectEmails = new Set(
       (initialRecipientEmails ?? [])
         .map((e) => e.trim().toLowerCase())
         .filter((e) => e.includes("@")),
     )
     void (async () => {
-      const [templates, invPayload, membersResult] = await Promise.all([
-        loadEmailTemplates(),
-        fetchDealInvestors(dealId.trim(), { lpInvestorsOnly: true }),
-        fetchDealMembers(dealId.trim()),
-      ])
+      const [templates, lpPayload, allPayload, classes, membersPayload] =
+        await Promise.all([
+          loadEmailTemplates(),
+          fetchDealInvestors(dealId.trim(), { lpInvestorsOnly: true }),
+          fetchDealInvestors(dealId.trim()),
+          fetchDealInvestorClasses(dealId.trim()),
+          fetchDealMembers(dealId.trim()),
+        ])
       if (cancelled) return
-      const merged = mergeDealInvestorsAndMembersToRecipients(
-        invPayload.investors,
-        membersResult.members,
+      setViewerIsCosponsor(
+        parseViewerDealMemberRoleFromApi(
+          membersPayload.viewerDealMemberRole,
+        ) === "co_sponsor",
       )
+      const merged = buildDealMailRecipients({
+        investors: mergeDealInvestorRowsForMail(
+          lpPayload.investors,
+          allPayload.investors,
+        ),
+        classes,
+        viewerUserId: getSessionUserId(),
+        viewerEmail: getSessionUserEmail(),
+      })
       setRecipients(merged)
       const ids =
         preselectEmails.size > 0
           ? merged
-              .filter((r) => preselectEmails.has(r.email.trim().toLowerCase()))
+              .filter((r) => {
+                const email = r.email.trim().toLowerCase()
+                const sponsor = r.sponsorEmail.trim().toLowerCase()
+                return (
+                  (email && preselectEmails.has(email)) ||
+                  (sponsor && preselectEmails.has(sponsor))
+                )
+              })
               .map((r) => r.id)
           : merged.map((r) => r.id)
       setSelectedRecipientIds(new Set(ids))
@@ -132,6 +176,7 @@ export function DealSendMailModal({
   const closeModal = useCallback(() => {
     if (sending) return
     setSendMailEmailPreview(null)
+    setReleaseConfirmOpen(false)
     onClose()
   }, [onClose, sending])
 
@@ -146,17 +191,10 @@ export function DealSendMailModal({
         toast.error("Template required", "Choose an email template first.")
         return
       }
-      const emails = [
-        ...new Set(
-          selectedRecipients
-            .map((r) => r.email.trim())
-            .filter((e) => e.includes("@")),
-        ),
-      ]
-      if (emails.length === 0) {
+      if (selectedDeliveryEmails.length === 0) {
         toast.error(
           "No email recipients",
-          "Select investors or deal members with a valid email.",
+          "Select investors with a valid email, or a cosponsor who can release the message.",
         )
         return
       }
@@ -168,13 +206,13 @@ export function DealSendMailModal({
         createdAt: template.createdAt,
         subject: template.subject,
         bodyHtml: template.body,
-        toEmails: emails,
+        toEmails: selectedDeliveryEmails,
         ccEmails: parseEmailInput(sendMailCc),
         attachment: template.attachment,
         startInEditMode: mode === "edit",
       })
     },
-    [emailTemplates, selectedRecipients, selectedTemplateId, sendMailCc],
+    [emailTemplates, selectedDeliveryEmails, selectedTemplateId, sendMailCc],
   )
 
   const handleSendMailPreviewSaved = useCallback(
@@ -190,17 +228,10 @@ export function DealSendMailModal({
   )
 
   const handleSend = useCallback(async () => {
-    const emails = [
-      ...new Set(
-        selectedRecipients
-          .map((r) => r.email.trim())
-          .filter((e) => e.includes("@")),
-      ),
-    ]
-    if (emails.length === 0) {
+    if (selectedDeliveryEmails.length === 0) {
       toast.error(
         "No email recipients",
-        "Select investors or deal members with a valid email.",
+        "Select investors with a valid email, or a cosponsor who can release the message.",
       )
       return
     }
@@ -222,6 +253,7 @@ export function DealSendMailModal({
       bodyHtml,
       ccRaw: sendMailCc,
       recipientUsers: selectedRecipients,
+      deliveryEmails: selectedDeliveryEmails,
     })
     setSending(false)
     if (!result.ok) {
@@ -237,6 +269,7 @@ export function DealSendMailModal({
     dealId,
     emailTemplates,
     onSent,
+    selectedDeliveryEmails,
     selectedRecipients,
     selectedTemplateId,
     sendMailCc,
@@ -244,21 +277,13 @@ export function DealSendMailModal({
     senderEmail,
   ])
 
-  function toggleRecipient(id: string) {
-    setSelectedRecipientIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function toggleSelectAllRecipients() {
-    setSelectedRecipientIds((prev) => {
-      if (recipients.every((r) => prev.has(r.id))) return new Set()
-      return new Set(recipients.map((r) => r.id))
-    })
-  }
+  const requestSend = useCallback(() => {
+    if (viewerIsCosponsor && selectedOwnLpCount > 0) {
+      setReleaseConfirmOpen(true)
+      return
+    }
+    void handleSend()
+  }, [handleSend, selectedOwnLpCount, viewerIsCosponsor])
 
   if (!open) return null
 
@@ -302,26 +327,30 @@ export function DealSendMailModal({
             </button>
           </div>
 
-          <p className="contacts_suspend_modal_desc contacts_suspend_modal_desc_info">
+          <div className="deal_inv_comm_send_mail_body">
+            <p className="contacts_suspend_modal_desc contacts_suspend_modal_desc_info">
             <Info
               className="contacts_suspend_modal_desc_icon"
-              size={18}
+              size={15}
               strokeWidth={2}
               aria-hidden
             />
             <span>
               {loadingRecipients
-                ? "Loading investors and deal members for this deal…"
-                : `Sending to ${selectedRecipients.length} selected recipient${
-                    selectedRecipients.length === 1 ? "" : "s"
-                  } on this deal.`}
+                ? "Loading investors for this deal…"
+                : viewerIsCosponsor
+                  ? `${selectedRecipients.length} selected. Sending as a cosponsor releases this email to your investors.`
+                  : selectedReleaseCount > 0
+                    ? `${selectedRecipients.length} selected · ${selectedReleaseCount} require cosponsor release.`
+                    : `Sending to ${selectedRecipients.length} selected investor${
+                        selectedRecipients.length === 1 ? "" : "s"
+                      } on this deal.`}
             </span>
           </p>
 
-          {/* <div className="um_field contacts_suspend_reason_field deal_inv_comm_recipients_field"> */}
           <div className="contacts_suspend_reason_field deal_inv_comm_recipients_field">
             <label className="um_field_label_row deal_inv_comm_recipients_label">
-              <span>To — investors &amp; deal members on this deal</span>
+              <span>Recipients</span>
             </label>
             {loadingRecipients ? (
               <p className="deal_inv_comm_recipients_loading" role="status">
@@ -331,163 +360,102 @@ export function DealSendMailModal({
                   className="deal_inv_comm_recipients_spinner"
                   aria-hidden
                 />
-                Loading recipients…
-              </p>
-            ) : recipients.length === 0 ? (
-              <p className="deal_inv_comm_recipient_empty" role="status">
-                No investors or deal members on this deal have an email address.
+                Loading investors…
               </p>
             ) : (
-              <div className="deal_inv_comm_recipient_panel">
-                <div className="deal_inv_comm_recipient_panel_head">
-                  <span className="deal_inv_comm_recipient_panel_title">
-                    Recipients
-                  </span>
-                  <span className="deal_inv_comm_recipient_panel_count">
-                    {selectedRecipients.length} of {recipients.length} selected
-                  </span>
-                </div>
-                <label className="deal_inv_comm_recipient_select_all">
-                  <input
-                    type="checkbox"
-                    checked={allRecipientsSelected}
-                    onChange={toggleSelectAllRecipients}
-                    aria-label="Select all recipients on this deal"
-                  />
-                  <span>
-                    <ListChecks size={14} strokeWidth={2} aria-hidden />
-                    Select all
-                  </span>
-                </label>
-                <ul
-                  className="deal_inv_comm_recipient_list"
-                  aria-label="Deal investors and members"
-                >
-                  {recipients.map((r) => (
-                    <li key={r.id} className="deal_inv_comm_recipient_item">
-                      <label className="deal_inv_comm_recipient_row">
-                        <input
-                          type="checkbox"
-                          className="deal_inv_comm_recipient_cb"
-                          checked={selectedRecipientIds.has(r.id)}
-                          onChange={() => toggleRecipient(r.id)}
-                          aria-label={`Select ${r.displayName}`}
-                        />
-                        <span className="deal_inv_comm_recipient_content">
-                          <span className="deal_inv_comm_recipient_line">
-                            <span
-                              className="deal_inv_comm_recipient_name"
-                              title={r.displayName}
-                            >
-                              {r.displayName}
-                            </span>
-                            <span className="deal_inv_comm_recipient_badge">
-                              {groupLabelForDealMailRecipient(r)}
-                            </span>
-                          </span>
-                          <span className="deal_inv_comm_recipient_subline">
-                            <span
-                              className="deal_inv_comm_recipient_email"
-                              title={r.email}
-                            >
-                              {r.email}
-                            </span>
-                            {r.roleLabel !== "—" ? (
-                              <span className="deal_inv_comm_recipient_role">
-                                {r.roleLabel}
-                              </span>
-                            ) : null}
-                          </span>
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <DealMailRecipientPicker
+                recipients={recipients}
+                selectedIds={selectedRecipientIds}
+                onChangeSelectedIds={setSelectedRecipientIds}
+                viewerIsCosponsor={viewerIsCosponsor}
+              />
             )}
           </div>
 
-          <div className="um_field contacts_suspend_reason_field">
-            <label
-              className="um_field_label_row"
-              htmlFor="deal-inv-comm-send-mail-cc"
-            >
-              <span>CC</span>
-            </label>
-            <input
-              id="deal-inv-comm-send-mail-cc"
-              type="text"
-              className="um_input"
-              placeholder="email1@domain.com, email2@domain.com"
-              value={sendMailCc}
-              onChange={(e) => setSendMailCc(e.target.value)}
-              disabled={sending}
-            />
-          </div>
-
-          <div className="um_field contacts_suspend_reason_field">
-            <div className="contacts_send_mail_template_head">
+          <div className="deal_inv_comm_send_mail_fields">
+            <div className="um_field contacts_suspend_reason_field">
               <label
                 className="um_field_label_row"
-                htmlFor="deal-inv-comm-send-mail-template"
+                htmlFor="deal-inv-comm-send-mail-cc"
               >
-                <span>Email template</span>
+                <span>CC</span>
               </label>
+              <input
+                id="deal-inv-comm-send-mail-cc"
+                type="text"
+                className="um_input"
+                placeholder="email1@domain.com, email2@domain.com"
+                value={sendMailCc}
+                onChange={(e) => setSendMailCc(e.target.value)}
+                disabled={sending}
+              />
             </div>
-            <div className="contacts_send_mail_template_select_row">
-              <select
-                id="deal-inv-comm-send-mail-template"
-                className="um_field_select contacts_send_mail_template_select"
-                value={selectedTemplateId}
-                onChange={(e) => setSelectedTemplateId(e.target.value)}
-                disabled={sending || loadingRecipients}
-              >
-                {emailTemplates.length === 0 ? (
-                  <option value="">No active templates</option>
+
+            <div className="um_field contacts_suspend_reason_field">
+              <div className="contacts_send_mail_template_head">
+                <label
+                  className="um_field_label_row"
+                  htmlFor="deal-inv-comm-send-mail-template"
+                >
+                  <span>Email template</span>
+                </label>
+              </div>
+              <div className="contacts_send_mail_template_select_row">
+                <select
+                  id="deal-inv-comm-send-mail-template"
+                  className="um_field_select contacts_send_mail_template_select"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                  disabled={sending || loadingRecipients}
+                >
+                  {emailTemplates.length === 0 ? (
+                    <option value="">No active templates</option>
+                  ) : null}
+                  {emailTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedTemplate ? (
+                  <>
+                    <button
+                      type="button"
+                      className="contacts_send_mail_template_edit_btn"
+                      aria-label="View"
+                      title="View"
+                      onClick={() => openSendMailEmailPreview("view")}
+                    >
+                      <Eye size={15} strokeWidth={2} aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className="contacts_send_mail_template_edit_btn"
+                      aria-label="Edit"
+                      title="Edit"
+                      onClick={() => openSendMailEmailPreview("edit")}
+                    >
+                      <Pencil size={15} strokeWidth={2} aria-hidden />
+                    </button>
+                  </>
                 ) : null}
-                {emailTemplates.map((tpl) => (
-                  <option key={tpl.id} value={tpl.id}>
-                    {tpl.name}
-                  </option>
-                ))}
-              </select>
-              {selectedTemplate ? (
-                <>
-                  <button
-                    type="button"
-                    className="contacts_send_mail_template_edit_btn"
-                    aria-label="View"
-                    title="View"
-                    onClick={() => openSendMailEmailPreview("view")}
-                  >
-                    <Eye size={16} strokeWidth={2} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="contacts_send_mail_template_edit_btn"
-                    aria-label="Edit"
-                    title="Edit"
-                    onClick={() => openSendMailEmailPreview("edit")}
-                  >
-                    <Pencil size={16} strokeWidth={2} aria-hidden />
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="contacts_send_mail_template_edit_btn"
+                  aria-label="New template"
+                  title="New template"
+                  onClick={goNewTemplateFromSendMail}
+                >
+                  <Plus size={15} strokeWidth={2} aria-hidden />
+                </button>
+              </div>
+              {emailTemplates.length === 0 ? (
+                <p className="um_hint deal_inv_comm_template_hint" role="status">
+                  Create an email template first in Email Templates.
+                </p>
               ) : null}
-              <button
-                type="button"
-                className="contacts_send_mail_template_edit_btn"
-                aria-label="New template"
-                title="New template"
-                onClick={goNewTemplateFromSendMail}
-              >
-                <Plus size={16} strokeWidth={2} aria-hidden />
-              </button>
             </div>
-            {emailTemplates.length === 0 ? (
-              <p className="um_hint" role="status">
-                Create an email template first in Email Templates.
-              </p>
-            ) : null}
+          </div>
           </div>
 
           <div className="um_modal_actions contacts_suspend_modal_actions">
@@ -509,7 +477,7 @@ export function DealSendMailModal({
                 !selectedTemplateId ||
                 selectedRecipients.length === 0
               }
-              onClick={() => void handleSend()}
+              onClick={requestSend}
             >
               {sending ? (
                 <>
@@ -531,6 +499,102 @@ export function DealSendMailModal({
           </div>
         </div>
       </div>
+
+      {releaseConfirmOpen ? (
+        <div
+          className="um_modal_overlay contacts_suspend_overlay deal_inv_comm_release_overlay"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !sending)
+              setReleaseConfirmOpen(false)
+          }}
+        >
+          <div
+            className="um_modal contacts_suspend_modal deal_inv_comm_release_modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deal-inv-comm-release-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="um_modal_head">
+              <h3
+                id="deal-inv-comm-release-title"
+                className="um_modal_title um_title_with_icon"
+              >
+                <Mail
+                  className="um_title_icon contacts_suspend_title_icon contacts_suspend_title_icon_info"
+                  size={22}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span>Release email to your investors?</span>
+              </h3>
+              <button
+                type="button"
+                className="um_modal_close"
+                aria-label="Close"
+                disabled={sending}
+                onClick={() => setReleaseConfirmOpen(false)}
+              >
+                <X size={20} strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+            <p className="contacts_suspend_modal_desc contacts_suspend_modal_desc_info">
+              <Info
+                className="contacts_suspend_modal_desc_icon"
+                size={18}
+                strokeWidth={2}
+                aria-hidden
+              />
+              <span>
+                As a cosponsor, sending this message releases it to the
+                investors you selected.
+              </span>
+            </p>
+            <p className="deal_inv_comm_release_copy">
+              They will receive the email using the template you chose.
+            </p>
+            <p className="deal_inv_comm_release_meta">
+              {selectedOwnLpCount} limited partner
+              {selectedOwnLpCount === 1 ? "" : "s"} will receive this email.
+            </p>
+            <div className="um_modal_actions contacts_suspend_modal_actions">
+              <button
+                type="button"
+                className="um_btn_secondary"
+                disabled={sending}
+                onClick={() => setReleaseConfirmOpen(false)}
+              >
+                <X size={16} strokeWidth={2} aria-hidden />
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="um_btn_primary"
+                disabled={sending}
+                onClick={() => void handleSend()}
+              >
+                {sending ? (
+                  <>
+                    Sending…
+                    <Loader2
+                      size={16}
+                      strokeWidth={2}
+                      className="deal_inv_comm_recipients_spinner"
+                      aria-hidden
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Send size={16} strokeWidth={2} aria-hidden />
+                    Release & send
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <SendMailEmailPreviewModal
         preview={sendMailEmailPreview}

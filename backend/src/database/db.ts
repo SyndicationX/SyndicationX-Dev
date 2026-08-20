@@ -9,6 +9,7 @@ const DATABASE_HOST = process.env.DATABASE_HOST ?? "localhost";
 const DATABASE_PORT = process.env.DATABASE_PORT ?? "5432";
 // const DATABASE_NAME = process.env.DATABASE_NAME ?? "prod_syndicationx_db";
 // const DATABASE_NAME = process.env.DATABASE_NAME ?? "migration_db";
+// const DATABASE_NAME = process.env.DATABASE_NAME ?? "production-syndicationx-20Aug2026";
 const DATABASE_NAME = process.env.DATABASE_NAME ?? "prod-syndicationx-13Aug2026";
 
 const DATABASE_URI = `postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}`;

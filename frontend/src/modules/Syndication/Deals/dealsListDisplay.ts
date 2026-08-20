@@ -43,6 +43,7 @@ const moneyFmt = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 })
 
+/** Deals list amount cells: USD with `$`. */
 export function formatCommittedCurrency(raw: string): string {
   if (raw == null) return "—"
   const s = String(raw).trim()

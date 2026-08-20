@@ -1,13 +1,13 @@
 import { and, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
-import { db } from "../../database/db.js";
+import { db, pool } from "../../database/db.js";
 import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
 import {
   companies,
   companyAdminAuditLogs,
   contact,
-  users,
   type CompanyRow,
 } from "../../schema/schema.js";
+import { ORG_DIRECTORY_MEMBER_ROLES } from "../../constants/roles.js";
 import {
   provisionGhlLocationForCompany,
   queueGhlLocationProvision,
@@ -44,6 +44,73 @@ export type CompanyWithStats = {
 
 function normalizeCompanyNameKey(name: string): string {
   return name.trim().toLowerCase();
+}
+
+function isMissingMembershipTableError(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 4; i += 1) {
+    if (!cur || typeof cur !== "object") break;
+    const e = cur as { code?: string; message?: string; cause?: unknown };
+    if (e.code === "42P01") return true;
+    const msg = String(e.message ?? "").toLowerCase();
+    if (msg.includes('relation "user_company_membership" does not exist')) {
+      return true;
+    }
+    cur = e.cause;
+  }
+  return false;
+}
+
+/**
+ * Distinct org-staff members per company — same population as
+ * `GET /users?organizationId=…` (Members tab), not every portal user with
+ * `users.organization_id` (investors / deal participants are excluded).
+ */
+async function loadOrgMemberCountsByCompanyId(): Promise<Map<string, number>> {
+  const staffRoles = [...ORG_DIRECTORY_MEMBER_ROLES];
+  const map = new Map<string, number>();
+  const applyRows = (rows: { company_id: string; cnt: number }[]) => {
+    for (const r of rows) {
+      const id = String(r.company_id ?? "").trim();
+      if (id) map.set(id, Number(r.cnt) || 0);
+    }
+  };
+
+  const fallbackSql = `
+    SELECT u.organization_id::text AS company_id, COUNT(*)::int AS cnt
+    FROM users u
+    WHERE u.organization_id IS NOT NULL
+      AND u.role = ANY($1::text[])
+    GROUP BY u.organization_id`;
+
+  try {
+    const res = await pool.query<{ company_id: string; cnt: number }>(
+      `SELECT company_id::text AS company_id, COUNT(*)::int AS cnt
+       FROM (
+         SELECT u.organization_id AS company_id, u.id AS user_id
+         FROM users u
+         WHERE u.organization_id IS NOT NULL
+           AND u.role = ANY($1::text[])
+         UNION
+         SELECT m.company_id, u.id
+         FROM user_company_membership m
+         INNER JOIN users u ON u.id = m.user_id
+         WHERE u.role = ANY($1::text[])
+           AND m.role = ANY($1::text[])
+       ) members
+       GROUP BY company_id`,
+      [staffRoles],
+    );
+    applyRows(res.rows);
+  } catch (err) {
+    if (!isMissingMembershipTableError(err)) throw err;
+    const res = await pool.query<{ company_id: string; cnt: number }>(
+      fallbackSql,
+      [staffRoles],
+    );
+    applyRows(res.rows);
+  }
+  return map;
 }
 
 /**
@@ -89,10 +156,11 @@ export async function ensureCompanyRowForOrganizationId(
 export async function listCompanies(): Promise<CompanyWithStats[]> {
   /**
    * Counts use grouped queries (not correlated subqueries) so they stay aligned
-   * with list APIs: `GET /users?organizationId=…`, `GET /deals?organizationId=…`.
+   * with list APIs: `GET /users?organizationId=…` (org staff Members tab),
+   * `GET /deals?organizationId=…`.
    * Legacy deals may still be keyed by `owning_entity_name` when `organization_id` is null.
    */
-  const [rows, orgUserCounts, orgDealCounts, legacyDealNameCounts, orgContactCounts] =
+  const [rows, byOrgId, orgDealCounts, legacyDealNameCounts, orgContactCounts] =
     await Promise.all([
     db
       .select({
@@ -108,14 +176,7 @@ export async function listCompanies(): Promise<CompanyWithStats[]> {
       })
       .from(companies)
       .orderBy(desc(companies.createdAt)),
-    db
-      .select({
-        organizationId: users.organizationId,
-        cnt: sql<number>`count(*)::int`,
-      })
-      .from(users)
-      .where(isNotNull(users.organizationId))
-      .groupBy(users.organizationId),
+    loadOrgMemberCountsByCompanyId(),
     db
       .select({
         organizationId: addDealForm.organizationId,
@@ -141,12 +202,6 @@ export async function listCompanies(): Promise<CompanyWithStats[]> {
       .where(isNotNull(contact.organizationId))
       .groupBy(contact.organizationId),
   ]);
-
-  const byOrgId = new Map<string, number>();
-  for (const r of orgUserCounts) {
-    const id = r.organizationId;
-    if (id) byOrgId.set(id, Number(r.cnt));
-  }
 
   const byDealOrgId = new Map<string, number>();
   for (const r of orgDealCounts) {

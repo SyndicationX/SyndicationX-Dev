@@ -27,11 +27,12 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
+  type InputHTMLAttributes,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react"
-import { createPortal } from "react-dom"
+import { createPortal, flushSync } from "react-dom"
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
 import { getSessionUserId } from "@/common/auth/sessionUserId"
 import { isPlatformAdmin } from "@/common/auth/roleUtils"
@@ -49,7 +50,10 @@ import {
   fetchDealInvestorClasses,
   fetchDealInvestors,
   fetchDealMembers,
-  isDealOfferingDocumentPdfFile,
+  DEAL_OFFERING_DOCUMENT_ACCEPT,
+  DEAL_OFFERING_DOCUMENT_TYPES_LABEL,
+  dealOfferingDocumentRejectMessage,
+  isDealOfferingDocumentFile,
   postDealOfferingDocumentUploads,
   syncCompletedEsignDocumentsToDocumentsTab,
   type DealDetailApi,
@@ -66,6 +70,7 @@ import {
   sharedAudienceSearchBlob,
   toggleIdInList,
 } from "./DocumentSharedWithPicker"
+import { DocumentsTableScroll } from "./DocumentsTableScroll"
 import { SponsorEsignSignModal } from "./SponsorEsignSignModal"
 import {
   parseViewerDealMemberRoleFromApi,
@@ -157,10 +162,35 @@ function nestedDocumentNeedsSponsorSign(doc: NestedPreviewDocument): boolean {
   return doc.esignAwaitingSponsorSignature === true || !doc.esignSponsorSigned
 }
 
-function DocumentsTableDocName({ name }: { name: string }) {
+function DocumentsTableDocName({
+  name,
+  href,
+}: {
+  name: string
+  href?: string
+}) {
   const display = name.trim() || "—"
   if (display === "—")
     return <span className="deal_docs_ui_doc_name_text">{display}</span>
+
+  const text = <span className="deal_docs_ui_doc_name_text">{display}</span>
+
+  if (href) {
+    return (
+      <div className="deal_docs_ui_doc_name_wrap">
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="deal_docs_ui_doc_name_link"
+          title={display}
+          aria-label={`View ${display}`}
+        >
+          {text}
+        </a>
+      </div>
+    )
+  }
 
   return (
     <div className="deal_docs_ui_doc_name_wrap">
@@ -172,7 +202,7 @@ function DocumentsTableDocName({ name }: { name: string }) {
         panelAlign="start"
         triggerMode="inline"
       >
-        <span className="deal_docs_ui_doc_name_text">{display}</span>
+        {text}
       </FormTooltip>
     </div>
   )
@@ -242,7 +272,7 @@ function sectionMatchesLabel(s: OfferingPreviewSection, label: string): boolean 
   )
 }
 
-function appendPdfFilesFromPicker(
+function appendOfferingDocumentFilesFromPicker(
   prev: File[],
   input: FileList | File[] | null | undefined,
 ): { next: File[]; rejectedNames: string[] } {
@@ -255,7 +285,7 @@ function appendPdfFilesFromPicker(
   const rejectedNames: string[] = []
   const accepted: File[] = []
   for (const file of picked) {
-    if (isDealOfferingDocumentPdfFile(file)) accepted.push(file)
+    if (isDealOfferingDocumentFile(file)) accepted.push(file)
     else rejectedNames.push(file.name)
   }
   return { next: [...prev, ...accepted], rejectedNames }
@@ -266,6 +296,43 @@ function formatPdfFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function nativeFilePickerCancelProps(onCancel: () => void) {
+  return { onCancel } as InputHTMLAttributes<HTMLInputElement>
+}
+
+function useNativeFilePickerOpening() {
+  const [isOpening, setIsOpening] = useState(false)
+  const isOpeningRef = useRef(false)
+
+  const setOpening = useCallback((next: boolean) => {
+    isOpeningRef.current = next
+    setIsOpening(next)
+  }, [])
+
+  const beginOpening = useCallback(() => {
+    if (isOpeningRef.current) return false
+    flushSync(() => setOpening(true))
+    return true
+  }, [setOpening])
+
+  const endOpening = useCallback(() => {
+    if (isOpeningRef.current) setOpening(false)
+  }, [setOpening])
+
+  useEffect(() => {
+    if (!isOpening) return
+    function onWindowFocus() {
+      window.setTimeout(() => {
+        if (isOpeningRef.current) setOpening(false)
+      }, 400)
+    }
+    window.addEventListener("focus", onWindowFocus)
+    return () => window.removeEventListener("focus", onWindowFocus)
+  }, [isOpening, setOpening])
+
+  return { isOpening, beginOpening, endOpening }
 }
 
 function DocumentsPdfUploadDropzone({
@@ -284,10 +351,12 @@ function DocumentsPdfUploadDropzone({
   onFilesDropped: (files: FileList | File[]) => void
 }) {
   const [dropFocus, setDropFocus] = useState(false)
+  const { isOpening, beginOpening, endOpening } = useNativeFilePickerOpening()
+  const pickerBusy = Boolean(disabled) || isOpening
 
   function onDragOver(e: DragEvent<HTMLButtonElement>) {
     e.preventDefault()
-    if (disabled) return
+    if (pickerBusy) return
     setDropFocus(true)
   }
 
@@ -299,9 +368,20 @@ function DocumentsPdfUploadDropzone({
   function onDrop(e: DragEvent<HTMLButtonElement>) {
     e.preventDefault()
     setDropFocus(false)
+    endOpening()
     if (disabled) return
     const files = e.dataTransfer.files
     if (files?.length) onFilesDropped(files)
+  }
+
+  function openFilePicker() {
+    if (disabled || !beginOpening()) return
+    onPickClick()
+  }
+
+  function onPickerInputChange(e: ChangeEvent<HTMLInputElement>) {
+    endOpening()
+    onInputChange(e)
   }
 
   return (
@@ -312,16 +392,24 @@ function DocumentsPdfUploadDropzone({
         type="file"
         className="visually_hidden"
         multiple
-        accept="application/pdf,.pdf"
+        accept={DEAL_OFFERING_DOCUMENT_ACCEPT}
         disabled={disabled}
-        onChange={onInputChange}
+        onChange={onPickerInputChange}
+        {...nativeFilePickerCancelProps(endOpening)}
       />
       <button
         type="button"
-        className={`deal_docs_section_modal_upload_zone${dropFocus ? " deal_docs_section_modal_upload_zone--focus" : ""}`}
-        disabled={disabled}
+        className={[
+          "deal_docs_section_modal_upload_zone",
+          dropFocus ? "deal_docs_section_modal_upload_zone--focus" : "",
+          isOpening ? "deal_docs_section_modal_upload_zone--busy" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        disabled={pickerBusy}
+        aria-busy={isOpening}
         aria-labelledby={`${id}-label`}
-        onClick={onPickClick}
+        onClick={openFilePicker}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
@@ -331,17 +419,32 @@ function DocumentsPdfUploadDropzone({
             className="deal_docs_section_modal_upload_icon_ring"
             aria-hidden
           >
-            <Plus size={22} strokeWidth={1.75} />
+            {isOpening ? (
+              <Loader2
+                size={22}
+                strokeWidth={1.75}
+                className="deals_deal_view_spinner"
+              />
+            ) : (
+              <Plus size={22} strokeWidth={1.75} />
+            )}
           </span>
           <span id={`${id}-label`} className="deal_docs_section_modal_upload_title">
-            Add PDF documents
+            {isOpening ? "Opening the file browser to select a file" : "Add documents"}
           </span>
           <span className="deal_docs_section_modal_upload_sub">
-            Click to browse or drop files here
+            {isOpening
+              ? "Your file manager is opening"
+              : "Click to browse or drop files here"}
           </span>
-          <span className="deal_docs_section_modal_upload_formats" aria-hidden>
-            <span className="deal_docs_section_modal_format_chip">PDF</span>
-          </span>
+          {isOpening ? null : (
+            <span className="deal_docs_section_modal_upload_formats" aria-hidden>
+              <span className="deal_docs_section_modal_format_chip">PDF</span>
+              <span className="deal_docs_section_modal_format_chip">Word</span>
+              <span className="deal_docs_section_modal_format_chip">PPT</span>
+              <span className="deal_docs_section_modal_format_chip">Excel</span>
+            </span>
+          )}
         </span>
       </button>
     </div>
@@ -412,9 +515,16 @@ function ModalPendingDocumentFilesList({
           key={filePreviewKey(file, index)}
           className="deal_docs_modal_file_row"
         >
-          <span className="deal_docs_modal_file_name" title={file.name}>
+          <button
+            type="button"
+            className="deal_docs_modal_file_name deal_docs_modal_file_name_btn"
+            title={`View ${file.name}`}
+            aria-label={`View ${file.name}`}
+            disabled={disabled}
+            onClick={() => viewFile(file, index)}
+          >
             {file.name}
-          </span>
+          </button>
           {formatPdfFileSize(file.size) ? (
             <span className="deal_docs_modal_file_size">
               {formatPdfFileSize(file.size)}
@@ -511,6 +621,11 @@ export function DocumentsSection({
   const [quickUploadError, setQuickUploadError] = useState<string | null>(null)
   const [quickUploadDropFocus, setQuickUploadDropFocus] = useState(false)
   const [documentUploadBusy, setDocumentUploadBusy] = useState(false)
+  const {
+    isOpening: quickUploadPickerOpening,
+    beginOpening: beginQuickUploadPicker,
+    endOpening: endQuickUploadPicker,
+  } = useNativeFilePickerOpening()
   const [deletePending, setDeletePending] = useState<
     | { kind: "document"; sectionId: string; docId: string; label: string }
     | { kind: "section"; sectionId: string; label: string }
@@ -944,17 +1059,13 @@ export function DocumentsSection({
 
   const appendSectionFiles = useCallback(
     (incoming: FileList | File[] | null | undefined) => {
-      const { next, rejectedNames } = appendPdfFilesFromPicker(
+      const { next, rejectedNames } = appendOfferingDocumentFilesFromPicker(
         sectionFiles,
         incoming,
       )
       setSectionFiles(next)
       if (rejectedNames.length > 0) {
-        setAddSectionError(
-          rejectedNames.length === 1
-            ? `"${rejectedNames[0]!}" is not a PDF. Only PDF files can be uploaded.`
-            : `Only PDF files can be uploaded. Skipped: ${rejectedNames.join(", ")}.`,
-        )
+        setAddSectionError(dealOfferingDocumentRejectMessage(rejectedNames))
       } else {
         setAddSectionError(null)
       }
@@ -1075,12 +1186,10 @@ export function DocumentsSection({
       targetSectionId: string,
       files: File[],
     ): Promise<string | null> => {
-      if (files.length === 0) return "Select at least one PDF to upload."
-      const nonPdf = files.filter((f) => !isDealOfferingDocumentPdfFile(f))
-      if (nonPdf.length > 0) {
-        return nonPdf.length === 1
-          ? `"${nonPdf[0]!.name}" is not a PDF. Only PDF files can be uploaded.`
-          : `Only PDF files can be uploaded. Remove: ${nonPdf.map((f) => f.name).join(", ")}.`
+      if (files.length === 0) return "Select at least one document to upload."
+      const nonAllowed = files.filter((f) => !isDealOfferingDocumentFile(f))
+      if (nonAllowed.length > 0) {
+        return dealOfferingDocumentRejectMessage(nonAllowed.map((f) => f.name))
       }
 
       const idTrim = dealIdTrim
@@ -1169,13 +1278,14 @@ export function DocumentsSection({
 
   const onQuickUploadInputChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
+      endQuickUploadPicker()
       const picked = e.currentTarget.files
         ? Array.from(e.currentTarget.files)
         : []
       e.currentTarget.value = ""
       if (picked.length > 0) void uploadFilesToDefaultSection(picked)
     },
-    [uploadFilesToDefaultSection],
+    [endQuickUploadPicker, uploadFilesToDefaultSection],
   )
 
   const onQuickUploadDrop = useCallback(
@@ -1183,21 +1293,27 @@ export function DocumentsSection({
       e.preventDefault()
       e.stopPropagation()
       setQuickUploadDropFocus(false)
+      endQuickUploadPicker()
       const dropped = e.dataTransfer.files
         ? Array.from(e.dataTransfer.files)
         : []
       if (dropped.length > 0) void uploadFilesToDefaultSection(dropped)
     },
-    [uploadFilesToDefaultSection],
+    [endQuickUploadPicker, uploadFilesToDefaultSection],
   )
+
+  const openQuickUploadPicker = useCallback(() => {
+    if (documentUploadBusy || !beginQuickUploadPicker()) return
+    quickUploadInputRef.current?.click()
+  }, [beginQuickUploadPicker, documentUploadBusy])
 
   const onQuickUploadKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
       if (e.key !== "Enter" && e.key !== " ") return
       e.preventDefault()
-      quickUploadInputRef.current?.click()
+      openQuickUploadPicker()
     },
-    [],
+    [openQuickUploadPicker],
   )
 
   const openUploadDocumentsModal = useCallback((row: OfferingPreviewSection) => {
@@ -1219,17 +1335,13 @@ export function DocumentsSection({
 
   const appendUploadFiles = useCallback(
     (incoming: FileList | File[] | null | undefined) => {
-      const { next, rejectedNames } = appendPdfFilesFromPicker(
+      const { next, rejectedNames } = appendOfferingDocumentFilesFromPicker(
         uploadFiles,
         incoming,
       )
       setUploadFiles(next)
       if (rejectedNames.length > 0) {
-        setUploadDocsError(
-          rejectedNames.length === 1
-            ? `"${rejectedNames[0]!}" is not a PDF. Only PDF files can be uploaded.`
-            : `Only PDF files can be uploaded. Skipped: ${rejectedNames.join(", ")}.`,
-        )
+        setUploadDocsError(dealOfferingDocumentRejectMessage(rejectedNames))
       } else {
         setUploadDocsError(null)
       }
@@ -1685,6 +1797,8 @@ export function DocumentsSection({
     )
   }
 
+  const quickUploadBusy = documentUploadBusy || quickUploadPickerOpening
+
   const renderQuickUploadDropzone = (variant: "toolbar" | "panel") => (
     <div
       className={[
@@ -1692,27 +1806,27 @@ export function DocumentsSection({
         variant === "panel" && quickUploadDropFocus
           ? "deal_docs_empty_dropzone--focus"
           : "",
-        variant === "panel" && documentUploadBusy
+        variant === "panel" && quickUploadBusy
           ? "deal_docs_empty_dropzone--busy"
           : "",
       ]
         .filter(Boolean)
         .join(" ")}
       role="button"
-      tabIndex={0}
-      aria-label="Upload PDF documents to the General section"
-      aria-busy={documentUploadBusy}
+      tabIndex={quickUploadBusy ? -1 : 0}
+      aria-label={`Upload ${DEAL_OFFERING_DOCUMENT_TYPES_LABEL} documents to the General section`}
+      aria-busy={quickUploadBusy}
       onClick={() => {
-        if (!documentUploadBusy) quickUploadInputRef.current?.click()
+        if (!quickUploadBusy) openQuickUploadPicker()
       }}
       onKeyDown={onQuickUploadKeyDown}
       onDragEnter={(e) => {
         e.preventDefault()
-        setQuickUploadDropFocus(true)
+        if (!quickUploadBusy) setQuickUploadDropFocus(true)
       }}
       onDragOver={(e) => {
         e.preventDefault()
-        setQuickUploadDropFocus(true)
+        if (!quickUploadBusy) setQuickUploadDropFocus(true)
       }}
       onDragLeave={(e) => {
         e.preventDefault()
@@ -1722,7 +1836,7 @@ export function DocumentsSection({
       }}
       onDrop={onQuickUploadDrop}
     >
-      {documentUploadBusy ? (
+      {quickUploadBusy ? (
         <Loader2
           size={variant === "panel" ? 22 : 16}
           strokeWidth={2}
@@ -1738,11 +1852,13 @@ export function DocumentsSection({
       )}
       {variant === "panel" ? (
         <>
-          {/* <span className="deal_docs_empty_dropzone_title">Drop PDFs here</span> */}
-          <span className="deal_docs_empty_dropzone_title">Click or drag PDFs</span>
-          {/* <span className="deal_docs_empty_dropzone_hint">
-            Files are saved in the <strong>General</strong> section below
-          </span> */}
+          <span className="deal_docs_empty_dropzone_title">
+            {quickUploadPickerOpening
+              ? "Opening the file browser to select a file"
+              : documentUploadBusy
+                ? "Uploading…"
+                : "Click or drag files"}
+          </span>
         </>
       ) : null}
     </div>
@@ -1762,8 +1878,9 @@ export function DocumentsSection({
               type="file"
               className="deal_docs_file_input"
               multiple
-              accept="application/pdf,.pdf"
+              accept={DEAL_OFFERING_DOCUMENT_ACCEPT}
               onChange={onQuickUploadInputChange}
+              {...nativeFilePickerCancelProps(endQuickUploadPicker)}
               aria-hidden
               tabIndex={-1}
             />
@@ -2013,10 +2130,24 @@ export function DocumentsSection({
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >
-                      <span
-                        className="deal_docs_ui_banner_icon_slot"
-                        aria-hidden
-                      />
+                      {canRenameSection &&
+                      !isBuiltInSection &&
+                      !isEditingSection ? (
+                        <button
+                          type="button"
+                          className="deal_docs_ui_banner_icon_btn"
+                          title="Edit section name"
+                          aria-label={`Edit section name ${sectionLabel}`}
+                          onClick={() => startSectionRename(section)}
+                        >
+                          <Pencil size={16} strokeWidth={2} aria-hidden />
+                        </button>
+                      ) : (
+                        <span
+                          className="deal_docs_ui_banner_icon_slot"
+                          aria-hidden
+                        />
+                      )}
                       {!isAutoManagedSection ? (
                         <button
                           type="button"
@@ -2067,7 +2198,7 @@ export function DocumentsSection({
                     {n === 0 ? (
                       <p className="deal_docs_ui_panel_empty">No documents yet.</p>
                     ) : (
-                      <div className="deal_docs_ui_table_scroll">
+                      <DocumentsTableScroll active={isOpen}>
                         <table className="deal_docs_ui_table">
                           <thead>
                             <tr>
@@ -2154,7 +2285,7 @@ export function DocumentsSection({
                                   </td>
                                   <td className="deal_docs_ui_td deal_docs_ui_td_doc">
                                     <div className="deal_docs_ui_doc_cell">
-                                      <DocumentsTableDocName name={d.name} />
+                                      <DocumentsTableDocName name={d.name} href={url} />
                                       <div className="deal_docs_ui_doc_quick">
                                         <button
                                           type="button"
@@ -2517,7 +2648,7 @@ export function DocumentsSection({
                             })}
                           </tbody>
                         </table>
-                      </div>
+                      </DocumentsTableScroll>
                     )}
                   </div>
                 </div>
@@ -2552,7 +2683,7 @@ export function DocumentsSection({
                       info={
                         <p>
                           Create a named section for offering documents. You can
-                          add PDFs now or upload them later from the section
+                          add files now or upload them later from the section
                           toolbar.
                         </p>
                       }
@@ -2612,7 +2743,8 @@ export function DocumentsSection({
                           onFilesDropped={appendSectionFiles}
                         />
                         <p className="deal_docs_section_modal_upload_hint">
-                          Optional. PDF only — select multiple files if needed.
+                          Optional. PDF, Word, PowerPoint, or Excel — select
+                          multiple files if needed.
                         </p>
                       </div>
                       <ModalPendingDocumentFilesList
@@ -2703,8 +2835,9 @@ export function DocumentsSection({
                       title="Upload documents"
                       info={
                         <p>
-                          Add PDF files to the selected section. They appear in
-                          this section&apos;s document list after upload.
+                          Add PDF, Word, PowerPoint, or Excel files to the
+                          selected section. They appear in this section&apos;s
+                          document list after upload.
                         </p>
                       }
                     />
@@ -2743,7 +2876,8 @@ export function DocumentsSection({
                           onFilesDropped={appendUploadFiles}
                         />
                         <p className="deal_docs_section_modal_upload_hint">
-                          PDF only — select multiple files if needed.
+                          PDF, Word, PowerPoint, or Excel — select multiple
+                          files if needed.
                         </p>
                       </div>
                       <ModalPendingDocumentFilesList

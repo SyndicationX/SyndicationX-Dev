@@ -5,7 +5,7 @@ import {
 import { formatDateDdMmmYyyy } from "../../../../../../common/utils/formatDateDisplay"
 import { escapeCsvCell } from "../../../utils/dealInvestorExportCsv"
 import type { PriorDistributionRecord } from "../../../distribution-setup/types/distribution-setup.types"
-import { parseMoneyDigits } from "../../../utils/offeringMoneyFormat"
+import { parseMoneyDigits, formatAmountNumberExport } from "../../../utils/offeringMoneyFormat"
 
 function formatDistributionDate(iso: string): string {
   const formatted = formatDateDdMmmYyyy(iso)
@@ -39,7 +39,7 @@ export function buildDistributionsExportCsv(
     const line = [
       row.name?.trim() || "—",
       formatDistributionDate(row.date),
-      Number.isFinite(amount) ? String(Math.round(amount * 100) / 100) : row.amount,
+      Number.isFinite(amount) ? formatAmountNumberExport(amount) : "",
       sourceLabel(row.source),
       row.period ?? "—",
       "Completed",

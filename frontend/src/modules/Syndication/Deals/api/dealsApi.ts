@@ -1572,21 +1572,82 @@ export async function postDealOfferingGalleryUploads(
   return { ok: true, deal: lastDeal, newPaths: allNewPaths }
 }
 
-/** Offering document uploads (Documents tab) accept PDF files only. */
-export function isDealOfferingDocumentPdfFile(file: File): boolean {
-  const name = file.name.trim().toLowerCase()
-  if (!name.endsWith(".pdf")) return false
+const DEAL_OFFERING_DOCUMENT_EXTS = new Set([
+  "pdf",
+  "doc",
+  "docx",
+  "ppt",
+  "pptx",
+  "xls",
+  "xlsx",
+])
+
+const DEAL_OFFERING_DOCUMENT_MIMES = new Set([
+  "application/pdf",
+  "application/x-pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+])
+
+export const DEAL_OFFERING_DOCUMENT_ACCEPT = [
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".ppt",
+  ".pptx",
+  ".xls",
+  ".xlsx",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+].join(",")
+
+export const DEAL_OFFERING_DOCUMENT_TYPES_LABEL =
+  "PDF, Word, PowerPoint, or Excel"
+
+function offeringDocumentExt(fileName: string): string {
+  const name = fileName.trim().toLowerCase()
+  const dot = name.lastIndexOf(".")
+  if (dot <= 0 || dot === name.length - 1) return ""
+  return name.slice(dot + 1)
+}
+
+/** Offering document uploads (Documents tab): PDF, Word, PowerPoint, Excel. */
+export function isDealOfferingDocumentFile(file: File): boolean {
+  const ext = offeringDocumentExt(file.name)
+  if (!DEAL_OFFERING_DOCUMENT_EXTS.has(ext)) return false
   const mime = file.type.trim().toLowerCase()
   if (
     mime === "" ||
-    mime === "application/pdf" ||
-    mime === "application/x-pdf"
+    mime === "application/octet-stream" ||
+    DEAL_OFFERING_DOCUMENT_MIMES.has(mime)
   ) {
     return true
   }
-  /* Some browsers/OS combinations send a generic type for valid PDFs. */
-  if (mime === "application/octet-stream") return true
+  if (
+    mime.startsWith("application/vnd.ms-") ||
+    mime.startsWith("application/vnd.openxmlformats-officedocument.")
+  ) {
+    return true
+  }
   return false
+}
+
+export function dealOfferingDocumentRejectMessage(
+  rejectedNames: string[],
+): string {
+  if (rejectedNames.length === 1) {
+    return `"${rejectedNames[0]!}" is not supported. Upload ${DEAL_OFFERING_DOCUMENT_TYPES_LABEL} files.`
+  }
+  return `Only ${DEAL_OFFERING_DOCUMENT_TYPES_LABEL} files can be uploaded. Skipped: ${rejectedNames.join(", ")}.`
 }
 
 /** Upload offering documents (Documents tab) so preview / investors get stable `/uploads/...` links. */
@@ -1602,14 +1663,13 @@ export async function postDealOfferingDocumentUploads(
     return { ok: false, message: "VITE_BASE_URL is not configured." }
   if (files.length === 0)
     return { ok: false, message: "No documents to upload." }
-  const nonPdf = files.filter((f) => !isDealOfferingDocumentPdfFile(f))
-  if (nonPdf.length > 0) {
+  const nonAllowed = files.filter((f) => !isDealOfferingDocumentFile(f))
+  if (nonAllowed.length > 0) {
     return {
       ok: false,
-      message:
-        nonPdf.length === 1
-          ? `"${nonPdf[0]!.name}" is not a PDF. Only PDF files can be uploaded.`
-          : `Only PDF files can be uploaded. Remove: ${nonPdf.map((f) => f.name).join(", ")}.`,
+      message: dealOfferingDocumentRejectMessage(
+        nonAllowed.map((f) => f.name),
+      ),
     }
   }
   const fd = new FormData()
@@ -2409,6 +2469,14 @@ function normalizeInvestorRowApi(
     userEmail: str(
       firstDefined(raw, ["userEmail", "user_email", "email"]),
       "—",
+    ),
+    firstName: str(
+      firstDefined(raw, ["firstName", "first_name"]),
+      "",
+    ),
+    lastName: str(
+      firstDefined(raw, ["lastName", "last_name"]),
+      "",
     ),
     contactId: str(firstDefined(raw, ["contactId", "contact_id"])),
     profileId: str(firstDefined(raw, ["profileId", "profile_id"])),

@@ -12,12 +12,14 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
+  type InputHTMLAttributes,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
+import { flushSync } from "react-dom"
 import Quill from "quill"
 import "quill/dist/quill.snow.css"
 import { toast } from "../../../common/components/Toast"
@@ -63,15 +65,30 @@ export default function EmailTemplateNewPage() {
   const [name, setName] = useState("")
   const [subject, setSubject] = useState("")
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
+  const [preparedAttachment, setPreparedAttachment] =
+    useState<EmailTemplateAttachmentStored | null>(null)
   /** When true, a stored attachment (edit mode) is cleared and not kept on save. */
   const [stripStoredAttachment, setStripStoredAttachment] = useState(false)
+  const [attachmentBusy, setAttachmentBusy] = useState(false)
+  const [attachmentPhase, setAttachmentPhase] = useState<
+    "idle" | "picking" | "processing"
+  >("idle")
   const [submitting, setSubmitting] = useState(false)
   const [bodyPlainLen, setBodyPlainLen] = useState(0)
 
   const editorRef = useRef<HTMLDivElement>(null)
   const quillRef = useRef<Quill | null>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const attachmentPhaseRef = useRef<"idle" | "picking" | "processing">("idle")
   const [attachmentDropFocus, setAttachmentDropFocus] = useState(false)
+
+  function setAttachmentPhaseSafe(
+    next: "idle" | "picking" | "processing",
+  ) {
+    attachmentPhaseRef.current = next
+    setAttachmentPhase(next)
+    setAttachmentBusy(next !== "idle")
+  }
 
   useEffect(() => {
     if (!templateId) return
@@ -91,7 +108,11 @@ export default function EmailTemplateNewPage() {
     setName(existingRow.name)
     setSubject(existingRow.subject)
     setAttachmentFile(null)
+    setPreparedAttachment(null)
     setStripStoredAttachment(false)
+    setAttachmentBusy(false)
+    setAttachmentPhase("idle")
+    attachmentPhaseRef.current = "idle"
   }, [existingRow?.id])
 
   useEffect(() => {
@@ -149,56 +170,89 @@ export default function EmailTemplateNewPage() {
   }, [isEdit, existingRow])
 
   const removeAttachment = useCallback(() => {
-    if (attachmentFile) {
+    if (attachmentPhaseRef.current !== "idle") return
+    if (attachmentFile || preparedAttachment) {
       setAttachmentFile(null)
+      setPreparedAttachment(null)
       return
     }
     if (isEdit && existingRow?.attachment) {
       setStripStoredAttachment(true)
     }
-  }, [attachmentFile, isEdit, existingRow?.attachment])
+  }, [attachmentFile, preparedAttachment, isEdit, existingRow?.attachment])
 
-  const onAttachmentChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files
-      const file = files?.[0] ?? null
-      e.target.value = ""
-      if (!file) return
-      if (file.size > EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES) {
-        toast.error(
-          "File too large",
-          `Choose a file up to ${EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES / 1024 / 1024} MB.`,
-        )
-        return
-      }
-      setAttachmentFile(file)
-      setStripStoredAttachment(false)
-    },
-    [],
-  )
-
-  const pickAttachmentFile = useCallback(() => {
-    attachmentInputRef.current?.click()
-  }, [])
-
-  const applyAttachmentFile = useCallback((file: File | null) => {
-    if (!file) return
+  const applyAttachmentFile = useCallback(async (file: File | null) => {
+    if (!file) {
+      if (attachmentPhaseRef.current === "picking") setAttachmentPhaseSafe("idle")
+      return
+    }
+    if (attachmentPhaseRef.current === "processing") return
     if (file.size > EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES) {
+      setAttachmentPhaseSafe("idle")
       toast.error(
         "File too large",
         `Choose a file up to ${EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES / 1024 / 1024} MB.`,
       )
       return
     }
-    setAttachmentFile(file)
-    setStripStoredAttachment(false)
+    setAttachmentPhaseSafe("processing")
+    try {
+      const result = await fileToStoredAttachment(file)
+      if (!result.ok) {
+        toast.error("Attachment", result.error)
+        return
+      }
+      setAttachmentFile(file)
+      setPreparedAttachment(result.data)
+      setStripStoredAttachment(false)
+    } finally {
+      setAttachmentPhaseSafe("idle")
+    }
   }, [])
+
+  const onAttachmentChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files
+      const file = files?.[0] ?? null
+      e.target.value = ""
+      if (!file) {
+        if (attachmentPhaseRef.current === "picking") setAttachmentPhaseSafe("idle")
+        return
+      }
+      void applyAttachmentFile(file)
+    },
+    [applyAttachmentFile],
+  )
+
+  const onAttachmentPickerCancel = useCallback(() => {
+    if (attachmentPhaseRef.current === "picking") setAttachmentPhaseSafe("idle")
+  }, [])
+
+  const pickAttachmentFile = useCallback(() => {
+    if (attachmentPhaseRef.current !== "idle") return
+    flushSync(() => {
+      setAttachmentPhaseSafe("picking")
+    })
+    attachmentInputRef.current?.click()
+  }, [])
+
+  useEffect(() => {
+    if (attachmentPhase !== "picking") return
+    function onWindowFocus() {
+      window.setTimeout(() => {
+        if (attachmentPhaseRef.current === "picking") setAttachmentPhaseSafe("idle")
+      }, 400)
+    }
+    window.addEventListener("focus", onWindowFocus)
+    return () => window.removeEventListener("focus", onWindowFocus)
+  }, [attachmentPhase])
 
   const onAttachmentDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
       e.preventDefault()
       setAttachmentDropFocus(false)
-      applyAttachmentFile(e.dataTransfer.files?.[0] ?? null)
+      if (attachmentPhaseRef.current !== "idle") return
+      void applyAttachmentFile(e.dataTransfer.files?.[0] ?? null)
     },
     [applyAttachmentFile],
   )
@@ -206,6 +260,7 @@ export default function EmailTemplateNewPage() {
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
       e.preventDefault()
+      if (attachmentPhaseRef.current !== "idle") return
       const trimmedName = name.trim()
       if (!trimmedName) {
         toast.error("Name required", "Enter a template name.")
@@ -246,7 +301,9 @@ export default function EmailTemplateNewPage() {
             return
           }
           let attachment: EmailTemplateAttachmentStored | null = null
-          if (attachmentFile) {
+          if (preparedAttachment) {
+            attachment = preparedAttachment
+          } else if (attachmentFile) {
             const result = await fileToStoredAttachment(attachmentFile)
             if (!result.ok) {
               toast.error("Attachment", result.error)
@@ -270,7 +327,9 @@ export default function EmailTemplateNewPage() {
           toast.success("Template updated", trimmedName)
         } else {
           let attachment: EmailTemplateAttachmentStored | null = null
-          if (attachmentFile) {
+          if (preparedAttachment) {
+            attachment = preparedAttachment
+          } else if (attachmentFile) {
             const result = await fileToStoredAttachment(attachmentFile)
             if (!result.ok) {
               toast.error("Attachment", result.error)
@@ -301,6 +360,7 @@ export default function EmailTemplateNewPage() {
     },
     [
       attachmentFile,
+      preparedAttachment,
       isEdit,
       name,
       navigate,
@@ -441,19 +501,31 @@ export default function EmailTemplateNewPage() {
             type="file"
             className="email_template_attachment_input_hidden"
             onChange={onAttachmentChange}
+            {...({ onCancel: onAttachmentPickerCancel } as InputHTMLAttributes<HTMLInputElement>)}
+            disabled={submitting}
             aria-label="Choose attachment file"
           />
           {!showAttachmentChosen ? (
             <div
               role="button"
-              tabIndex={0}
+              tabIndex={attachmentBusy ? -1 : 0}
               className={`email_template_attachment_dropzone${
                 attachmentDropFocus
                   ? " email_template_attachment_dropzone--focus"
                   : ""
+              }${
+                attachmentBusy
+                  ? " email_template_attachment_dropzone--busy"
+                  : ""
               }`}
-              onClick={pickAttachmentFile}
+              aria-busy={attachmentBusy}
+              aria-disabled={attachmentBusy}
+              aria-live="polite"
+              onClick={() => {
+                if (!attachmentBusy) pickAttachmentFile()
+              }}
               onKeyDown={(e) => {
+                if (attachmentBusy) return
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault()
                   pickAttachmentFile()
@@ -461,7 +533,7 @@ export default function EmailTemplateNewPage() {
               }}
               onDragOver={(e) => {
                 e.preventDefault()
-                setAttachmentDropFocus(true)
+                if (!attachmentBusy) setAttachmentDropFocus(true)
               }}
               onDragLeave={() => setAttachmentDropFocus(false)}
               onDrop={onAttachmentDrop}
@@ -470,14 +542,30 @@ export default function EmailTemplateNewPage() {
                 className="email_template_attachment_dropzone_icon_ring"
                 aria-hidden
               >
-                <Upload size={20} strokeWidth={1.75} />
+                {attachmentBusy ? (
+                  <Loader2
+                    size={20}
+                    strokeWidth={1.75}
+                    className="email_template_new_btn_spin"
+                  />
+                ) : (
+                  <Upload size={20} strokeWidth={1.75} />
+                )}
               </span>
               <span className="email_template_attachment_dropzone_text">
                 <span className="email_template_attachment_dropzone_title">
-                  Add an attachment
+                  {attachmentPhase === "picking"
+                    ? "Opening file picker…"
+                    : attachmentBusy
+                      ? "Adding attachment…"
+                      : "Add an attachment"}
                 </span>
                 <span className="email_template_attachment_dropzone_sub">
-                  Drop a file here or click to browse
+                  {attachmentPhase === "picking"
+                    ? "Your file manager is opening"
+                    : attachmentBusy
+                      ? "Please wait until the file is ready"
+                      : "Drop a file here or click to browse"}
                 </span>
               </span>
             </div>
@@ -515,15 +603,31 @@ export default function EmailTemplateNewPage() {
                     type="button"
                     className="email_template_attachment_file_btn"
                     onClick={pickAttachmentFile}
-                    aria-label="Replace attachment"
-                    title="Replace file"
+                    disabled={attachmentBusy || submitting}
+                    aria-label={
+                      attachmentBusy
+                        ? "Adding attachment"
+                        : "Replace attachment"
+                    }
+                    title={attachmentBusy ? "Adding attachment…" : "Replace file"}
+                    aria-busy={attachmentBusy}
                   >
-                    <Upload size={16} strokeWidth={2} aria-hidden />
+                    {attachmentBusy ? (
+                      <Loader2
+                        size={16}
+                        strokeWidth={2}
+                        className="email_template_new_btn_spin"
+                        aria-hidden
+                      />
+                    ) : (
+                      <Upload size={16} strokeWidth={2} aria-hidden />
+                    )}
                   </button>
                   <button
                     type="button"
                     className="email_template_attachment_file_btn email_template_attachment_file_btn--danger"
                     onClick={removeAttachment}
+                    disabled={attachmentBusy || submitting}
                     aria-label="Remove attachment"
                     title="Remove file"
                   >
@@ -546,7 +650,7 @@ export default function EmailTemplateNewPage() {
             Close
           </button>
           <div className="add_contact_modal_actions_trailing">
-            <button type="submit" className="um_btn_primary" disabled={submitting}>
+            <button type="submit" className="um_btn_primary" disabled={submitting || attachmentBusy}>
             {submitting ? (
               <>
                 <Loader2

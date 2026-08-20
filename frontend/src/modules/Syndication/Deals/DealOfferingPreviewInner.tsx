@@ -844,9 +844,22 @@ export function DealOfferingPreviewInner({
                               aria-hidden
                             />
                             <div className="deal_offer_pf_documents_item_body">
-                              <span className="deal_offer_pf_documents_name">
-                                {doc.name}
-                              </span>
+                              {doc.url ? (
+                                <a
+                                  href={doc.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="deal_offer_pf_documents_name deal_offer_pf_documents_name_link"
+                                  title={doc.name}
+                                  aria-label={`View ${doc.name} (opens in a new tab)`}
+                                >
+                                  {doc.name}
+                                </a>
+                              ) : (
+                                <span className="deal_offer_pf_documents_name">
+                                  {doc.name}
+                                </span>
+                              )}
                               {doc.url ? (
                                 <div
                                   className="deal_offer_pf_documents_actions"

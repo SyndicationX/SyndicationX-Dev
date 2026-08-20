@@ -1,3 +1,4 @@
+import { DocumentsTableScroll } from "@/modules/Syndication/Deals/tabs/documents/DocumentsTableScroll"
 import { ChevronDown, Download, Eye } from "lucide-react"
 import { useState } from "react"
 import type {
@@ -20,9 +21,22 @@ function InvestorDocumentRow({ doc }: { doc: InvestmentDetailDocumentRow }) {
       <td className="deal_docs_ui_td deal_docs_ui_td_doc">
         <div className="deal_docs_ui_doc_cell">
           <div className="deal_docs_ui_doc_name_wrap">
-            <span className="deal_docs_ui_doc_name_text" title={displayName}>
-              {displayName}
-            </span>
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="deal_docs_ui_doc_name_link"
+                title={displayName}
+                aria-label={`View ${displayName}`}
+              >
+                <span className="deal_docs_ui_doc_name_text">{displayName}</span>
+              </a>
+            ) : (
+              <span className="deal_docs_ui_doc_name_text" title={displayName}>
+                {displayName}
+              </span>
+            )}
           </div>
           {url ? (
             <div className="deal_docs_ui_doc_quick">
@@ -131,7 +145,7 @@ export function InvestorOfferingDocumentsList({
             </div>
 
             <div id={panelId} className="deal_docs_ui_panel" hidden={!isOpen}>
-              <div className="deal_docs_ui_table_scroll">
+              <DocumentsTableScroll active={isOpen}>
                 <table className="deal_docs_ui_table investment_detail_offering_docs_table">
                   <thead>
                     <tr>
@@ -169,7 +183,7 @@ export function InvestorOfferingDocumentsList({
                     )}
                   </tbody>
                 </table>
-              </div>
+              </DocumentsTableScroll>
             </div>
           </div>
         )

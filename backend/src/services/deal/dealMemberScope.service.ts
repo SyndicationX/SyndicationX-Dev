@@ -370,18 +370,36 @@ export async function viewerHasNonCoSponsorDealMemberRole(
 }
 
 /**
- * True when the viewer appears on any deal as Lead Sponsor or Admin sponsor
- * (portal user id or contact email match). Used so sponsor team sees full-company
- * CRM contacts (including portal/member rows), same as company admin.
+ * Lead Sponsor / Admin sponsor stored on `deal_member.deal_member_role` or
+ * `deal_investment.investor_role`. Matches the same variants as
+ * {@link classifyDealMemberRoleRaw} (spaces, underscores, “lead … sponsor”).
  */
-export async function viewerIsLeadOrAdminSponsorOnAnyDeal(
+const SQL_ROLE_IS_LEAD_OR_ADMIN = `(
+  lower(trim(%COL%)) IN ('lead sponsor', 'lead_sponsor', 'admin sponsor', 'admin_sponsor')
+  OR (
+    position('lead' in lower(trim(%COL%))) > 0
+    AND position('sponsor' in lower(trim(%COL%))) > 0
+  )
+)`;
+
+function sqlRoleIsLeadOrAdmin(columnSql: string): string {
+  return SQL_ROLE_IS_LEAD_OR_ADMIN.replaceAll("%COL%", columnSql);
+}
+
+/**
+ * Distinct deal ids where this user is Lead Sponsor or Admin sponsor
+ * (`deal_member` or `deal_investment`, portal user id or contact email match).
+ */
+export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
   userId: string,
-): Promise<boolean> {
-  const res = await pool.query<{ ok: number }>(
-    `SELECT 1 AS ok
+): Promise<string[]> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return [];
+  const res = await pool.query<{ deal_id: string }>(
+    `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE lower(trim(dm.deal_member_role)) IN ('lead sponsor', 'admin sponsor')
+     WHERE ${sqlRoleIsLeadOrAdmin("dm.deal_member_role")}
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -390,10 +408,42 @@ export async function viewerIsLeadOrAdminSponsorOnAnyDeal(
              AND lower(trim(c.email)) = lower(trim(u.email))
          )
        )
-     LIMIT 1`,
-    [userId],
+     UNION
+     SELECT DISTINCT di.deal_id::text AS deal_id
+     FROM deal_investment di
+     INNER JOIN users u ON u.id = $1::uuid
+     WHERE ${sqlRoleIsLeadOrAdmin("di.investor_role")}
+       AND trim(di.contact_id) <> $2
+       AND (
+         trim(di.contact_id) = u.id::text
+         OR EXISTS (
+           SELECT 1 FROM contact c
+           WHERE c.id::text = trim(di.contact_id)
+             AND lower(trim(c.email)) = lower(trim(u.email))
+         )
+       )`,
+    [uid, DEAL_INVESTMENT_AUTOSAVE_CONTACT],
   );
-  return res.rows.length > 0;
+  return [
+    ...new Set(
+      res.rows
+        .map((r) => String(r.deal_id ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/**
+ * True when the viewer appears on any deal as Lead Sponsor or Admin sponsor
+ * (portal user id or contact email match). Used so sponsor team sees full-company
+ * CRM contacts (including portal/member rows), same as company admin, plus
+ * investors on those deals.
+ */
+export async function viewerIsLeadOrAdminSponsorOnAnyDeal(
+  userId: string,
+): Promise<boolean> {
+  const ids = await listDealIdsWhereViewerIsLeadOrAdminSponsor(userId);
+  return ids.length > 0;
 }
 
 const SPONSOR_ROLES_IN =

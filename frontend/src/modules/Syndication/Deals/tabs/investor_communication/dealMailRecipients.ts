@@ -1,8 +1,19 @@
-import { investorRoleLabel } from "../../constants/investor-profile"
+import { EMAIL_UNAVAILABLE_LABEL } from "../../../../../common/utils/displayEmail"
 import { ADD_MEMBER_DRAFT_ROW_ID } from "../deal_members/add-investment/addMemberDraftInvestorRow"
+import {
+  isDealMembersTabRole,
+  isLpInvestorRole,
+  investorRoleLabel,
+} from "../../constants/investor-profile"
+import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
+import {
+  isGpInvestorClass,
+  isLpInvestorClass,
+} from "../../utils/investorClassOverviewFields"
 
 export type DealMailRecipientGroup = "investor" | "deal_member"
+export type InvestorClassKind = "lp" | "gp"
 
 export interface DealMailRecipient {
   id: string
@@ -10,6 +21,49 @@ export interface DealMailRecipient {
   email: string
   groups: DealMailRecipientGroup[]
   roleLabel: string
+  classKind: InvestorClassKind
+  className: string
+  sponsorKey: string
+  sponsorName: string
+  sponsorEmail: string
+  addedByUserId: string
+  addedByIsCoSponsor: boolean
+  requiresCosponsorRelease: boolean
+  /** Investor or cosponsor has an address that can actually receive the mail. */
+  canDeliver: boolean
+}
+
+export interface DealMailLpSponsorGroup {
+  key: string
+  sponsorName: string
+  sponsorEmail: string
+  isCosponsor: boolean
+  requiresRelease: boolean
+  recipients: DealMailRecipient[]
+}
+
+export interface DealMailRecipientTree {
+  gps: DealMailRecipient[]
+  lps: DealMailRecipient[]
+  lpGroups: DealMailLpSponsorGroup[]
+}
+
+export interface BuildDealMailRecipientsInput {
+  investors: DealInvestorRow[]
+  classes: DealInvestorClass[]
+  viewerUserId?: string
+  viewerEmail?: string
+}
+
+const NONE_SPONSOR_KEY = "none"
+const LEAD_ADMIN_GROUP_LABEL = "Lead / Admin LPs"
+const NO_COSPONSOR_GROUP_LABEL = "No cosponsor"
+
+function usableEmail(raw: unknown): string {
+  const email = String(raw ?? "").trim()
+  if (!email.includes("@")) return ""
+  if (email.toLowerCase() === EMAIL_UNAVAILABLE_LABEL.toLowerCase()) return ""
+  return email
 }
 
 function roleLabelForRow(row: DealInvestorRow): string {
@@ -31,49 +85,212 @@ function groupLabel(groups: DealMailRecipientGroup[]): string {
   return "—"
 }
 
-export function groupLabelForDealMailRecipient(r: DealMailRecipient): string {
+export function groupLabelForDealMailRecipient(r: {
+  groups: DealMailRecipientGroup[]
+}): string {
   return groupLabel(r.groups)
+}
+
+function matchInvestorClass(
+  row: DealInvestorRow,
+  classes: DealInvestorClass[],
+): DealInvestorClass | null {
+  const raw = String(row.investorClass ?? "").trim()
+  if (!raw) return null
+  const lower = raw.toLowerCase()
+  return (
+    classes.find(
+      (c) =>
+        c.id.trim().toLowerCase() === lower ||
+        c.name.trim().toLowerCase() === lower,
+    ) ?? null
+  )
+}
+
+export function classKindForInvestorRow(
+  row: DealInvestorRow,
+  classes: DealInvestorClass[],
+): InvestorClassKind {
+  const matched = matchInvestorClass(row, classes)
+  if (matched) {
+    if (isGpInvestorClass(matched)) return "gp"
+    if (isLpInvestorClass(matched)) return "lp"
+  }
+  const className = String(row.investorClass ?? "").trim().toLowerCase()
+  if (/\bgp\b|general partner/.test(className)) return "gp"
+  if (/\blp\b|limited partner/.test(className)) return "lp"
+  if (
+    isDealMembersTabRole(row.investorRole) &&
+    !isLpInvestorRole(row.investorRole)
+  )
+    return "gp"
+  return "lp"
+}
+
+function sponsorKeyForRow(row: DealInvestorRow): string {
+  const uid = String(row.addedByUserId ?? "").trim().toLowerCase()
+  if (uid) return `uid:${uid}`
+  const email = usableEmail(row.addedByEmail)
+  if (email) return `em:${email.toLowerCase()}`
+  const name = String(row.addedByDisplayName ?? "").trim()
+  if (name && name !== "—") return `nm:${name.toLowerCase()}`
+  return NONE_SPONSOR_KEY
+}
+
+function sponsorNameForRow(row: DealInvestorRow, isCosponsor: boolean): string {
+  const name = String(row.addedByDisplayName ?? "").trim()
+  if (name && name !== "—") return name
+  const email = usableEmail(row.addedByEmail)
+  if (email) return email
+  if (isCosponsor) return "Co-sponsor"
+  if (sponsorKeyForRow(row) === NONE_SPONSOR_KEY) return NO_COSPONSOR_GROUP_LABEL
+  return LEAD_ADMIN_GROUP_LABEL
+}
+
+function viewerOwnsSponsor(
+  row: DealInvestorRow,
+  viewerUserId: string,
+  viewerEmail: string,
+): boolean {
+  const uid = String(row.addedByUserId ?? "").trim().toLowerCase()
+  if (viewerUserId && uid && uid === viewerUserId) return true
+  const email = usableEmail(row.addedByEmail).toLowerCase()
+  if (viewerEmail && email && email === viewerEmail) return true
+  return false
+}
+
+function sortByName(a: DealMailRecipient, b: DealMailRecipient): number {
+  return a.displayName.localeCompare(b.displayName, undefined, {
+    sensitivity: "base",
+  })
+}
+
+export function buildDealMailRecipients({
+  investors,
+  classes,
+  viewerUserId = "",
+  viewerEmail = "",
+}: BuildDealMailRecipientsInput): DealMailRecipient[] {
+  const viewerId = viewerUserId.trim().toLowerCase()
+  const viewerEm = viewerEmail.trim().toLowerCase()
+  const out: DealMailRecipient[] = []
+
+  for (const row of investors) {
+    if (row.id === ADD_MEMBER_DRAFT_ROW_ID) continue
+    const email = usableEmail(row.userEmail)
+    const classKind = classKindForInvestorRow(row, classes)
+    const isCosponsor = row.addedByIsCoSponsorOnDeal === true
+    const requiresCosponsorRelease =
+      classKind === "lp" &&
+      isCosponsor &&
+      !viewerOwnsSponsor(row, viewerId, viewerEm)
+    const sponsorEmail = usableEmail(row.addedByEmail)
+    const canDeliver = Boolean(
+      email || (requiresCosponsorRelease && sponsorEmail),
+    )
+
+    const displayName =
+      row.displayName?.trim() ||
+      row.userDisplayName?.trim() ||
+      email ||
+      "Investor"
+    const className = String(row.investorClass ?? "").trim()
+    out.push({
+      id: `investor-${row.id}-${email || sponsorKeyForRow(row) || row.id}`,
+      displayName,
+      email,
+      groups: ["investor"],
+      roleLabel: roleLabelForRow(row),
+      classKind,
+      className,
+      sponsorKey: sponsorKeyForRow(row),
+      sponsorName: sponsorNameForRow(row, isCosponsor),
+      sponsorEmail,
+      addedByUserId: String(row.addedByUserId ?? "").trim(),
+      addedByIsCoSponsor: isCosponsor,
+      requiresCosponsorRelease,
+      canDeliver,
+    })
+  }
+
+  return out.sort(sortByName)
+}
+
+export function groupDealMailRecipients(
+  recipients: DealMailRecipient[],
+): DealMailRecipientTree {
+  const gps = recipients.filter((r) => r.classKind === "gp").sort(sortByName)
+  const lps = recipients.filter((r) => r.classKind === "lp").sort(sortByName)
+  const bySponsor = new Map<string, DealMailLpSponsorGroup>()
+
+  for (const r of lps) {
+    const existing = bySponsor.get(r.sponsorKey)
+    if (existing) {
+      existing.recipients.push(r)
+      if (r.sponsorEmail && !existing.sponsorEmail)
+        existing.sponsorEmail = r.sponsorEmail
+      if (r.requiresCosponsorRelease) existing.requiresRelease = true
+      continue
+    }
+    bySponsor.set(r.sponsorKey, {
+      key: r.sponsorKey,
+      sponsorName:
+        r.addedByIsCoSponsor || r.sponsorKey === NONE_SPONSOR_KEY
+          ? r.sponsorName
+          : r.sponsorName || LEAD_ADMIN_GROUP_LABEL,
+      sponsorEmail: r.sponsorEmail,
+      isCosponsor: r.addedByIsCoSponsor,
+      requiresRelease: r.requiresCosponsorRelease,
+      recipients: [r],
+    })
+  }
+
+  const lpGroups = [...bySponsor.values()].sort((a, b) => {
+    if (a.requiresRelease !== b.requiresRelease)
+      return a.requiresRelease ? 1 : -1
+    if (a.key === NONE_SPONSOR_KEY) return 1
+    if (b.key === NONE_SPONSOR_KEY) return -1
+    return a.sponsorName.localeCompare(b.sponsorName, undefined, {
+      sensitivity: "base",
+    })
+  })
+
+  return { gps, lps, lpGroups }
+}
+
+export function deliveryEmailsForRecipients(
+  selected: DealMailRecipient[],
+): string[] {
+  const emails: string[] = []
+  for (const r of selected) {
+    if (r.requiresCosponsorRelease) {
+      if (r.sponsorEmail.includes("@")) emails.push(r.sponsorEmail)
+      continue
+    }
+    if (r.email.includes("@")) emails.push(r.email)
+  }
+  return [...new Set(emails.map((e) => e.trim().toLowerCase()))]
+}
+
+export function mergeDealInvestorRowsForMail(
+  lpInvestors: DealInvestorRow[],
+  allInvestors: DealInvestorRow[],
+): DealInvestorRow[] {
+  const byId = new Map<string, DealInvestorRow>()
+  for (const row of allInvestors) {
+    if (!row.id || row.id === ADD_MEMBER_DRAFT_ROW_ID) continue
+    byId.set(row.id, row)
+  }
+  for (const row of lpInvestors) {
+    if (!row.id || row.id === ADD_MEMBER_DRAFT_ROW_ID) continue
+    byId.set(row.id, row)
+  }
+  return [...byId.values()]
 }
 
 export function mergeDealInvestorsAndMembersToRecipients(
   investors: DealInvestorRow[],
-  members: DealInvestorRow[],
+  _members: DealInvestorRow[] = [],
 ): DealMailRecipient[] {
-  const byEmail = new Map<string, DealMailRecipient>()
-
-  function add(row: DealInvestorRow, group: DealMailRecipientGroup) {
-    if (row.id === ADD_MEMBER_DRAFT_ROW_ID) return
-    const email = String(row.userEmail ?? "").trim()
-    if (!email.includes("@")) return
-    const key = email.toLowerCase()
-    const displayName =
-      row.displayName?.trim() ||
-      row.userDisplayName?.trim() ||
-      email
-    const roleLabel = roleLabelForRow(row)
-    const existing = byEmail.get(key)
-    if (existing) {
-      if (!existing.groups.includes(group)) existing.groups.push(group)
-      if (existing.displayName === email && displayName !== email) {
-        existing.displayName = displayName
-      }
-      return
-    }
-    byEmail.set(key, {
-      id: `${group}-${row.id}-${key}`,
-      displayName,
-      email,
-      groups: [group],
-      roleLabel,
-    })
-  }
-
-  for (const row of investors) add(row, "investor")
-  for (const row of members) add(row, "deal_member")
-
-  return [...byEmail.values()].sort((a, b) =>
-    a.displayName.localeCompare(b.displayName, undefined, {
-      sensitivity: "base",
-    }),
-  )
+  return buildDealMailRecipients({ investors, classes: [] })
 }

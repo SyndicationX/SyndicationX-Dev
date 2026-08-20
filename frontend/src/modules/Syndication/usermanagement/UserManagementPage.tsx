@@ -72,6 +72,7 @@ import {
   formatOrganizationsCsvCell,
   formatRoleCsvCell,
   formatValue,
+  isOrgStaffPortalRole,
   memberUserCellPrimaryLabel,
   memberInvitePending,
   memberRowIsCurrentUser,
@@ -518,7 +519,10 @@ export default function UserManagementPage({
         const list = Array.isArray(data.users) ? data.users : [];
         const normalized = list.filter(
           (x): x is Record<string, unknown> =>
-            x !== null && typeof x === "object" && !Array.isArray(x),
+            x !== null &&
+            typeof x === "object" &&
+            !Array.isArray(x) &&
+            isOrgStaffPortalRole(x.role),
         );
         setMemberRows(normalized);
         setActionMenuRowId(null);
@@ -554,7 +558,10 @@ export default function UserManagementPage({
       const list = Array.isArray(data.users) ? data.users : [];
       const normalized = list.filter(
         (x): x is Record<string, unknown> =>
-          x !== null && typeof x === "object" && !Array.isArray(x),
+          x !== null &&
+          typeof x === "object" &&
+          !Array.isArray(x) &&
+          isOrgStaffPortalRole(x.role),
       );
       setMemberRows(normalized);
     } catch {

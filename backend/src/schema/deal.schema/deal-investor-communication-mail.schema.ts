@@ -15,6 +15,10 @@ export type DealInvestorCommunicationRecipient = {
   email: string;
   groups: ("investor" | "deal_member")[];
   roleLabel?: string;
+  classKind?: "lp" | "gp";
+  requiresCosponsorRelease?: boolean;
+  sponsorName?: string;
+  sponsorEmail?: string;
 };
 
 /** Mail send log for Investor Communication tab (`investor_communication_logs`). */

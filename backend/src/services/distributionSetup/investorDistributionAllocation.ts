@@ -269,6 +269,131 @@ export function allocateByCapitalFallback(params: {
   return out;
 }
 
+export type FeeClassSplitInput = {
+  classId: string;
+  percent: string | number;
+};
+
+export type AllocateFeeByClassSplitsResult = {
+  lines: InvestorPaymentLine[];
+  blockedClassNames: string[];
+};
+
+/**
+ * Class-scoped fee allocation.
+ * A class is paid only when it has a positive percentage and at least one
+ * investor. Empty mentioned classes do not spill their share to other classes;
+ * the caller should refuse the whole run when `blockedClassNames` is not empty.
+ */
+export function allocateFeeByClassSplits(params: {
+  amount: number;
+  splits: FeeClassSplitInput[];
+  investors: Array<{
+    id: string;
+    contactId?: string;
+    userEmail?: string;
+    displayName: string;
+    investorClass: string;
+    capital: number;
+    percentOfClassDistributions?: string | number | null;
+  }>;
+  classes: Array<{ id: string; name: string }>;
+}): AllocateFeeByClassSplitsResult {
+  const amount = params.amount;
+  if (!(amount > 0)) return { lines: [], blockedClassNames: [] };
+
+  const classByKey = new Map<string, { id: string; name: string }>();
+  for (const c of params.classes) {
+    classByKey.set(c.id.toLowerCase(), c);
+    classByKey.set(c.name.trim().toLowerCase(), c);
+  }
+
+  type Acc = {
+    investor: (typeof params.investors)[number];
+    classId: string;
+    className: string;
+    capital: number;
+    storedPct: number | null;
+  };
+  const matched: Acc[] = [];
+  for (const inv of params.investors) {
+    const hasStored =
+      String(inv.percentOfClassDistributions ?? "")
+        .replace(/[^0-9.-]/g, "")
+        .trim() !== "";
+    const stored = hasStored
+      ? Math.min(100, Math.max(0, num(inv.percentOfClassDistributions)))
+      : null;
+    const key = str(inv.investorClass).toLowerCase();
+    const cls = classByKey.get(key);
+    if (!cls) continue;
+    matched.push({
+      investor: inv,
+      classId: cls.id,
+      className: cls.name,
+      capital: inv.capital,
+      storedPct: stored,
+    });
+  }
+
+  const byClass = new Map<string, Acc[]>();
+  for (const row of matched) {
+    const list = byClass.get(row.classId) ?? [];
+    list.push(row);
+    byClass.set(row.classId, list);
+  }
+
+  const blockedClassNames: string[] = [];
+  const seenBlocked = new Set<string>();
+  const out: InvestorPaymentLine[] = [];
+
+  for (const split of params.splits) {
+    const pctValue = num(split.percent);
+    if (!(pctValue > 0)) continue;
+    const cls =
+      classByKey.get(str(split.classId).toLowerCase()) ??
+      params.classes.find((c) => c.id === str(split.classId));
+    if (!cls) continue;
+    const members = byClass.get(cls.id) ?? [];
+    if (members.length === 0) {
+      if (!seenBlocked.has(cls.id)) {
+        seenBlocked.add(cls.id);
+        blockedClassNames.push(cls.name || "Class");
+      }
+      continue;
+    }
+    const classPay = amount * (pctValue / 100);
+    const useStored = members.some((m) => m.storedPct != null);
+    const weights = members.map((m) =>
+      useStored ? (m.storedPct ?? 0) : Math.max(0, m.capital),
+    );
+    const weightTotal = weights.reduce((s, w) => s + w, 0);
+    const equal = !(weightTotal > 0);
+    members.forEach((row, i) => {
+      const within = equal
+        ? 1 / members.length
+        : (weights[i] ?? 0) / weightTotal;
+      const payment = classPay * within;
+      if (!(payment > 0)) return;
+      out.push({
+        investorId: row.investor.id,
+        contactId: str(row.investor.contactId),
+        userEmail: str(row.investor.userEmail).toLowerCase(),
+        investorName: row.investor.displayName || "—",
+        classId: row.classId,
+        className: row.className,
+        capital: money(row.capital),
+        percentOfClass: pct(
+          useStored && row.storedPct != null ? row.storedPct : within * 100,
+        ),
+        payment: money(payment),
+      });
+    });
+  }
+
+  return { lines: blockedClassNames.length > 0 ? [] : out, blockedClassNames };
+}
+
 export type ViewerPaymentMatchKeys = {
   userId: string;
   emailNorm: string;

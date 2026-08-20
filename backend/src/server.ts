@@ -64,6 +64,8 @@ import { stripeWebhookBodyParser } from "./middleware/stripeWebhook.middleware.j
 
 import { securityHeadersMiddleware } from "./middleware/securityHeaders.js";
 
+import { portalModeContextMiddleware } from "./middleware/portalMode.middleware.js";
+
 import {
 
   errorHandler,
@@ -317,6 +319,8 @@ app.use("/api/v1", (req, res, next) => {
 
 });
 
+app.use("/api/v1", portalModeContextMiddleware);
+
 
 
 const uploadsRoot = getUploadsPhysicalRoot();
@@ -454,6 +458,24 @@ if (stripeCfg.configured) {
 }
 
 
+
+const emailServiceType = process.env.EMAIL_SERVICE_TYPE?.trim().toLowerCase();
+const emailSenderSet = Boolean(process.env.SENDER_EMAIL_ID?.trim());
+const emailPasswordSet = Boolean(process.env.SENDER_EMAIL_PASSWORD?.trim());
+const smtpHostSet = Boolean(process.env.SMTP_HOST?.trim());
+if (emailServiceType === "smtp" && smtpHostSet) {
+  console.log(`Email configured → smtp ${process.env.SMTP_HOST}`);
+} else if (
+  (emailServiceType === "gmail" || emailServiceType === "office365") &&
+  emailSenderSet &&
+  emailPasswordSet
+) {
+  console.log(`Email configured → ${emailServiceType}`);
+} else {
+  console.log(
+    "Email not configured — set EMAIL_SERVICE_TYPE plus SENDER_EMAIL_ID / SENDER_EMAIL_PASSWORD (or SMTP_HOST) in backend/.env.local, then restart.",
+  );
+}
 
 const ghlCfg = getGhlPublicConfig();
 

@@ -18,6 +18,7 @@ import {
   allocateFeeCashByClass,
   feeClassSplitTotal,
   feeWindowForPeriodFactor,
+  listFeeClassSplitStatuses,
   mergeFeeTypeOptions,
   parseFeePercent,
   validateDistributionFee,
@@ -32,6 +33,7 @@ const PERIOD_OPTIONS: DropdownSelectOption[] = [
 type DistributionFeePanelProps = {
   fee: DistributionFeeConfig
   classes: DistributionSetupClass[]
+  investors?: Array<{ investorClass?: string | null }>
   onChange: (next: DistributionFeeConfig) => void
   completing?: boolean
   onComplete?: () => void
@@ -61,18 +63,35 @@ function classTypeLabel(classType: string): string {
 export function DistributionFeePanel({
   fee,
   classes,
+  investors = [],
   onChange,
   completing = false,
   onComplete,
 }: DistributionFeePanelProps) {
   const validation = useMemo(
-    () => validateDistributionFee({ fee, requireComplete: true }),
-    [fee],
+    () =>
+      validateDistributionFee({
+        fee,
+        requireComplete: true,
+        classes,
+        investors,
+      }),
+    [fee, classes, investors],
   )
 
   const totalPct = useMemo(
     () => feeClassSplitTotal(fee.classSplits),
     [fee.classSplits],
+  )
+
+  const splitStatuses = useMemo(
+    () =>
+      listFeeClassSplitStatuses({
+        classes,
+        splits: fee.classSplits,
+        investors,
+      }),
+    [classes, fee.classSplits, investors],
   )
 
   const allocations = useMemo(
@@ -236,7 +255,10 @@ export function DistributionFeePanel({
             <h2 className="ds_table_title">Class Split</h2>
             <p className="ds_table_subtitle">
               Enter a percentage for each investor class. Combined allocation
-              must equal 100%.
+              must equal 100%. A class is paid only when it has a percentage
+              and investors. If a class has a percentage but no investors, that
+              class is not paid and this distribution is not paid to other
+              classes either.
             </p>
           </div>
           <p
@@ -245,7 +267,11 @@ export function DistributionFeePanel({
             aria-live="polite"
           >
             Total {totalPct.toFixed(2)}%
-            {totalOk ? " · Ready" : " · Must equal 100%"}
+            {!totalOk
+              ? " · Must equal 100%"
+              : validation.ok
+                ? " · Ready"
+                : ""}
           </p>
         </div>
 
@@ -275,9 +301,17 @@ export function DistributionFeePanel({
                   const pctN = parseFeePercent(pctRaw)
                   const pctInvalid =
                     !Number.isFinite(pctN) || pctN < 0 || pctN > 100
+                  const status = splitStatuses.find((s) => s.classId === cls.id)
+                  const blocked =
+                    status?.mentioned === true &&
+                    (status?.investorCount ?? 0) === 0
+                  const payable = status?.payable === true
                   const amount = allocations[cls.id] ?? 0
                   return (
-                    <tr key={cls.id}>
+                    <tr
+                      key={cls.id}
+                      className={blocked ? "is-blocked" : undefined}
+                    >
                       <td>
                         <div className="ds_fee_class_cell">
                           <span
@@ -288,6 +322,11 @@ export function DistributionFeePanel({
                           <span className="ds_fee_class_role">
                             {classTypeLabel(cls.classType)}
                           </span>
+                          {blocked ? (
+                            <span className="ds_fee_class_note">
+                              No investors — this class will not be paid
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                       <td className="ds_fee_col_pct">
@@ -298,12 +337,16 @@ export function DistributionFeePanel({
                           <input
                             type="text"
                             inputMode="decimal"
-                            className={pctInvalid ? "is-invalid" : undefined}
+                            className={
+                              pctInvalid || blocked ? "is-invalid" : undefined
+                            }
                             value={pctRaw}
                             onChange={(e) =>
                               setClassPercent(cls.id, e.target.value)
                             }
-                            aria-invalid={pctInvalid || undefined}
+                            aria-invalid={
+                              pctInvalid || blocked ? true : undefined
+                            }
                           />
                           <span className="ds_fee_pct_suffix" aria-hidden>
                             %
@@ -312,7 +355,7 @@ export function DistributionFeePanel({
                       </td>
                       <td className="ds_fee_col_amt">
                         <span className="ds_fee_amount">
-                          {cashNum > 0 && totalOk
+                          {cashNum > 0 && totalOk && payable
                             ? formatMoneyPlain(amount)
                             : "—"}
                         </span>
@@ -333,7 +376,7 @@ export function DistributionFeePanel({
           <p className="ds_fee_validation is-ok" role="status">
             Class allocation is valid
             {cashNum > 0
-              ? ` · ${formatMoneyPlain(cashNum)} will be split across classes.`
+              ? ` · ${formatMoneyPlain(cashNum)} will be split across classes that have both a percentage and investors.`
               : "."}
           </p>
         ) : null}
@@ -349,7 +392,7 @@ export function DistributionFeePanel({
             title={
               canComplete
                 ? "Record this fee distribution — Source: GP Payment, Type: selected type"
-                : "Enter fee name, type, cash > $0, and class split totaling 100% to complete"
+                : "Enter fee name, type, cash > $0, and a class-scoped split totaling 100% (each allocated class must have investors)"
             }
           >
             {completing ? "Completing…" : "Complete acquisition fee"}

@@ -14,7 +14,7 @@ import {
   Layers,
   List,
   // LayoutGrid,
-  // Mails,
+  Mails,
   Megaphone,
   Settings,
   Star,
@@ -244,7 +244,6 @@ const contactsNavSubmenu: NavSubItem[] = [
   // Previous options:
   // { label: "CRM", to: "/contacts/crm", icon: LayoutGrid },
   // { label: "All contacts", to: "/contacts", icon: Users },
-  // { label: "Email Templates", to: "/contacts/email-templates", icon: Mails },
 
   // From SX-Contacts-UI.html:
   { label: "Overview", to: "/contacts/overview", icon: LayoutDashboard },
@@ -252,6 +251,7 @@ const contactsNavSubmenu: NavSubItem[] = [
   { label: "Pipeline", to: "/contacts/pipeline", icon: Columns3 },
   { label: "Inbox", to: "/contacts/inbox", icon: Inbox },
   { label: "Campaigns", to: "/contacts/campaigns", icon: Megaphone },
+  { label: "Email Templates", to: "/contacts/email-templates", icon: Mails },
   { label: "Meetings", to: "/contacts/meetings", icon: Calendar },
   { label: "Pages & Branding", to: "/contacts/pages", icon: Layers },
   { label: "Import", to: "/contacts/import", icon: Upload },

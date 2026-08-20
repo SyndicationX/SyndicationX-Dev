@@ -41,3 +41,12 @@ export function applyInvitationMailSentMarks(
     return { ...r, invitationMailSent: true }
   })
 }
+
+export function omitInvitationMailKeys(
+  prev: InvitationMailStatusByRowId,
+  keys: InvitationMailStatusByRowId,
+): InvitationMailStatusByRowId {
+  const next = { ...prev }
+  for (const k of Object.keys(keys)) delete next[k]
+  return next
+}

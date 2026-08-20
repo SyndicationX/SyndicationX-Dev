@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail";
 import { filterDealListRowsVisibleToInvestors } from "@/modules/Investing/utils/investingViewerDealScope";
-import { isPlatformAdmin } from "@/common/auth/roleUtils";
+import { isPlatformAdmin, isSponsorWorkspaceInvestingViewer } from "@/common/auth/roleUtils";
 import { TabsScrollStrip } from "@/common/components/tabs-scroll-strip/TabsScrollStrip";
 import {
   dealListRowToDealRecord,
@@ -122,25 +122,28 @@ async function loadDealsByBucket(
   viewerEmailNorm: string,
 ): Promise<InvestingDashboardDealsByBucket> {
   const platformAdminViewer = isPlatformAdmin();
+  const sponsorWorkspaceViewer = isSponsorWorkspaceInvestingViewer();
   let list = await fetchDealsList(
     platformAdminViewer ? undefined : { includeParticipantDeals: true },
   );
-  if (!platformAdminViewer) {
+  if (!platformAdminViewer && !sponsorWorkspaceViewer) {
     list = filterDealListRowsVisibleToInvestors(list);
   }
-  list = list.filter((row) => {
-    const effective = effectiveOfferingStatusForAccess(
-      row.dealStage,
-      row.offeringStatus,
-    );
-    if (!effective) return false;
-    const rules = getDealStatusRules(effective);
-    return (
-      rules.status !== "closed" &&
-      rules.status !== "past" &&
-      rules.allowDashboardVisibility
-    );
-  });
+  if (!platformAdminViewer && !sponsorWorkspaceViewer) {
+    list = list.filter((row) => {
+      const effective = effectiveOfferingStatusForAccess(
+        row.dealStage,
+        row.offeringStatus,
+      );
+      if (!effective) return false;
+      const rules = getDealStatusRules(effective);
+      return (
+        rules.status !== "closed" &&
+        rules.status !== "past" &&
+        rules.allowDashboardVisibility
+      );
+    });
+  }
   if (list.length === 0) return { ...EMPTY_BY_BUCKET };
 
   const bundles = await Promise.all(
@@ -153,7 +156,7 @@ async function loadDealsByBucket(
     }),
   );
 
-  if (platformAdminViewer) {
+  if (platformAdminViewer || sponsorWorkspaceViewer) {
     const out: InvestingDashboardDealsByBucket = {
       active: [],
       in_progress: [],

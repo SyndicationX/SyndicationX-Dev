@@ -147,6 +147,16 @@ export function isLpInvestorSessionUser(): boolean {
   return u.lp_investor_nav === true;
 }
 
+/**
+ * Company admin / Lead / Admin / Co / company member who switched into Investing.
+ * Contacts Visibility still applies on the API; do not also hide workspace deals
+ * with LP-only draft/closed/roster rules.
+ */
+export function isSponsorWorkspaceInvestingViewer(): boolean {
+  if (isPlatformAdmin()) return false;
+  return !isLpInvestorSessionUser();
+}
+
 /** Deal ids from `deal_lp_investor` (API `lp_investor_deal_ids`); empty if not LP scope. */
 export function getLpInvestorDealIdsFromSession(): string[] {
   const u = getStoredSessionUserRecord();

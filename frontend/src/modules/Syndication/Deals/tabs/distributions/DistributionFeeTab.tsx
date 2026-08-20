@@ -58,7 +58,9 @@ export function DistributionFeeTab({
           <p className="deal_dist_fee_empty_copy">
             Use the Acquisition Fee tab there to name the fee, set cash /
             period / dates, and allocate percentages across investor classes
-            (must total 100%).
+            (must total 100%). A class is paid only when it has a percentage
+            and investors; an allocated class with no investors blocks the
+            whole class-scoped distribution.
           </p>
         </div>
       </div>

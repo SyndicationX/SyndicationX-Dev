@@ -11,6 +11,7 @@ import {
 } from "./investorQuestionnaireFieldTypes"
 import type { InvestorQuestionnaireFieldType } from "./investorQuestionnaire.types"
 import { QuestionnaireToggle } from "./QuestionnaireToggle"
+import { DealsCreateDropdownSelect } from "../../components/DealsCreateDropdownSelect"
 
 type QuestionDraft = {
   label: string
@@ -282,13 +283,16 @@ export function QuestionnaireQuestionCard({
                   *
                 </span>
               </label>
-              <select
+              <DealsCreateDropdownSelect
                 id={typeFieldId}
-                className={`deal_esign_questionnaire_field_select${defaultLocked ? " deal_esign_questionnaire_field_input_locked" : ""}`}
+                options={QUESTIONNAIRE_TYPE_OPTIONS.map((opt) => ({
+                  value: opt.value,
+                  label: opt.label,
+                }))}
                 value={editMode ? draft.fieldType : q.fieldType}
                 disabled={coreDisabled}
-                onChange={(e) => {
-                  const fieldType = e.target.value as InvestorQuestionnaireFieldType
+                onChange={(next) => {
+                  const fieldType = next as InvestorQuestionnaireFieldType
                   if (editMode) {
                     setDraft((d) => ({
                       ...d,
@@ -309,13 +313,13 @@ export function QuestionnaireQuestionCard({
                     onUpdateQuestion(question.id, { fieldType, options: [] })
                   }
                 }}
-              >
-                {QUESTIONNAIRE_TYPE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                ariaLabel="Field type"
+                className={
+                  defaultLocked
+                    ? "deal_esign_questionnaire_field_input_locked"
+                    : undefined
+                }
+              />
             </div>
 
             {showOptions ? (

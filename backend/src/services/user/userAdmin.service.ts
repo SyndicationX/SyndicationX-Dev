@@ -13,9 +13,9 @@ import {
   isCompanyAdminRole,
   isInviteAssignableRole,
   isPlatformAdminRole,
+  ORG_DIRECTORY_MEMBER_ROLES,
   PLATFORM_ADMIN,
   PLATFORM_USER,
-  LEGACY_USER,
 } from "../../constants/roles.js";
 import {
   enrichSerializedUsersWithDealParticipantRoles,
@@ -83,13 +83,7 @@ function isMissingMembershipTableError(err: unknown): boolean {
 }
 
 /** Org Members UI: org staff portal roles — not investors (deal_participant) or LP contacts. */
-const ORG_SETTINGS_MEMBER_ROLES = [
-  COMPANY_ADMIN,
-  COMPANY_USER,
-  PLATFORM_ADMIN,
-  PLATFORM_USER,
-  LEGACY_USER,
-] as const;
+const ORG_SETTINGS_MEMBER_ROLES = ORG_DIRECTORY_MEMBER_ROLES;
 
 /** Platform admins only appear in a company they are assigned to (org or membership). */
 async function userBelongsToCompany(
@@ -157,14 +151,14 @@ async function listUsersScopedToCompany(companyId: string): Promise<Record<strin
     .limit(1);
   const scopeCompanyName = String(scopeCompany?.name ?? "").trim();
 
-  const companyStaffWhere = or(
-    and(
-      eq(userCompanyMembership.companyId, companyId),
-      inArray(userCompanyMembership.role, [...ORG_SETTINGS_MEMBER_ROLES]),
-    ),
-    and(
+  const companyStaffWhere = and(
+    inArray(users.role, [...ORG_SETTINGS_MEMBER_ROLES]),
+    or(
+      and(
+        eq(userCompanyMembership.companyId, companyId),
+        inArray(userCompanyMembership.role, [...ORG_SETTINGS_MEMBER_ROLES]),
+      ),
       eq(users.organizationId, companyId),
-      inArray(users.role, [...ORG_SETTINGS_MEMBER_ROLES]),
     ),
   );
 
@@ -225,12 +219,18 @@ async function listUsersScopedToCompany(companyId: string): Promise<Record<strin
     }
   }
 
-  const mapped = [...deduped.values()].map(({ user, orgName }) =>
-    serializeUserForClient(
-      user,
-      scopeCompanyName || String(orgName ?? "").trim() || null,
-    ),
-  );
+  const mapped = [...deduped.values()]
+    .filter(({ user }) =>
+      (ORG_SETTINGS_MEMBER_ROLES as readonly string[]).includes(
+        String(user.role ?? "").trim(),
+      ),
+    )
+    .map(({ user, orgName }) =>
+      serializeUserForClient(
+        user,
+        scopeCompanyName || String(orgName ?? "").trim() || null,
+      ),
+    );
   const withDeal = await enrichSerializedUsersWithDealParticipantRoles(mapped);
   const enriched = await enrichUserRowsWithMemberships(withDeal);
   return narrowUserRowsToCompanyScope(

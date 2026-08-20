@@ -509,6 +509,48 @@
   min-width: 0;
 }
 
+/* Fill the main pane: keep the title/back row fixed, scroll the form. */
+.app_main_content:has(.email_template_new_page) {
+  overflow: hidden;
+}
+
+.email_template_new_page.contacts_page.um_page {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.email_template_new_page.deals_add_deal_asset_page {
+  min-height: 0;
+}
+
+.email_template_new_page > header.deals_list_head,
+.email_template_new_page .deals_add_deal_asset_head_main {
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--portal-page-bg);
+}
+
+.email_template_new_page > header.deals_list_head {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.65rem;
+}
+
+.email_template_new_page
+  .deal_inv_table_panel.contacts_table_panel.email_template_new_form {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: block;
+}
+
 .email_template_new_title.deals_list_title {
   display: flex;
   align-items: center;
@@ -622,6 +664,15 @@
     border-color 0.15s ease,
     background 0.15s ease,
     box-shadow 0.15s ease;
+}
+
+.email_template_attachment_dropzone--busy,
+.email_template_attachment_dropzone--busy:hover,
+.email_template_attachment_dropzone--busy.email_template_attachment_dropzone--focus {
+  cursor: wait;
+  pointer-events: none;
+  opacity: 0.85;
+  box-shadow: none;
 }
 
 .email_template_attachment_dropzone:hover,

@@ -44,6 +44,18 @@ export function isInvestorPortalRole(role: string | null | undefined): boolean {
 /** Legacy DB/JWT value; same effective access as {@link PLATFORM_USER} in the frontend (`normalizeRole`). */
 export const LEGACY_USER = "user";
 
+/**
+ * Customers / Org Members directory: company staff portal roles.
+ * Excludes investors (`investor`) and deal-only participants (`deal_participant`).
+ */
+export const ORG_DIRECTORY_MEMBER_ROLES = [
+  COMPANY_ADMIN,
+  COMPANY_USER,
+  PLATFORM_ADMIN,
+  PLATFORM_USER,
+  LEGACY_USER,
+] as const;
+
 /** Platform admins, company admins, and standard users may invite (per invite rules). */
 export function canInviteUsersRole(role: string | null | undefined): boolean {
   const r = String(role ?? "").trim();

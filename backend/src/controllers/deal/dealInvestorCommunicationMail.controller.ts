@@ -89,6 +89,9 @@ export async function postDealInvestorCommunicationMail(
     ? b.cc.map((x) => String(x).trim()).filter((x) => x.includes("@"))
     : [];
   const recipientUsers = b.recipientUsers;
+  const deliveryEmails = Array.isArray(b.deliveryEmails)
+    ? b.deliveryEmails.map((x) => String(x).trim()).filter((x) => x.includes("@"))
+    : [];
 
   try {
     const result = await sendDealInvestorCommunicationMail({
@@ -100,6 +103,7 @@ export async function postDealInvestorCommunicationMail(
       bodyText,
       cc,
       recipientUsers: Array.isArray(recipientUsers) ? recipientUsers : [],
+      deliveryEmails,
     });
     if (!result.ok) {
       res.status(500).json({

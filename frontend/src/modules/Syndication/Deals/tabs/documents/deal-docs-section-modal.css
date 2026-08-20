@@ -204,6 +204,13 @@
   cursor: not-allowed;
 }
 
+.deal_docs_section_modal_upload_zone--busy,
+.deal_docs_section_modal_upload_zone--busy:hover,
+.deal_docs_section_modal_upload_zone--busy.deal_docs_section_modal_upload_zone--focus {
+  cursor: wait;
+  opacity: 0.9;
+}
+
 .deal_docs_section_modal_upload_empty {
   display: flex;
   flex-direction: column;

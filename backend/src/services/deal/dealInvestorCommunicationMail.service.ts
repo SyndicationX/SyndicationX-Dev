@@ -90,10 +90,15 @@ function parseRecipientUsers(
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
-    const email = String(o.email ?? "")
+    const email = String(o.email ?? "").trim().toLowerCase();
+    const sponsorEmail = String(o.sponsorEmail ?? o.sponsor_email ?? "")
       .trim()
       .toLowerCase();
-    if (!email.includes("@")) continue;
+    const requiresCosponsorRelease =
+      o.requiresCosponsorRelease === true ||
+      o.requires_cosponsor_release === true;
+    if (!email.includes("@") && !(requiresCosponsorRelease && sponsorEmail.includes("@")))
+      continue;
     const groupsRaw = Array.isArray(o.groups) ? o.groups : [];
     const groups = groupsRaw
       .map((g) => String(g).trim())
@@ -101,27 +106,32 @@ function parseRecipientUsers(
         (g): g is "investor" | "deal_member" =>
           g === "investor" || g === "deal_member",
       );
+    const classKindRaw = String(o.classKind ?? o.class_kind ?? "").trim().toLowerCase();
     out.push({
-      id: String(o.id ?? email).trim() || email,
-      displayName: String(o.displayName ?? email).trim() || email,
+      id: String(o.id ?? (email || sponsorEmail)).trim() || email || sponsorEmail,
+      displayName: String(o.displayName ?? email).trim() || email || "Investor",
       email,
       groups: groups.length > 0 ? groups : ["investor"],
       roleLabel: String(o.roleLabel ?? "").trim() || undefined,
+      classKind: classKindRaw === "gp" || classKindRaw === "lp" ? classKindRaw : undefined,
+      requiresCosponsorRelease: requiresCosponsorRelease || undefined,
+      sponsorName: String(o.sponsorName ?? o.sponsor_name ?? "").trim() || undefined,
+      sponsorEmail: sponsorEmail.includes("@") ? sponsorEmail : undefined,
     });
   }
-  const byEmail = new Map<string, DealInvestorCommunicationRecipient>();
+  const byId = new Map<string, DealInvestorCommunicationRecipient>();
   for (const r of out) {
-    const key = r.email.toLowerCase();
-    const existing = byEmail.get(key);
+    const key = r.id || r.email;
+    const existing = byId.get(key);
     if (!existing) {
-      byEmail.set(key, r);
+      byId.set(key, r);
       continue;
     }
     for (const g of r.groups) {
       if (!existing.groups.includes(g)) existing.groups.push(g);
     }
   }
-  return [...byEmail.values()];
+  return [...byId.values()];
 }
 
 function normalizeAddressList(v: unknown): string[] {
@@ -152,6 +162,7 @@ export interface SendDealInvestorCommunicationMailInput {
   bodyText: string;
   cc?: string[];
   recipientUsers: DealInvestorCommunicationRecipient[];
+  deliveryEmails?: string[];
 }
 
 export async function sendDealInvestorCommunicationMail(
@@ -161,7 +172,20 @@ export async function sendDealInvestorCommunicationMail(
   | { ok: false; message: string; row?: DealInvestorCommunicationMailApiRow }
 > {
   const recipients = parseRecipientUsers(input.recipientUsers);
-  const to = [...new Set(recipients.map((r) => r.email))];
+  const delivery = normalizeAddressList(input.deliveryEmails);
+  const to =
+    delivery.length > 0
+      ? delivery
+      : [
+          ...new Set(
+            recipients.flatMap((r) => {
+              if (r.requiresCosponsorRelease && r.sponsorEmail?.includes("@"))
+                return [r.sponsorEmail];
+              if (r.email.includes("@")) return [r.email];
+              return [];
+            }),
+          ),
+        ];
   const subject = input.subject.trim();
   const senderEmail = await resolveSenderEmail(input.senderId);
   const senderName = await getUserDisplayNameById(input.senderId);
@@ -245,9 +269,13 @@ export async function sendDealInvestorCommunicationMail(
   } catch (err) {
     console.error("sendDealInvestorCommunicationMail:", err);
     const row = await insertLog("failed");
+    const detail =
+      err instanceof Error && err.message.trim()
+        ? err.message.trim()
+        : "Could not send email";
     return {
       ok: false,
-      message: "Could not send email",
+      message: detail,
       row: row ?? undefined,
     };
   }

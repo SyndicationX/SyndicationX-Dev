@@ -103,6 +103,7 @@ import {
   investorProfileIdFromLabel,
   investorRoleSelectValueFromStored,
   isLpInvestorRole,
+  dealInvestorProfileDisplayName,
 } from "../../constants/investor-profile";
 import { INVESTMENT_STATUS_APPROVE_FUND } from "../../constants/investment-status";
 import { formatMemberUsername } from "../../../usermanagement/memberAdminShared";
@@ -355,6 +356,23 @@ function VerifiedAccBadge({ label }: { label: string }) {
       title={hint}
     >
       <span className="deal_inv_verified_badge_inner">{t}</span>
+    </span>
+  );
+}
+
+function DealInvestorFundedBadge({ row }: { row: DealInvestorRow }) {
+  const approved = investorRowIsFundApproved(row);
+  const label = approved ? "Approved" : "Not Approved";
+  return (
+    <span
+      className={`deal_inv_funded_badge${
+        approved
+          ? " deal_inv_funded_badge--approved"
+          : " deal_inv_funded_badge--not_approved"
+      }`}
+      title={label}
+    >
+      {label}
     </span>
   );
 }
@@ -666,7 +684,7 @@ function DealInvestorsPopulated({
         const mailLabel =
           r.invitationMailSent === true ? "email sent" : "not sent";
         const haystack =
-          `${r.displayName} ${r.entitySubtitle} ${r.userInvestorProfileName ?? ""} ${r.userDisplayName} ${r.userEmail} ${r.addedByDisplayName ?? ""} ${mailLabel} ${investorFundedColumnLabel(r)}`.toLowerCase();
+          `${r.displayName} ${r.entitySubtitle} ${r.userInvestorProfileName ?? ""} ${r.userDisplayName} ${r.userEmail} ${r.firstName ?? ""} ${r.lastName ?? ""} ${r.addedByDisplayName ?? ""} ${mailLabel} ${investorFundedColumnLabel(r)}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       if (filterClass) {
@@ -1068,7 +1086,7 @@ function DealInvestorsPopulated({
         id: "investor",
         header: "Investor",
         sortValue: (row) =>
-          `${row.displayName} ${row.entitySubtitle} ${formatMemberUsername(row.userDisplayName)} ${row.userEmail}`.toLowerCase(),
+          `${row.displayName} ${row.entitySubtitle} ${formatMemberUsername(row.userDisplayName)} ${row.userEmail} ${row.firstName ?? ""} ${row.lastName ?? ""}`.toLowerCase(),
         tdClassName: "deal_inv_td_member deal_inv_td_investor_identity",
         cell: (row) => (
           <DealInvestorIdentityCell
@@ -1094,22 +1112,21 @@ function DealInvestorsPopulated({
         cell: (row) => <DealInvestorRoleCell row={row} />,
       },
       */
-      // Profile column temporarily hidden (show profile_name only when linked).
-      // {
-      //   id: "profile",
-      //   header: "Profile",
-      //   colWidth: "14rem",
-      //   thClassName: "deal_inv_th_profile",
-      //   tdClassName: "deal_inv_td_profile",
-      //   sortValue: (row) =>
-      //     dealInvestorProfileDisplayName(row).toLowerCase(),
-      //   cell: (row) => {
-      //     const text = dealInvestorProfileDisplayName(row)
-      //     if (!text || text === "—")
-      //       return <span className="um_status_muted">—</span>
-      //     return <span className="deal_inv_profile_full_text">{text}</span>
-      //   },
-      // },
+      {
+        id: "profile",
+        header: "Profile",
+        colWidth: "14rem",
+        thClassName: "deal_inv_th_profile",
+        tdClassName: "deal_inv_td_profile",
+        sortValue: (row) =>
+          dealInvestorProfileDisplayName(row).toLowerCase(),
+        cell: (row) => {
+          const text = dealInvestorProfileDisplayName(row)
+          if (!text || text === "—")
+            return <span className="um_status_muted">—</span>
+          return <span className="deal_inv_profile_full_text">{text}</span>
+        },
+      },
       {
         id: "investorClass",
         align: "center",
@@ -1230,10 +1247,8 @@ function DealInvestorsPopulated({
         id: "funded",
         header: "Funded",
         sortValue: (row) => (investorRowIsFundApproved(row) ? "1" : "0"),
-        tdClassName: "deal_inv_td_ellipsis",
-        cell: (row) => (
-          <DealInvEllipsisText text={investorFundedColumnLabel(row)} />
-        ),
+        tdClassName: "deal_inv_td_funded",
+        cell: (row) => <DealInvestorFundedBadge row={row} />,
       },
       {
         id: "selfAcc",

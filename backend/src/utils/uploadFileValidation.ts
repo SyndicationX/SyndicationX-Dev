@@ -14,6 +14,17 @@ export const ALLOWED_DEAL_IMAGE_EXT = ALLOWED_IMAGE_EXT;
 
 export const ALLOWED_ESIGN_EXT = new Set(["pdf"]);
 
+/** Deal Documents tab (offering documents): PDF + Office files. */
+export const ALLOWED_OFFERING_DOCUMENT_EXT = new Set([
+  "pdf",
+  "doc",
+  "docx",
+  "ppt",
+  "pptx",
+  "xls",
+  "xlsx",
+]);
+
 export const BLOCKED_UPLOAD_EXT = new Set([
   "sql",
   "env",
@@ -53,6 +64,23 @@ function extFromMimetype(m: string): string {
     return "ico";
   }
   if (m2 === "application/pdf") return "pdf";
+  if (m2 === "application/msword") return "doc";
+  if (
+    m2 ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  )
+    return "docx";
+  if (m2 === "application/vnd.ms-powerpoint") return "ppt";
+  if (
+    m2 ===
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  )
+    return "pptx";
+  if (m2 === "application/vnd.ms-excel") return "xls";
+  if (
+    m2 === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  )
+    return "xlsx";
   return "";
 }
 
@@ -94,6 +122,49 @@ export function isAcceptablePdfUpload(file: UploadFileLike): boolean {
   if (ext !== "pdf" || isBlockedUploadExtension(ext)) return false;
   const m = String(file.mimetype || "").toLowerCase();
   return m === "application/pdf" || m === "application/octet-stream" || m === "";
+}
+
+function isOfficeOpenXmlOrLegacyMime(m: string): boolean {
+  return (
+    m === "application/msword" ||
+    m === "application/vnd.ms-powerpoint" ||
+    m === "application/vnd.ms-excel" ||
+    m.startsWith("application/vnd.openxmlformats-officedocument.")
+  );
+}
+
+export function isAcceptableOfferingDocumentUpload(
+  file: UploadFileLike,
+): boolean {
+  const ext = resolveUploadExtension(file);
+  if (!ALLOWED_OFFERING_DOCUMENT_EXT.has(ext) || isBlockedUploadExtension(ext))
+    return false;
+  const m = String(file.mimetype || "").toLowerCase();
+  if (m === "application/octet-stream" || m === "") return true;
+  if (ext === "pdf") return m === "application/pdf" || m === "application/x-pdf";
+  return isOfficeOpenXmlOrLegacyMime(m);
+}
+
+export function validateOfferingDocumentUploadFiles(
+  files: UploadFileLike[],
+):
+  | { ok: true }
+  | { ok: false; message: string } {
+  for (const file of files) {
+    if (!file.buffer?.length) continue;
+    const ext = resolveUploadExtension(file);
+    if (isBlockedUploadExtension(ext)) {
+      return { ok: false, message: "Document file type is not allowed." };
+    }
+    if (!isAcceptableOfferingDocumentUpload(file)) {
+      return {
+        ok: false,
+        message:
+          "Documents must be PDF, Word, PowerPoint, or Excel files.",
+      };
+    }
+  }
+  return { ok: true };
 }
 
 export function validateImageUploadFiles(

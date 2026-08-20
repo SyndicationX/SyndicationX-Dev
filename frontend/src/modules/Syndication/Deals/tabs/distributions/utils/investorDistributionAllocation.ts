@@ -152,6 +152,35 @@ export function allocateInvestorDistributionLines(params: {
   })
 }
 
+/**
+ * Allocate class cash that preferred-due matching skipped (e.g. Class B GPs
+ * with $0 capital but a stored percent of class).
+ */
+export function fillClassPaymentsFromStoredPercents(params: {
+  investors: DealInvestorRow[]
+  classes: DistributionSetupClass[]
+  perClass: Record<string, number>
+  alreadyCoveredClassIds?: Iterable<string>
+}): InvestorDistributionLine[] {
+  const covered = new Set(
+    [...(params.alreadyCoveredClassIds ?? [])]
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean),
+  )
+  const leftover: Record<string, number> = {}
+  for (const [id, amt] of Object.entries(params.perClass)) {
+    const n = Number(amt)
+    if (!id || covered.has(id) || !Number.isFinite(n) || n <= 0.005) continue
+    leftover[id] = n
+  }
+  if (Object.keys(leftover).length === 0) return []
+  return allocateInvestorDistributionLines({
+    investors: params.investors,
+    classes: params.classes,
+    perClass: leftover,
+  })
+}
+
 /** Recalculate each line's payment as classPay × (% of class ÷ 100). */
 export function recalculatePaymentsFromPercentOfClass(
   lines: InvestorDistributionLine[],

@@ -18,6 +18,7 @@ import {
   readDealsSearchQuery,
 } from "@/common/deals/dealsSearchQuery"
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
+import { isSponsorWorkspaceInvestingViewer } from "@/common/auth/roleUtils"
 import { usePortalMode } from "@/modules/Investing/context/PortalModeContext"
 import {
   dealRowSupportsRosterApiPrefetch,
@@ -353,7 +354,11 @@ export function DealsListPage({
     void (async () => {
       setLoading(true)
       let list = await loadDealsList()
-      if (dealsListContext === "investing" && list.length > 0) {
+      if (
+        dealsListContext === "investing" &&
+        list.length > 0 &&
+        !isSponsorWorkspaceInvestingViewer()
+      ) {
         list = await filterDealListToInvestingDealsPage(list)
       }
       if (!cancelled) {
@@ -383,7 +388,11 @@ export function DealsListPage({
     function onDealsRefetch() {
       void (async () => {
         let list = await loadDealsList()
-        if (dealsListContext === "investing" && list.length > 0) {
+        if (
+          dealsListContext === "investing" &&
+          list.length > 0 &&
+          !isSponsorWorkspaceInvestingViewer()
+        ) {
           list = await filterDealListToInvestingDealsPage(list)
         }
         setRows(list)

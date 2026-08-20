@@ -36,6 +36,7 @@ import type {
 import { emptyWaterfalls } from "./distributionSetup.types.js";
 import {
   allocateByCapitalFallback,
+  allocateFeeByClassSplits,
   filterPaymentsForViewer,
   listViewerInvestmentMatchKeys,
   serializeInvestorPaymentLines,
@@ -363,7 +364,28 @@ export async function completeDistributionRun(params: {
   let investorPayments = serializeInvestorPaymentLines(
     params.input.investorPayments,
   );
-  if (investorPayments.length === 0) {
+  if (source === "fee") {
+    const scoped = await buildFeeClassScopedPayments(
+      params.dealId,
+      amount,
+      parsed.distributionFee,
+    );
+    if (scoped.error) {
+      const bundle = await getDistributionSetupBundle(params.dealId);
+      return {
+        bundle:
+          bundle ??
+          ({
+            ...parsed,
+            dealId: params.dealId,
+          } as DistributionSetupBundle),
+        error: scoped.error,
+      };
+    }
+    if (investorPayments.length === 0) {
+      investorPayments = scoped.lines;
+    }
+  } else if (investorPayments.length === 0) {
     investorPayments = await buildFallbackInvestorPayments(
       params.dealId,
       amount,
@@ -613,10 +635,18 @@ export async function deletePriorDistribution(params: {
   });
 }
 
-async function buildFallbackInvestorPayments(
-  dealId: string,
-  amount: number,
-): Promise<InvestorPaymentLine[]> {
+async function loadAllocationInvestors(dealId: string): Promise<{
+  investors: Array<{
+    id: string;
+    contactId: string;
+    userEmail: string;
+    displayName: string;
+    investorClass: string;
+    capital: number;
+    percentOfClassDistributions: string;
+  }>;
+  classes: Array<{ id: string; name: string }>;
+}> {
   const classBundle = await getClassSetupBundle(dealId);
   const rows = await listDealInvestmentsByDealId(dealId);
   const apiRows = await mapDealInvestmentsToInvestorApi(rows);
@@ -677,13 +707,60 @@ async function buildFallbackInvestorPayments(
         : "",
     };
   });
-  return allocateByCapitalFallback({
-    amount,
+  return {
     investors,
     classes: (classBundle?.classes ?? [])
       .filter((c) => c.id)
       .map((c) => ({ id: c.id as string, name: c.name })),
+  };
+}
+
+async function buildFallbackInvestorPayments(
+  dealId: string,
+  amount: number,
+): Promise<InvestorPaymentLine[]> {
+  const loaded = await loadAllocationInvestors(dealId);
+  return allocateByCapitalFallback({
+    amount,
+    investors: loaded.investors,
+    classes: loaded.classes,
   });
+}
+
+function blockedFeeClassMessage(names: string[]): string {
+  if (names.length === 0) return "";
+  const listed =
+    names.length === 1
+      ? names[0]!
+      : names.length === 2
+        ? `${names[0]} and ${names[1]}`
+        : `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+  const verb = names.length === 1 ? "has" : "have";
+  return `${listed} ${verb} a percentage allocated but no class investors. Distributions are class-scoped, so that class is not paid and this distribution is not paid to other classes either.`;
+}
+
+async function buildFeeClassScopedPayments(
+  dealId: string,
+  amount: number,
+  fee:
+    | {
+        classSplits?: Array<{ classId: string; percent: string | number }>;
+      }
+    | null
+    | undefined,
+): Promise<{ lines: InvestorPaymentLine[]; error?: string }> {
+  const loaded = await loadAllocationInvestors(dealId);
+  const splits = fee?.classSplits ?? [];
+  const result = allocateFeeByClassSplits({
+    amount,
+    splits,
+    investors: loaded.investors,
+    classes: loaded.classes,
+  });
+  if (result.blockedClassNames.length > 0) {
+    return { lines: [], error: blockedFeeClassMessage(result.blockedClassNames) };
+  }
+  return { lines: result.lines };
 }
 
 /**

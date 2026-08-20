@@ -6,6 +6,7 @@ import {
   type DealListRow,
   type DealTypeOption,
 } from "../types/deals.types"
+import { formatAmountNumberExport, parseMoneyDigits } from "./offeringMoneyFormat"
 
 function dealTypeLabel(code: string): string {
   if (code === "—" || !code) return "—"
@@ -25,6 +26,16 @@ function dealCsvCell(value: string | number | boolean | undefined | null): strin
   if (value == null) return ""
   const s = String(value).trim()
   return s === "—" ? "" : s
+}
+
+/** Money-ish deal list fields → plain number for Excel. */
+function dealMoneyCsvCell(value: string | number | undefined | null): string {
+  if (value == null) return ""
+  const s = String(value).trim()
+  if (!s || s === "—") return ""
+  const n = typeof value === "number" ? value : parseMoneyDigits(s)
+  if (!Number.isFinite(n)) return dealCsvCell(s)
+  return formatAmountNumberExport(n)
 }
 
 export function buildDealsListExportCsv(rows: DealListRow[]): string {
@@ -74,9 +85,9 @@ export function buildDealsListExportCsv(rows: DealListRow[]): string {
         row.investmentType,
         row.propertyType,
         row.offeringStatus,
-        row.totalInProgress,
-        row.totalAccepted,
-        row.raiseTarget,
+        dealMoneyCsvCell(row.totalInProgress),
+        dealMoneyCsvCell(row.totalAccepted),
+        dealMoneyCsvCell(row.raiseTarget),
         row.distributions,
         row.investors,
         row.investorClass,

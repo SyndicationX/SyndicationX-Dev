@@ -48,6 +48,8 @@ export interface DealMemberRowActionsProps {
   draftRow?: boolean
   /** When true, the mail action label becomes “Re-send invitation mail”. */
   invitationMailSent?: boolean
+  /** True while this row’s invitation email request is in flight. */
+  invitationMailSending?: boolean
   /**
    * When false, “Copy offering link” is disabled (e.g. visibility is not “Only visible with link”).
    */
@@ -75,6 +77,7 @@ export function DealMemberRowActions({
   confirmBeforeDelete = true,
   draftRow = false,
   invitationMailSent = false,
+  invitationMailSending = false,
   offeringLinkAvailable = false,
   offeringLinkBlockedBecauseDraft = false,
   onApproveFund,
@@ -431,23 +434,34 @@ export function DealMemberRowActions({
                   <button
                     type="button"
                     className={`um_kebab_menuitem${
-                      draftRow ? " um_kebab_menuitem_disabled" : ""
+                      draftRow || invitationMailSending
+                        ? " um_kebab_menuitem_disabled"
+                        : ""
                     }`}
                     role="menuitem"
-                    disabled={draftRow}
+                    disabled={draftRow || invitationMailSending}
                     title={
                       draftRow
                         ? "Available after the member is saved"
+                        : invitationMailSending
+                          ? "Sending invitation email"
                         : invitationMailSent
                           ? "Send another invitation email"
                           : undefined
                     }
                     onClick={() => {
-                      if (draftRow) return
+                      if (draftRow || invitationMailSending) return
                       runMenuAction(() => onSendInvite(row))
                     }}
                   >
-                    {draftRow || !invitationMailSent ? (
+                    {invitationMailSending ? (
+                      <Loader2
+                        className="um_kebab_menuitem_icon deal_inv_mail_status_spin"
+                        size={16}
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                    ) : draftRow || !invitationMailSent ? (
                       <Mail
                         className="um_kebab_menuitem_icon"
                         size={16}
@@ -464,6 +478,8 @@ export function DealMemberRowActions({
                     )}
                     {draftRow
                       ? "Send invitation email"
+                      : invitationMailSending
+                        ? "Sending…"
                       : invitationMailSent
                         ? "Re-send invitation email"
                         : "Send invitation email"}

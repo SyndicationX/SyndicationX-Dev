@@ -1355,9 +1355,15 @@
   min-width: 0;
 }
 
-.deals_dist_setup_page .ds_fee_class_role {
-  font-size: 0.8125rem;
-  color: var(--ds-ink-3, #64748b);
+.deals_dist_setup_page .ds_fee_class_note {
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+.deals_dist_setup_page .ds_fee_split_table tbody tr.is-blocked td {
+  background: rgb(254 242 242 / 70%);
 }
 
 .deals_dist_setup_page .ds_fee_pct_field {

@@ -5,7 +5,7 @@ import {
 } from "../constants/investor-profile"
 import type { DealInvestorRow } from "../types/deal-investors.types"
 import {
-  displayAddedInvestorsCommittedAmount,
+  displayAddedInvestorsCommittedAmountExport,
   displayInvestorCommittedAmountExport,
 } from "../utils/offeringMoneyFormat"
 import {
@@ -93,8 +93,8 @@ export function buildDealMembersTableExportCsv(rows: DealInvestorRow[]): string 
     "User",
     "Role",
     "Class",
-    "Commitment (USD)",
-    "Investors added (USD)",
+    "Commitment",
+    "Investors added",
     "Status",
     "Added by",
     "Username",
@@ -107,7 +107,7 @@ export function buildDealMembersTableExportCsv(rows: DealInvestorRow[]): string 
       investorRoleLabel(row.investorRole ?? ""),
       row.investorClass,
       displayInvestorCommittedAmountExport(row),
-      displayAddedInvestorsCommittedAmount(row),
+      displayAddedInvestorsCommittedAmountExport(row),
       dealInvestorStatusForTable(row),
       row.addedByDisplayName,
       formatMemberUsername(row.userDisplayName),

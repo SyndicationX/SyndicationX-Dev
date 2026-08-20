@@ -109,6 +109,7 @@ export async function postDealInvestorCommunicationMail(params: {
   bodyHtml: string
   ccRaw?: string
   recipientUsers: DealMailRecipient[]
+  deliveryEmails?: string[]
 }): Promise<PostDealInvestorCommunicationMailResult> {
   const base = getApiV1Base()
   if (!base) {
@@ -132,12 +133,17 @@ export async function postDealInvestorCommunicationMail(params: {
           bodyHtml: params.bodyHtml,
           bodyText,
           cc,
+          deliveryEmails: params.deliveryEmails ?? [],
           recipientUsers: params.recipientUsers.map((r) => ({
             id: r.id,
             displayName: r.displayName,
             email: r.email,
             groups: r.groups,
             roleLabel: r.roleLabel,
+            classKind: r.classKind,
+            requiresCosponsorRelease: r.requiresCosponsorRelease,
+            sponsorName: r.sponsorName,
+            sponsorEmail: r.sponsorEmail,
           })),
         }),
       },

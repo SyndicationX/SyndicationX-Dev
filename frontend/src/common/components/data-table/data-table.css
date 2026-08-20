@@ -10,6 +10,85 @@
   user-select: none;
 }
 
+/* Native H-scrollbar is at the bottom of a tall table; floating arrows replace it. */
+.data_table_scroll_region.data_table_scroll_region--floating-hscroll {
+  scrollbar-width: none;
+}
+
+.data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.data_table_hscroll_spacer {
+  height: 40px;
+}
+
+.data_table_hscroll_sticky {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 0.35rem;
+  pointer-events: none;
+}
+
+.data_table_hscroll_btn {
+  pointer-events: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25em;
+  height: 2.25em;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-pill-radius, 4px);
+  background: var(--portal-surface, #fff);
+  color: var(--portal-text, #0f172a);
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 8%),
+    0 2px 8px rgb(15 23 42 / 10%);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.data_table_hscroll_btn:hover:not(:disabled) {
+  background: var(--portal-primary-soft, #f1f5f9);
+  border-color: color-mix(
+    in srgb,
+    var(--portal-primary, #2563eb) 35%,
+    var(--portal-border)
+  );
+}
+
+.data_table_hscroll_btn:focus-visible {
+  outline: 2px solid var(--portal-primary, #2563eb);
+  outline-offset: 2px;
+}
+
+.data_table_hscroll_btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .data_table_hscroll_btn {
+  background: var(--portal-surface, #0f172a);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--portal-text, #f1f5f9);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+}
+
 .data_table_scroll_region.is-panning * {
   cursor: grabbing;
   user-select: none;

@@ -24,6 +24,21 @@ export function formatCurrencyTableDisplay(raw: string | undefined | null): stri
   }).format(n)
 }
 
+/**
+ * CSV / Excel-friendly amount: plain digits with two decimals, no `$` or commas
+ * (e.g. 1234.00) so spreadsheet apps treat the cell as a number.
+ */
+export function formatAmountNumberExport(
+  raw: string | number | null | undefined,
+): string {
+  if (raw == null) return ""
+  const t = String(raw).trim()
+  if (!t || t === "—") return ""
+  const n = typeof raw === "number" ? raw : parseMoneyDigits(t)
+  if (!Number.isFinite(n)) return ""
+  return (Math.round(n * 100) / 100).toFixed(2)
+}
+
 /** USD $0.00 for committed amount when none or zero (matches table column). */
 export function formatCommittedZeroUsd(): string {
   return formatCurrencyTableDisplay("0")
@@ -81,11 +96,11 @@ export function investorCommittedPendingSplit(row: DealInvestorRow): {
   return { snapshot, incremental }
 }
 
-/** Plain text / CSV when split applies: `$100.00 + $50.00`. */
+/** Plain text / CSV when split applies: `100.00 + 50.00`. */
 export function displayInvestorCommittedAmountExport(row: DealInvestorRow): string {
   const split = investorCommittedPendingSplit(row)
-  if (!split) return displayInvestorCommittedAmount(row)
-  return `${formatCurrencyTableDisplay(String(split.snapshot))} + ${formatCurrencyTableDisplay(String(split.incremental))}`
+  if (!split) return formatAmountNumberExport(displayInvestorCommittedAmount(row))
+  return `${formatAmountNumberExport(split.snapshot)} + ${formatAmountNumberExport(split.incremental)}`
 }
 
 /**
@@ -133,6 +148,15 @@ export function displayAddedInvestorsCommittedAmount(row: DealInvestorRow): stri
   const c = String(row.addedInvestorsCommitted ?? "").trim()
   if (c && c !== "—") return formatCurrencyTableDisplay(c)
   return "—"
+}
+
+/** CSV export for Deal Members “Investors added” column. */
+export function displayAddedInvestorsCommittedAmountExport(
+  row: DealInvestorRow,
+): string {
+  const c = String(row.addedInvestorsCommitted ?? "").trim()
+  if (c && c !== "—") return formatAmountNumberExport(c)
+  return ""
 }
 
 /** Format for KPI / read-only display: $1,234 or $1,234.56 */
