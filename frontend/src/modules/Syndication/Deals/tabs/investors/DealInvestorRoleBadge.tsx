@@ -1,4 +1,4 @@
-import { Award, ClipboardList, Shield, UserCircle, Users } from "lucide-react"
+import { Award, ClipboardList, Handshake, Shield, UserCircle, Users } from "lucide-react"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
   investorRoleLabel,
@@ -18,6 +18,8 @@ function pickIconForRoleLabel(label: string) {
   if (raw === "lead sponsor") return Award
   if (raw === "admin sponsor") return ClipboardList
   if (raw === "co-sponsor") return UserCircle
+  if (raw === "general partner" || raw === "general partners") return Handshake
+  if (raw === "deal member") return Shield
   return Shield
 }
 

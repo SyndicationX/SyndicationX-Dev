@@ -65,6 +65,14 @@
   min-width: 0;
 }
 
+.deal_members_roster_subtabs_outer {
+  margin: 0;
+}
+
+.deal_members_roster_subtabs_row {
+  flex-wrap: wrap;
+}
+
 /* Initial load — centered in the table panel */
 .deal_members_table_panel_loading.deal_inv_table_panel {
   display: flex;

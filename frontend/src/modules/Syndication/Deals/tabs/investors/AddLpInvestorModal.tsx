@@ -71,6 +71,10 @@ import {
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import {
+  formatDealInvestorClassOptionLabel,
+  isGpInvestorClass,
+} from "../../utils/investorClassOverviewFields"
+import {
   formatPercentTypeInputBare,
   sanitizePercentTypingInput,
 } from "../../utils/offeringMoneyFormat"
@@ -424,7 +428,7 @@ export function AddLpInvestorModal({
       if (cancelled) return
       setMemberRows(users)
       setContactRows(contacts)
-      setDealClasses(classes)
+      setDealClasses(classes.filter((c) => !isGpInvestorClass(c)))
       setMembersLoading(false)
     })()
     return () => {
@@ -481,7 +485,7 @@ export function AddLpInvestorModal({
     () =>
       dealClasses.map((c) => ({
         value: c.id,
-        label: c.name?.trim() || c.id,
+        label: formatDealInvestorClassOptionLabel(c),
       })),
     [dealClasses],
   )

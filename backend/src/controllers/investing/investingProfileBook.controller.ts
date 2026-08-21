@@ -5,8 +5,10 @@ import {
   BeneficiaryInvalidEmailError,
   BeneficiaryInvalidPhoneError,
   InvestorProfileDuplicateError,
+  InvestorProfileInUseError,
   createBeneficiaryForUser,
   createInvestorProfileForUser,
+  deleteInvestorProfileForUser,
   SavedAddressDuplicateError,
   createSavedAddressForUser,
   getProfileBookForUser,
@@ -144,6 +146,34 @@ export async function patchMyProfileBookProfile(
   } catch (err) {
     console.error("patchMyProfileBookProfile:", err);
     res.status(500).json({ message: "Could not update profile. Please try again." });
+  }
+}
+
+export async function deleteMyProfileBookProfile(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const userId = await requireUser(req, res);
+  if (!userId) return;
+  const id = String(req.params.id ?? "");
+  if (!isUuid(id)) {
+    res.status(400).json({ message: "Invalid id" });
+    return;
+  }
+  try {
+    const ok = await deleteInvestorProfileForUser(userId, id);
+    if (!ok) {
+      res.status(404).json({ message: "Profile not found" });
+      return;
+    }
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    if (err instanceof InvestorProfileInUseError) {
+      res.status(409).json({ message: err.message });
+      return;
+    }
+    console.error("deleteMyProfileBookProfile:", err);
+    res.status(500).json({ message: "Could not delete profile. Please try again." });
   }
 }
 

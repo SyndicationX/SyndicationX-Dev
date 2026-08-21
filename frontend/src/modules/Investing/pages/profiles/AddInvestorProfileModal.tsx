@@ -72,7 +72,7 @@ import {
   getUsPhoneFieldError,
 } from "./profileContactValidation"
 import { BENEFICIARY_LEGAL_DISCLAIMER } from "./beneficiary-legal"
-import { ssnItinFieldError } from "@/common/tax/usSsnItin"
+import { formatSsnItinInput, ssnItinFieldError } from "@/common/tax/usSsnItin"
 import { SsnItinMaskedInput } from "@/common/components/SsnItinMaskedInput"
 import { ssnFromAnyInvestorProfile } from "@/modules/Investing/pages/invest/investNowW9FormUtils"
 import { InvestingFormField } from "./InvestingFormField"
@@ -81,6 +81,7 @@ import { YesNoCardRadioGroup } from "@/common/components/YesNoCardRadioGroup/Yes
 import { DealsCreateDropdownSelect } from "@/modules/Syndication/Deals/components/DealsCreateDropdownSelect"
 import type { SavedAddress } from "./address.types"
 import type {
+  InvestorProfileDistributionBank,
   InvestorProfileListRow,
   NewInvestorProfilePayload,
   UpdateInvestorProfilePayload,
@@ -268,32 +269,293 @@ function profileTypeSelectValue(f: FormState): string {
   return PROFILE_TYPE_ENTITY_LLC_CORP_TRUST
 }
 
+function parseSavedWizardObject(raw: unknown): Record<string, unknown> | null {
+  let v: unknown = raw
+  if (typeof v === "string") {
+    const t = v.trim()
+    if (!t) return null
+    try {
+      v = JSON.parse(t) as unknown
+    } catch {
+      return null
+    }
+  }
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return null
+  const rec = v as Record<string, unknown>
+  const inner = rec.form
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const formRec = inner as Record<string, unknown>
+    if (
+      "firstName" in formRec ||
+      "first_name" in formRec ||
+      "profileType" in formRec ||
+      "profile_type" in formRec ||
+      "entityLegalName" in formRec ||
+      "legalIraName" in formRec
+    ) {
+      if (
+        ADD_PROFILE_WIZARD_STEP_KEY in rec &&
+        !(ADD_PROFILE_WIZARD_STEP_KEY in formRec)
+      ) {
+        return {
+          ...formRec,
+          [ADD_PROFILE_WIZARD_STEP_KEY]: rec[ADD_PROFILE_WIZARD_STEP_KEY],
+        }
+      }
+      return formRec
+    }
+  }
+  return rec
+}
+
+function wizardFieldValue(
+  src: Record<string, unknown>,
+  camelKey: string,
+): unknown {
+  if (Object.prototype.hasOwnProperty.call(src, camelKey)) return src[camelKey]
+  const snake = camelKey.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+  if (snake !== camelKey && Object.prototype.hasOwnProperty.call(src, snake)) {
+    return src[snake]
+  }
+  return undefined
+}
+
+function coerceFormString(v: unknown): string {
+  if (v == null) return ""
+  if (typeof v === "string") return v
+  if (typeof v === "number" && Number.isFinite(v)) return String(v)
+  if (typeof v === "boolean") return v ? "yes" : "no"
+  return ""
+}
+
+function isPresentFormValue(v: unknown): boolean {
+  if (v == null) return false
+  if (typeof v === "string") return v.trim().length > 0
+  if (typeof v === "boolean" || typeof v === "number") return true
+  if (Array.isArray(v)) return v.length > 0
+  if (typeof v === "object") return true
+  return false
+}
+
+function normalizeDistributionMethodValue(v: unknown): DistributionMethod | "" {
+  const t = coerceFormString(v).trim().toLowerCase()
+  if (t === "ach" || t === "check" || t === "other") return t
+  return ""
+}
+
+function normalizeMailingAddressModeValue(
+  v: unknown,
+): FormState["mailingAddressMode"] | "" {
+  const t = coerceFormString(v).trim()
+  if (t === "add_new" || t === "same_as_tax") return t
+  return ""
+}
+
+function normalizeYesNoValue(v: unknown): "" | "yes" | "no" {
+  const t = coerceFormString(v).trim().toLowerCase()
+  if (t === "yes" || t === "true" || t === "1") return "yes"
+  if (t === "no" || t === "false" || t === "0") return "no"
+  return ""
+}
+
+function normalizeDateInputValue(v: unknown): string {
+  const t = coerceFormString(v).trim()
+  if (!t) return ""
+  const isoDay = t.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (isoDay) return isoDay[1]!
+  const ms = Date.parse(t)
+  if (Number.isNaN(ms)) return t
+  const d = new Date(ms)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0")
+  const day = String(d.getUTCDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+function restoreBeneficiaryDraft(raw: unknown): BeneficiaryDraft | null {
+  if (raw == null) return null
+  if (typeof raw !== "object" || Array.isArray(raw)) return null
+  const b = raw as Record<string, unknown>
+  const phoneRaw = coerceFormString(b.phone ?? b.phone_number)
+  return {
+    fullName: coerceFormString(b.fullName ?? b.full_name),
+    relationship: coerceFormString(b.relationship),
+    taxId: formatSsnItinInput(coerceFormString(b.taxId ?? b.tax_id)),
+    phone: nationalDigitsFromStoredPhone(phoneRaw),
+    email: coerceFormString(b.email),
+    addressQuery: coerceFormString(b.addressQuery ?? b.address_query),
+  }
+}
+
 /**
- * Merge saved `profile_wizard_state` (same shape as `FormState`) into a partial; unknown keys are ignored.
+ * Merge saved `profile_wizard_state` (same shape as `FormState`) into a partial.
+ * Parses JSON strings, nested `{ form }` wrappers, and snake_case keys. Empty
+ * strings are omitted so list-row seed / defaults can fill gaps.
  */
 function partialFormFromSavedWizard(raw: unknown): Partial<FormState> {
-  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
-    return {}
-  }
-  const src = raw as Record<string, unknown>
+  const src = parseSavedWizardObject(raw)
+  if (!src) return {}
   const out: Partial<FormState> = {}
   for (const k of FORM_STATE_KEYS) {
-    if (!(k in src)) continue
-    const v = src[k as string]
+    const v = wizardFieldValue(src, k as string)
+    if (v === undefined) continue
     if (k === "beneficiary") {
-      if (v == null) out.beneficiary = null
-      else if (typeof v === "object" && !Array.isArray(v)) {
-        out.beneficiary = v as BeneficiaryDraft
-      }
+      if (v == null) continue
+      const restored = restoreBeneficiaryDraft(v)
+      if (restored) out.beneficiary = restored
       continue
     }
-    if (k === "phone2" && typeof v === "string") {
-      out.phone2 = nationalDigitsFromStoredPhone(v)
+    if (k === "phone2") {
+      const digits = nationalDigitsFromStoredPhone(coerceFormString(v))
+      if (digits) out.phone2 = digits
       continue
     }
-    (out as Record<string, unknown>)[k] = v
+    if (k === "distributionMethod") {
+      const method = normalizeDistributionMethodValue(v)
+      if (method) out.distributionMethod = method
+      continue
+    }
+    if (k === "mailingAddressMode") {
+      const mode = normalizeMailingAddressModeValue(v)
+      if (mode) out.mailingAddressMode = mode
+      continue
+    }
+    if (
+      k === "entityOwnedByIra401k" ||
+      k === "entityDisregarded" ||
+      k === "custodianIra"
+    ) {
+      const yn = normalizeYesNoValue(v)
+      if (yn) (out as Record<string, unknown>)[k] = yn
+      continue
+    }
+    if (k === "entityDateFormed") {
+      const day = normalizeDateInputValue(v)
+      if (day) out.entityDateFormed = day
+      continue
+    }
+    if (k === "ssn" || k === "spouseSsn") {
+      const formatted = formatSsnItinInput(coerceFormString(v))
+      if (formatted) (out as Record<string, unknown>)[k] = formatted
+      continue
+    }
+    if (k === "entityEinVisible" || k === "iraPartnerEinVisible" || k === "iraCustodianEinVisible") {
+      if (typeof v === "boolean") (out as Record<string, unknown>)[k] = v
+      continue
+    }
+    if (!isPresentFormValue(v)) continue
+    if (typeof v === "string" || typeof v === "number") {
+      (out as Record<string, unknown>)[k] = coerceFormString(v)
+    } else {
+      (out as Record<string, unknown>)[k] = v
+    }
   }
   return out
+}
+
+function normalizeProfileTypeFromListRow(raw: string): Partial<FormState> {
+  const t = raw.trim()
+  if (!t) return {}
+  if (t === PROFILE_TYPE_INDIVIDUAL) {
+    return { profileType: PROFILE_TYPE_INDIVIDUAL }
+  }
+  if (t === PROFILE_TYPE_JOINT_TENANCY) {
+    return { profileType: PROFILE_TYPE_JOINT_TENANCY }
+  }
+  if (t === PROFILE_TYPE_ENTITY) {
+    return { profileType: PROFILE_TYPE_ENTITY }
+  }
+  const lower = t.toLowerCase()
+  if (lower.includes("custodian")) {
+    return { profileType: PROFILE_TYPE_ENTITY, custodianIra: "yes" }
+  }
+  if (lower.includes("joint")) {
+    return { profileType: PROFILE_TYPE_JOINT_TENANCY }
+  }
+  if (
+    lower.includes("llc") ||
+    lower.includes("corp") ||
+    lower.includes("partnership") ||
+    lower.includes("trust") ||
+    lower.includes("checkbook")
+  ) {
+    return { profileType: PROFILE_TYPE_ENTITY, custodianIra: "no" }
+  }
+  return { profileType: t }
+}
+
+function mergeDistributionBankIntoForm(
+  form: FormState,
+  bank: InvestorProfileDistributionBank | undefined,
+): FormState {
+  if (!bank) return form
+  const method =
+    normalizeDistributionMethodValue(form.distributionMethod) ||
+    normalizeDistributionMethodValue(bank.distributionMethod)
+  return {
+    ...form,
+    distributionMethod: method || form.distributionMethod,
+    achRoutingNumber:
+      form.achRoutingNumber.trim() || bank.achRoutingNumber || form.achRoutingNumber,
+    achAccountNumber:
+      form.achAccountNumber.trim() || bank.achAccountNumber || form.achAccountNumber,
+    achBankAddress:
+      form.achBankAddress.trim() || bank.achBankAddress || form.achBankAddress,
+    achBankName: form.achBankName.trim() || bank.achBankName || form.achBankName,
+    achBankAccountType:
+      form.achBankAccountType.trim() ||
+      bank.achBankAccountType ||
+      form.achBankAccountType,
+    bankAccountQuery:
+      form.bankAccountQuery.trim() || bank.bankAccountQuery || form.bankAccountQuery,
+    checkPayeeName:
+      form.checkPayeeName.trim() || bank.checkPayeeName || form.checkPayeeName,
+    checkMailingAddressId:
+      form.checkMailingAddressId.trim() ||
+      bank.checkMailingAddressId ||
+      form.checkMailingAddressId,
+  }
+}
+
+function formStateFromProfileRow(row: InvestorProfileListRow): FormState {
+  const fromWizard = partialFormFromSavedWizard(row.profileWizardState ?? null)
+  const typePatch = normalizeProfileTypeFromListRow(row.profileType)
+  const seeded = seedFormFromListRow(row)
+  let next: FormState = {
+    ...initialState,
+    ...seeded,
+    ...typePatch,
+    ...fromWizard,
+  }
+  next = mergeDistributionBankIntoForm(next, row.distributionBank)
+  const profileType =
+    (next.profileType || typePatch.profileType || row.profileType || "").trim()
+  next = { ...next, profileType }
+
+  if (next.profileType === PROFILE_TYPE_ENTITY && !next.custodianIra) {
+    if (next.legalIraName.trim() || next.iraCompany.trim()) {
+      next = { ...next, custodianIra: "yes" }
+    } else if (next.entityLegalName.trim() || next.entitySubType.trim()) {
+      next = { ...next, custodianIra: "no" }
+    }
+  }
+
+  if (
+    next.mailingAddressMode !== "same_as_tax" &&
+    next.taxAddressId.trim() &&
+    next.mailingAddressId.trim() &&
+    next.taxAddressId === next.mailingAddressId
+  ) {
+    next = { ...next, mailingAddressMode: "same_as_tax" }
+  }
+
+  if (
+    next.profileType === PROFILE_TYPE_JOINT_TENANCY ||
+    next.profileType === PROFILE_TYPE_ENTITY
+  ) {
+    next = { ...next, beneficiary: null, beneficiaryPickId: "" }
+  }
+  return next
 }
 
 const REQUIRED_MSG = "This field is required."
@@ -526,6 +788,7 @@ function AchDistributionBankFields({
         }
         Icon={CircleDollarSign}
         error={fieldError.achBankAccountType}
+        tight
       >
         <DealsCreateDropdownSelect
           id="ap-ach-type"
@@ -541,67 +804,71 @@ function AchDistributionBankFields({
           triggerClassName="deals_add_inv_field_control"
         />
       </InvestingFormField>
-      <InvestingFormField
-        id="ap-ach-routing"
-        label={
-          <>
-            Routing number <span className="contacts_required" aria-hidden>*</span>
-          </>
-        }
-        Icon={Fingerprint}
-        error={fieldError.achRoutingNumber}
-      >
-        <input
+      <div className="add_contact_name_grid">
+        <InvestingFormField
           id="ap-ach-routing"
-          className={invClass(
-            "deals_add_inv_input deals_add_inv_field_control",
-            Boolean(fieldError.achRoutingNumber),
-          )}
-          value={form.achRoutingNumber}
-          onChange={(e) =>
-            patch(
-              {
-                achRoutingNumber: digitsFromAbaRoutingInput(e.target.value),
-              },
-              "achRoutingNumber",
-            )
+          label={
+            <>
+              Routing number <span className="contacts_required" aria-hidden>*</span>
+            </>
           }
-          inputMode="numeric"
-          autoComplete="off"
-          placeholder="9-digit routing number"
-          aria-invalid={Boolean(fieldError.achRoutingNumber)}
-          aria-describedby={
-            fieldError.achRoutingNumber ? "ap-ach-routing-err" : undefined
-          }
-        />
-      </InvestingFormField>
-      <InvestingFormField
-        id="ap-ach-account"
-        label={
-          <>
-            Account number <span className="contacts_required" aria-hidden>*</span>
-          </>
-        }
-        Icon={IdCard}
-        error={fieldError.achAccountNumber}
-      >
-        <input
+          Icon={Fingerprint}
+          error={fieldError.achRoutingNumber}
+          tight
+        >
+          <input
+            id="ap-ach-routing"
+            className={invClass(
+              "deals_add_inv_input deals_add_inv_field_control",
+              Boolean(fieldError.achRoutingNumber),
+            )}
+            value={form.achRoutingNumber}
+            onChange={(e) =>
+              patch(
+                {
+                  achRoutingNumber: digitsFromAbaRoutingInput(e.target.value),
+                },
+                "achRoutingNumber",
+              )
+            }
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="9-digit routing number"
+            aria-invalid={Boolean(fieldError.achRoutingNumber)}
+            aria-describedby={
+              fieldError.achRoutingNumber ? "ap-ach-routing-err" : undefined
+            }
+          />
+        </InvestingFormField>
+        <InvestingFormField
           id="ap-ach-account"
-          className={invClass(
-            "deals_add_inv_input deals_add_inv_field_control",
-            Boolean(fieldError.achAccountNumber),
-          )}
-          value={form.achAccountNumber}
-          onChange={(e) => patch({ achAccountNumber: e.target.value }, "achAccountNumber")}
-          inputMode="numeric"
-          autoComplete="off"
-          placeholder="Account number"
-          aria-invalid={Boolean(fieldError.achAccountNumber)}
-          aria-describedby={
-            fieldError.achAccountNumber ? "ap-ach-account-err" : undefined
+          label={
+            <>
+              Account number <span className="contacts_required" aria-hidden>*</span>
+            </>
           }
-        />
-      </InvestingFormField>
+          Icon={IdCard}
+          error={fieldError.achAccountNumber}
+          tight
+        >
+          <input
+            id="ap-ach-account"
+            className={invClass(
+              "deals_add_inv_input deals_add_inv_field_control add_profile_account_number",
+              Boolean(fieldError.achAccountNumber),
+            )}
+            value={form.achAccountNumber}
+            onChange={(e) => patch({ achAccountNumber: e.target.value }, "achAccountNumber")}
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="Account number"
+            aria-invalid={Boolean(fieldError.achAccountNumber)}
+            aria-describedby={
+              fieldError.achAccountNumber ? "ap-ach-account-err" : undefined
+            }
+          />
+        </InvestingFormField>
+      </div>
       <InvestingFormField
         id="ap-ach-address"
         label={
@@ -652,7 +919,7 @@ interface AddInvestorProfileModalProps {
   mode?: "add" | "edit"
   /**
    * When `mode=edit`, the profile list row (includes `profileWizardState` when saved) and `id` for the PUT.
-   * Legacy rows without `profileWizardState` are seeded from `profileName` / `profileType` only.
+   * Wizard JSON is merged with list fields and distribution-bank columns so prior values prefill the form.
    */
   editTarget?: InvestorProfileListRow | null
   /** Fired with display fields after validation; parent may persist the profile. May return a Promise. */
@@ -895,12 +1162,13 @@ function buildProfileNameForPersist(f: FormState): string {
 }
 
 /**
- * Best-effort seed of wizard fields from API list row (only `profileName` and `profileType` are stored).
- * Keeps the same UI as "Add profile" while filling in obvious splits of the display name.
+ * Best-effort seed of wizard fields from API list row when wizard JSON is missing
+ * or incomplete. Fills name splits and normalizes stored profile-type labels.
  */
 function seedFormFromListRow(row: { profileName: string; profileType: string }): Partial<FormState> {
-  const t = (row.profileType || "").trim()
-  const out: Partial<FormState> = { profileType: t }
+  const typePatch = normalizeProfileTypeFromListRow(row.profileType)
+  const t = (typePatch.profileType || row.profileType || "").trim()
+  const out: Partial<FormState> = { ...typePatch, profileType: t }
   const name = (row.profileName || "").trim()
   if (!name || name === "—") return out
   if (t === PROFILE_TYPE_ENTITY) {
@@ -972,7 +1240,11 @@ export function AddInvestorProfileModal({
   const isNonModalLayout = isListInline || isPage
   const isEdit = mode === "edit"
   const enableAddDraftAutosave = isPage && !isEdit
-  const [form, setForm] = useState<FormState>(initialState)
+  const [form, setForm] = useState<FormState>(() =>
+    mode === "edit" && editTarget
+      ? formStateFromProfileRow(editTarget)
+      : initialState,
+  )
   const [fieldError, setFieldError] = useState<AddProfileFieldErrors>({})
   const [step, setStep] = useState(1)
   const profileFormRef = useRef<HTMLFormElement>(null)
@@ -991,6 +1263,7 @@ export function AddInvestorProfileModal({
     backendProfileId: null as string | null,
   })
   const skipOverwriteEmptySessionDraftRef = useRef(false)
+  const lastEditPrefillIdRef = useRef<string | null>(null)
 
   const activeSavedBeneficiaries = useMemo(
     () => savedBeneficiaries.filter((b) => !b.archived),
@@ -1108,40 +1381,33 @@ export function AddInvestorProfileModal({
   }, [persistAddProfileDraftNow, onClose])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      lastEditPrefillIdRef.current = null
+      return
+    }
+    if (isEdit && editTarget) {
+      if (lastEditPrefillIdRef.current === editTarget.id) return
+      lastEditPrefillIdRef.current = editTarget.id
+      setFieldError({})
+      setSsnVisible(false)
+      setSpouseSsnVisible(false)
+      setLastEditReason("")
+      setLastEditReasonError(null)
+      stepScrollBootRef.current = true
+      setStep(1)
+      setForm(formStateFromProfileRow(editTarget))
+      setBackendProfileId(null)
+      backendProfileIdRef.current = null
+      skipOverwriteEmptySessionDraftRef.current = false
+      return
+    }
+    lastEditPrefillIdRef.current = null
     setFieldError({})
     setSsnVisible(false)
     setSpouseSsnVisible(false)
     setLastEditReason("")
     setLastEditReasonError(null)
     stepScrollBootRef.current = true
-    if (isEdit && editTarget) {
-      setStep(1)
-      const t = (editTarget.profileType || "").trim()
-      const isJoint = t === PROFILE_TYPE_JOINT_TENANCY
-      const isEnt = t === PROFILE_TYPE_ENTITY
-      const fromWizard = partialFormFromSavedWizard(
-        editTarget.profileWizardState ?? null,
-      )
-      const clearBen = isJoint || isEnt
-      if (Object.keys(fromWizard).length > 0) {
-        setForm({
-          ...initialState,
-          ...fromWizard,
-          ...(clearBen ? { beneficiary: null, beneficiaryPickId: "" } : {}),
-        })
-      } else {
-        setForm({
-          ...initialState,
-          ...seedFormFromListRow(editTarget),
-          ...(clearBen ? { beneficiary: null, beneficiaryPickId: "" } : {}),
-        })
-      }
-      setBackendProfileId(null)
-      backendProfileIdRef.current = null
-      skipOverwriteEmptySessionDraftRef.current = false
-      return
-    }
     if (!isEdit && enableAddDraftAutosave && resumeDraft) {
       skipOverwriteEmptySessionDraftRef.current = false
       const restored = loadAddProfileDraft()
@@ -1164,40 +1430,17 @@ export function AddInvestorProfileModal({
           backendProfileIdRef.current = apiProfileId
           return
         }
-        const t = (resumeFromProfile.profileType || "").trim()
-        const isJoint = t === PROFILE_TYPE_JOINT_TENANCY
-        const isEnt = t === PROFILE_TYPE_ENTITY
-        const fromWizard = partialFormFromSavedWizard(
-          resumeFromProfile.profileWizardState ?? null,
-        )
-        const clearBen = isJoint || isEnt
-        let nextForm: FormState
-        if (Object.keys(fromWizard).length > 0) {
-          nextForm = {
-            ...initialState,
-            ...fromWizard,
-            ...(clearBen ? { beneficiary: null, beneficiaryPickId: "" } : {}),
-          }
-        } else {
-          nextForm = {
-            ...initialState,
-            ...seedFormFromListRow(resumeFromProfile),
-            ...(clearBen ? { beneficiary: null, beneficiaryPickId: "" } : {}),
-          }
-        }
+        const nextForm = formStateFromProfileRow(resumeFromProfile)
         const sessionForApi = loadAddProfileDraft()
         const stepFromSession =
           sessionForApi?.backendProfileId?.trim() === resumeFromProfile.id &&
           sessionForApi.step >= 1
             ? sessionForApi.step
             : null
-        const wizardRaw = resumeFromProfile.profileWizardState
         const stepFromWizard =
-          wizardRaw != null &&
-          typeof wizardRaw === "object" &&
-          !Array.isArray(wizardRaw)
-            ? readWizardStepFromSavedForm(wizardRaw as Record<string, unknown>)
-            : null
+          readWizardStepFromSavedForm(
+            parseSavedWizardObject(resumeFromProfile.profileWizardState) ?? undefined,
+          )
         const nextStep = stepFromSession ?? stepFromWizard ?? 1
         setForm(mergeKnownSsnIntoForm(nextForm, existingProfiles))
         setStep(nextStep)

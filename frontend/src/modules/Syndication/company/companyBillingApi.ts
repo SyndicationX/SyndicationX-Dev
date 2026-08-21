@@ -19,6 +19,10 @@ export type CompanyBillingStatus = {
   lastPaymentError?: string | null
   lastPaymentFailedAt?: string | null
   paymentHealthy?: boolean
+  billedDealCount?: number
+  canManage?: boolean
+  canPay?: boolean
+  viewerScope?: "all_deals" | "lead_sponsor"
   plansConfigured: Array<{
     id: StripeBillingPlanId | string
     monthlyReady: boolean
@@ -46,6 +50,8 @@ export type CompanyBillingInvoice = {
   invoicePdf: string | null
   paymentFailureMessage?: string | null
   paymentFailedAt?: string | null
+  dealId?: string | null
+  dealName?: string | null
 }
 
 export type CompanyBillingPaymentMethod = {
@@ -127,6 +133,7 @@ export async function startCompanyBillingCheckout(
   planId: string,
   billingCycle: "monthly" | "annually",
   seatBand: StripeBillingSeatBand = "5",
+  dealId?: string,
 ): Promise<
   | { ok: true; url: string }
   | { ok: false; message: string; statusCode: number }
@@ -153,6 +160,7 @@ export async function startCompanyBillingCheckout(
           planId,
           seatBand,
           billingCycle: billingCycle === "annually" ? "yearly" : "monthly",
+          ...(dealId ? { dealId } : {}),
         }),
       },
     )
@@ -278,6 +286,96 @@ export async function syncCompanyBillingCheckout(
     return {
       ok: false,
       message: "Network error syncing checkout.",
+      statusCode: 0,
+    }
+  }
+}
+
+export type CompanyDealBillingRow = {
+  id: string
+  dealName: string
+  dealStage: string
+  archived: boolean
+  planId: string | null
+  suggestedPlanId?: string | null
+  billingCycle: string | null
+  subscriptionStatus: string
+  nextBillingDate: string | null
+  billed: boolean
+  billable?: boolean
+}
+
+export async function fetchCompanyBillingDeals(
+  companyId: string,
+): Promise<
+  | {
+      ok: true
+      deals: CompanyDealBillingRow[]
+      canManage: boolean
+      canPay: boolean
+      viewerScope: "all_deals" | "lead_sponsor"
+    }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/deals`,
+      { headers: authHeaders(), credentials: "include" },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(
+          data,
+          `Could not load deal billing (${res.status}).`,
+        ),
+        statusCode: res.status,
+      }
+    }
+    const list =
+      data &&
+      typeof data === "object" &&
+      Array.isArray((data as { deals?: unknown }).deals)
+        ? (data as { deals: CompanyDealBillingRow[] }).deals
+        : []
+    const canManage =
+      data &&
+      typeof data === "object" &&
+      (data as { canManage?: unknown }).canManage === false
+        ? false
+        : true
+    const canPay =
+      data &&
+      typeof data === "object" &&
+      (data as { canPay?: unknown }).canPay === false
+        ? false
+        : canManage ||
+          String((data as { viewerScope?: unknown }).viewerScope ?? "") ===
+            "lead_sponsor"
+    const scopeRaw =
+      data && typeof data === "object"
+        ? String((data as { viewerScope?: unknown }).viewerScope ?? "")
+        : ""
+    return {
+      ok: true,
+      deals: list,
+      canManage,
+      canPay,
+      viewerScope: scopeRaw === "lead_sponsor" ? "lead_sponsor" : "all_deals",
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error loading deal billing.",
       statusCode: 0,
     }
   }
@@ -522,6 +620,7 @@ export async function startCompanyBillingPaymentElement(
   planId: string,
   billingCycle: "monthly" | "annually",
   seatBand: StripeBillingSeatBand = "5",
+  dealId?: string,
 ): Promise<
   | { ok: true; session: BillingPaymentElementSession }
   | { ok: false; message: string; statusCode: number }
@@ -548,6 +647,7 @@ export async function startCompanyBillingPaymentElement(
           planId,
           seatBand,
           billingCycle: billingCycle === "annually" ? "yearly" : "monthly",
+          ...(dealId ? { dealId } : {}),
         }),
       },
     )

@@ -20,11 +20,32 @@ export const LP_INVESTOR_ROLE_VALUE = "lp_investors"
 
 export const LP_INVESTORS_ROLE_LABEL = "LP Investor"
 
-/** Roles shown on the Deal Members tab (sponsors only — not LP investors). */
+/** Deal Members inner roster: Deal Members vs General Partners. */
+export type DealRosterKind = "deal_members" | "general_partners"
+
+/** Add/edit modal entry: Investors tab vs Deal Members vs General Partners. */
+export type DealInvestmentModalEntry =
+  | "member"
+  | "investor"
+  | "general_partner"
+
+export const DEAL_MEMBER_ROLE_VALUE = "Deal Member"
+export const DEAL_MEMBER_ROLE_LABEL = "Deal Member"
+
+export const GENERAL_PARTNER_ROLE_VALUE = "General Partner"
+export const GENERAL_PARTNER_ROLE_LABEL = "General Partner"
+
+/** Roles shown on the Deal Members subtab (not LP investors, not general partners). */
 export const DEAL_MEMBERS_TAB_ROLE_VALUES = new Set([
   "Lead Sponsor",
   "admin sponsor",
   "Co-sponsor",
+  DEAL_MEMBER_ROLE_VALUE,
+])
+
+/** Roles shown on the General Partners subtab. */
+export const GENERAL_PARTNERS_TAB_ROLE_VALUES = new Set([
+  GENERAL_PARTNER_ROLE_VALUE,
 ])
 
 /** Stored `investor_role` for the single Lead Sponsor slot per deal (dropdown `value`). */
@@ -45,6 +66,14 @@ export const INVESTOR_ROLE_SELECT_OPTIONS = [
   {
     value: "Co-sponsor",
     label: "Co-sponsor",
+  },
+  {
+    value: DEAL_MEMBER_ROLE_VALUE,
+    label: DEAL_MEMBER_ROLE_LABEL,
+  },
+  {
+    value: GENERAL_PARTNER_ROLE_VALUE,
+    label: GENERAL_PARTNER_ROLE_LABEL,
   },
 
   // { value: "LP Investors", label: "LP Investors" },
@@ -208,7 +237,7 @@ export function isLpInvestorRole(stored: string | undefined): boolean {
   return lower === "lp investors" || lower === LP_INVESTOR_ROLE_VALUE
 }
 
-/** Lead / admin / co-sponsor — matches select option value or label. */
+/** Lead / admin / co-sponsor / deal member — matches select option value or label. */
 export function isDealMembersTabRole(stored: string | undefined): boolean {
   const t = String(stored ?? "").trim()
   if (!t || t === "—") return false
@@ -218,4 +247,32 @@ export function isDealMembersTabRole(stored: string | undefined): boolean {
   if (byLabel?.value && DEAL_MEMBERS_TAB_ROLE_VALUES.has(byLabel.value))
     return true
   return false
+}
+
+/** True when the stored role is General Partner (value or label). */
+export function isGeneralPartnerRole(stored: string | undefined): boolean {
+  const t = String(stored ?? "").trim()
+  if (!t || t === "—") return false
+  const lower = t.toLowerCase()
+  if (lower === GENERAL_PARTNER_ROLE_VALUE.toLowerCase()) return true
+  if (lower === "general partners") return true
+  const byVal = INVESTOR_ROLE_SELECT_OPTIONS.find((o) => o.value === t)
+  if (byVal?.value && GENERAL_PARTNERS_TAB_ROLE_VALUES.has(byVal.value))
+    return true
+  const byLabel = INVESTOR_ROLE_SELECT_OPTIONS.find((o) => o.label === t)
+  if (byLabel?.value && GENERAL_PARTNERS_TAB_ROLE_VALUES.has(byLabel.value))
+    return true
+  return false
+}
+
+export function dealRosterKindFromRole(
+  stored: string | undefined,
+): DealRosterKind {
+  return isGeneralPartnerRole(stored) ? "general_partners" : "deal_members"
+}
+
+export function dealInvestmentModalEntryFromRosterKind(
+  kind: DealRosterKind,
+): DealInvestmentModalEntry {
+  return kind === "general_partners" ? "general_partner" : "member"
 }

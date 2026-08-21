@@ -10,6 +10,10 @@ import {
 import { createPortal } from "react-dom"
 import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom"
 import { toast } from "../../../common/components/Toast"
+import {
+  TABLE_PAGE_SIZE_ID,
+  usePersistedTablePageSize,
+} from "@/common/hooks/usePersistedTablePageSize"
 import { buildTableExportFilename } from "../../../common/utils/tableExportFilename"
 import {
   DataTable,
@@ -48,7 +52,9 @@ export default function CompanyDealsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [pageSize, setPageSize] = usePersistedTablePageSize(
+    TABLE_PAGE_SIZE_ID.deals,
+  )
 
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [query, setQuery] = useState("")

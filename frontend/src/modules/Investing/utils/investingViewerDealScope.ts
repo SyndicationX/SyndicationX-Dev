@@ -150,17 +150,23 @@ const SPONSOR_ROLE_DISPLAY_ORDER = [
   "Co-Sponsor",
 ] as const
 
+const SPONSOR_ROLE_STORED_VALUES = new Set([
+  "Lead Sponsor",
+  "admin sponsor",
+  "Co-sponsor",
+])
+
 function sponsorRoleDisplayLabel(stored: string | undefined): string | null {
   const t = String(stored ?? "").trim()
   if (!t || t === "—") return null
   const byVal = INVESTOR_ROLE_SELECT_OPTIONS.find((o) => o.value === t)
-  if (byVal?.label) {
+  if (byVal?.label && SPONSOR_ROLE_STORED_VALUES.has(byVal.value)) {
     if (byVal.label === "Admin sponsor") return "Admin Sponsor"
     if (byVal.label === "Co-sponsor") return "Co-Sponsor"
     return byVal.label
   }
   const byLabel = INVESTOR_ROLE_SELECT_OPTIONS.find((o) => o.label === t)
-  if (byLabel?.label) {
+  if (byLabel?.label && SPONSOR_ROLE_STORED_VALUES.has(byLabel.value)) {
     if (byLabel.label === "Admin sponsor") return "Admin Sponsor"
     if (byLabel.label === "Co-sponsor") return "Co-Sponsor"
     return byLabel.label

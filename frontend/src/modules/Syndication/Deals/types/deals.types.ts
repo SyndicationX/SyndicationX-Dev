@@ -49,6 +49,15 @@ export interface DealListRow {
   reviewRating?: number
   /** Number of reviews (list API) */
   reviewCount?: number
+  /** True when the signed-in viewer is Lead Sponsor on this deal. */
+  viewerIsLeadSponsor?: boolean
+  /** ISO timestamp of this deal’s next SaaS billing date (lead sponsors only). */
+  nextBillingDate?: string | null
+  billingSubscriptionStatus?: string
+  billingPlanId?: string | null
+  /** Billable deal with unpaid or expired MRR — listed, but view/edit is locked. */
+  billingAccessLocked?: boolean
+  billingLockReason?: "unpaid" | "expired" | "past_due" | null
 }
 
 export type DealTypeOption = "equity" | "debt" | "real_estate" | "other"

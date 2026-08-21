@@ -4449,13 +4449,16 @@ a.deal_docs_name_link:hover {
 
 .deal_docs_ui_td_doc {
   max-width: 22rem;
-  overflow: hidden;
+  height: auto;
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+  vertical-align: top;
 }
 
 .deal_docs_ui_doc_cell {
   display: flex;
   flex-wrap: nowrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.35rem 0.65rem;
   min-width: 0;
 }
@@ -4502,9 +4505,12 @@ a.deal_docs_name_link:hover {
   min-width: 0;
   font-size: 0.8125rem;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: var(--portal-text, #0f172a);
   letter-spacing: -0.01em;
 }

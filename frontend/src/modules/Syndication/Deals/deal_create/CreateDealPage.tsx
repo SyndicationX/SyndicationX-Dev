@@ -20,6 +20,7 @@ import {
 import { AssetStepForm } from "../components/AssetStepForm"
 import { ASSET_MAX_IMAGE_COUNT } from "../types/deal-asset.types"
 import { DealStageChangeConfirmModal } from "../components/DealStageChangeConfirmModal"
+import { DealSaasPaywallModal } from "../components/DealSaasPaywallModal"
 import { DealStepForm } from "../components/DealStepForm"
 import "../../contacts/contacts.css"
 import "../../usermanagement/user_management.css"
@@ -53,6 +54,10 @@ import { dedupeStoredImagePathSegments } from "../utils/offeringGalleryUrls"
 import { dealImageFileKey } from "../../../../common/utils/materializeImageFileForUpload"
 import type { DealStage } from "../constants/deal-lifecycle/deal-stage"
 import {
+  isDealSaasPaymentRequiredError,
+  type DealSaasPaywallDeal,
+} from "../utils/dealSaasAccess"
+import {
   emptyAssetStepDraft,
   emptyDealStepDraft,
   type AssetStepDraft,
@@ -66,9 +71,9 @@ function DealStepBillingNote() {
   return (
     <div className="deals_create_billing_wrap">
       <p className="deals_create_billing_info" role="note">
-        Your default billing method will be charged automatically. To assign a
-        different billing method, go to{" "}
-        <Link className="deals_create_billing_info_link" to="/settings">
+        When this deal is raising capital or asset managing, the lead sponsor
+        pays monthly SaaS (MRR). Choose a plan or pay from{" "}
+        <Link className="deals_create_billing_info_link" to="/settings?billing=pay">
           Billing
         </Link>
         .
@@ -122,6 +127,8 @@ export function CreateDealPage() {
   const [initialDealStageCanonical, setInitialDealStageCanonical] =
     useState<DealStage | null>(null)
   const [loadingDeal, setLoadingDeal] = useState(Boolean(editDealId))
+  const [saasPaywallDeal, setSaasPaywallDeal] =
+    useState<DealSaasPaywallDeal | null>(null)
   const [backendDealId, setBackendDealId] = useState<string | null>(null)
   const createDealDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -228,8 +235,16 @@ export function CreateDealPage() {
         setInitialDealStageCanonical(formDealStageToCanonical(detail.dealStage))
         setStageConfirmedInSession(null)
         setPendingStageFormValue("")
-      } catch {
+      } catch (err) {
         if (!cancelled) {
+          if (isDealSaasPaymentRequiredError(err)) {
+            setSaasPaywallDeal({
+              ...err.payload,
+              id: err.payload.id || editDealId || "",
+            })
+            setLoadingDeal(false)
+            return
+          }
           toast.error("Could not load deal to edit.")
           navigate(postSavePath, { replace: true })
         }
@@ -814,6 +829,29 @@ export function CreateDealPage() {
     step === 0
       ? "Deal details, stage, and subscription settings."
       : "Primary asset location and images."
+
+  if (saasPaywallDeal) {
+    return (
+      <div className="deals_list_page deals_detail_page deals_create_flow">
+        <p className="deals_list_not_found">
+          {saasPaywallDeal.dealName.trim()
+            ? `Pay monthly SaaS (MRR) for “${saasPaywallDeal.dealName.trim()}” to continue.`
+            : "Pay monthly SaaS (MRR) for this deal to continue."}{" "}
+          <Link to="/deals" className="deals_list_inline_back">
+            <ArrowLeft size={18} strokeWidth={2} aria-hidden />
+            Back to deals
+          </Link>
+        </p>
+        <DealSaasPaywallModal
+          deal={saasPaywallDeal}
+          onClose={() => {
+            setSaasPaywallDeal(null)
+            navigate("/deals", { replace: true })
+          }}
+        />
+      </div>
+    )
+  }
 
   if (loadingDeal) {
     return (

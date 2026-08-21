@@ -48,6 +48,9 @@ interface DealRowActionsProps {
   onDeleted?: (reason: string) => void
   /** When true, kebab stays visible but cannot open (no actions for this row). */
   actionsDisabled?: boolean
+  /** Unpaid / expired SaaS — view, preview, and edit open the paywall instead. */
+  saasAccessLocked?: boolean
+  onSaasLocked?: () => void
 }
 
 export function DealRowActions({
@@ -64,6 +67,8 @@ export function DealRowActions({
   onRestored,
   onDeleted,
   actionsDisabled = false,
+  saasAccessLocked = false,
+  onSaasLocked,
 }: DealRowActionsProps) {
   const navigate = useNavigate()
   const confirmTitleId = useId()
@@ -162,6 +167,10 @@ export function DealRowActions({
       goContinueCreateDraft()
       return
     }
+    if (saasAccessLocked) {
+      onSaasLocked?.()
+      return
+    }
     onPreviewDeal?.()
   }
 
@@ -169,6 +178,10 @@ export function DealRowActions({
     close()
     if (draftRow) {
       goContinueCreateDraft()
+      return
+    }
+    if (saasAccessLocked) {
+      onSaasLocked?.()
       return
     }
     if (readOnlyActions && onPreviewDeal) {
@@ -192,6 +205,10 @@ export function DealRowActions({
     close()
     if (draftRow) {
       goContinueCreateDraft()
+      return
+    }
+    if (saasAccessLocked) {
+      onSaasLocked?.()
       return
     }
     navigate(`/deals/create?edit=${encodeURIComponent(dealId)}`)

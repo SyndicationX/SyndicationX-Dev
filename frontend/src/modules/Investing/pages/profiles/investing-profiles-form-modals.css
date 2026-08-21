@@ -85,6 +85,21 @@
   grid-column: 1 / -1;
 }
 
+/* Routing + account stay on one even row (digits don't wrap or look staggered). */
+.add_profile_account_number {
+  white-space: nowrap;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: 0.02em;
+}
+
+.investing_add_profile_form_panel .add_contact_name_grid .um_field_label_with_suffix {
+  flex-wrap: nowrap;
+}
+
 /* Add address: zip spans full row (was half-width in the two-column grid) */
 .investing_add_address_form_panel .add_address_zip_field {
   width: 100%;

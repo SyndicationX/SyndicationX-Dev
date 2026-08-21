@@ -12,6 +12,7 @@ import {
   loadAddMemberDraft,
 } from "./addMemberFormDraftStorage"
 import type { AddInvestmentFormValues } from "./add_deal_member_types"
+import { formatInvestorClassTableLabel } from "../../../utils/investorClassOverviewFields"
 
 function memberNameFromContactId(id: string): string {
   const m: Record<string, string> = {
@@ -71,11 +72,7 @@ function resolveInvestorClassLabelForRow(
   formValue: string,
   classes: DealInvestorClass[],
 ): string {
-  const t = formValue.trim()
-  if (!t) return ""
-  const byId = classes.find((c) => c.id === t)
-  if (byId) return byId.name.trim() || byId.id
-  return t
+  return formatInvestorClassTableLabel(formValue, classes)
 }
 
 export function addInvestmentFormToRow(

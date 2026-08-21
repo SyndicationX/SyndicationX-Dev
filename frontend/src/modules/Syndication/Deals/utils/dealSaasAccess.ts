@@ -1,0 +1,143 @@
+import { isPlatformAdmin } from "../../../../common/auth/roleUtils"
+import { CREATE_DEAL_DRAFT_ROW_ID } from "../createDealDraftListRow"
+import type { DealListRow } from "../types/deals.types"
+
+export const DEAL_SAAS_PAYMENT_REQUIRED = "DEAL_SAAS_PAYMENT_REQUIRED"
+
+export type DealSaasLockReason = "unpaid" | "expired" | "past_due"
+
+export type DealSaasPaywallDeal = {
+  id: string
+  dealName: string
+  reason?: DealSaasLockReason | null
+  billingPlanId?: string | null
+  nextBillingDate?: string | null
+  billingSubscriptionStatus?: string
+  viewerIsLeadSponsor?: boolean
+  message?: string
+}
+
+export function dealSaasBillingSettingsPath(dealId: string): string {
+  const id = dealId.trim()
+  const params = new URLSearchParams({ billing: "pay" })
+  if (id) params.set("dealId", id)
+  return `/settings?${params.toString()}`
+}
+
+function parseLockReason(raw: unknown): DealSaasLockReason | null {
+  const s = String(raw ?? "").trim().toLowerCase()
+  if (s === "unpaid" || s === "expired" || s === "past_due") return s
+  return null
+}
+
+function stageIsBillable(row: Pick<DealListRow, "dealStage" | "archived">): boolean {
+  if (row.archived) return false
+  const stage = String(row.dealStage ?? "").trim().toLowerCase()
+  return (
+    stage === "capital_raising" ||
+    stage === "raising_capital" ||
+    stage === "asset_managing" ||
+    stage === "managing_asset"
+  )
+}
+
+function periodEndHasPassed(iso: string | null | undefined): boolean {
+  const raw = String(iso ?? "").trim()
+  if (!raw) return false
+  const t = Date.parse(raw)
+  return Number.isFinite(t) && t < Date.now()
+}
+
+/** True when the syndicating workspace must pay MRR before view/edit. */
+export function isDealListRowSaasLocked(row: DealListRow): boolean {
+  if (!row?.id || row.id === CREATE_DEAL_DRAFT_ROW_ID) return false
+  if (isPlatformAdmin()) return false
+  // This month is fully open. Billing / paywall start on nextBillingDate
+  // (1st of next month). A missing date is treated as “not started yet”.
+  if (!periodEndHasPassed(row.nextBillingDate)) return false
+  if (row.billingAccessLocked === true) return true
+  if (row.billingAccessLocked === false) return false
+  if (!stageIsBillable(row)) return false
+  const status = String(row.billingSubscriptionStatus ?? "").trim().toLowerCase()
+  if (status === "active" || status === "trialing") return false
+  if (status === "past_due" || status === "unpaid") return true
+  if (status === "none" || status === "canceled" || status === "incomplete") {
+    return true
+  }
+  return false
+}
+
+export function dealSaasPaywallFromListRow(row: DealListRow): DealSaasPaywallDeal {
+  const reason =
+    parseLockReason(row.billingLockReason) ??
+    (periodEndHasPassed(row.nextBillingDate)
+      ? "expired"
+      : String(row.billingSubscriptionStatus ?? "").toLowerCase() === "past_due" ||
+          String(row.billingSubscriptionStatus ?? "").toLowerCase() === "unpaid"
+        ? "past_due"
+        : "unpaid")
+  return {
+    id: row.id,
+    dealName: row.dealName ?? "",
+    reason,
+    billingPlanId: row.billingPlanId ?? null,
+    nextBillingDate: row.nextBillingDate ?? null,
+    billingSubscriptionStatus: row.billingSubscriptionStatus,
+    viewerIsLeadSponsor: row.viewerIsLeadSponsor === true,
+  }
+}
+
+export class DealSaasPaymentRequiredError extends Error {
+  readonly code = DEAL_SAAS_PAYMENT_REQUIRED
+  readonly statusCode = 402
+  readonly payload: DealSaasPaywallDeal
+
+  constructor(payload: DealSaasPaywallDeal, message?: string) {
+    super(
+      message || payload.message || "Pay monthly SaaS (MRR) for this deal to continue.",
+    )
+    this.name = "DealSaasPaymentRequiredError"
+    this.payload = payload
+  }
+}
+
+export function isDealSaasPaymentRequiredError(
+  err: unknown,
+): err is DealSaasPaymentRequiredError {
+  return err instanceof DealSaasPaymentRequiredError
+}
+
+export function parseDealSaasPaymentRequiredBody(
+  data: unknown,
+  fallbackDealId?: string,
+): DealSaasPaywallDeal | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null
+  const rec = data as Record<string, unknown>
+  const code = String(rec.code ?? "").trim()
+  if (code && code !== DEAL_SAAS_PAYMENT_REQUIRED) return null
+  const dealId = String(rec.dealId ?? rec.deal_id ?? fallbackDealId ?? "").trim()
+  if (!dealId) return null
+  const message =
+    typeof rec.message === "string" && rec.message.trim()
+      ? rec.message.trim()
+      : undefined
+  return {
+    id: dealId,
+    dealName: String(rec.dealName ?? rec.deal_name ?? "").trim(),
+    reason: parseLockReason(rec.reason),
+    billingPlanId:
+      rec.billingPlanId != null || rec.billing_plan_id != null
+        ? String(rec.billingPlanId ?? rec.billing_plan_id)
+        : null,
+    nextBillingDate:
+      rec.nextBillingDate != null || rec.next_billing_date != null
+        ? String(rec.nextBillingDate ?? rec.next_billing_date)
+        : null,
+    billingSubscriptionStatus:
+      rec.billingSubscriptionStatus != null ||
+      rec.billing_subscription_status != null
+        ? String(rec.billingSubscriptionStatus ?? rec.billing_subscription_status)
+        : undefined,
+    message,
+  }
+}

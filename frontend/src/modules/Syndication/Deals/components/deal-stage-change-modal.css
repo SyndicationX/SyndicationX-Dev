@@ -290,3 +290,38 @@
   border-color: var(--portal-border, #475569);
   color: var(--portal-text, #f1f5f9);
 }
+
+.deal_stage_modal--saas_paywall .deal_stage_modal_icon_wrap {
+  color: #b45309;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  border-color: color-mix(in srgb, #d97706 38%, transparent);
+}
+
+.deal_stage_modal--saas_paywall .deal_stage_modal_badge {
+  color: #b45309;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  border-color: color-mix(in srgb, #d97706 38%, transparent);
+}
+
+.deal_stage_modal--saas_paywall .deal_stage_modal_btn--confirm {
+  background: #d97706;
+}
+
+.deal_stage_modal--saas_paywall .deal_stage_modal_btn--confirm:hover:not(:disabled) {
+  background: #b45309;
+}
+
+.deal_saas_paywall_error {
+  margin: 0.75rem 0 0;
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
+
+:root[data-theme="dark"] .deal_stage_modal--saas_paywall .deal_stage_modal_icon_wrap,
+:root[data-theme="dark"] .deal_stage_modal--saas_paywall .deal_stage_modal_badge {
+  color: #fde68a;
+}
+
+:root[data-theme="dark"] .deal_saas_paywall_error {
+  color: #fca5a5;
+}

@@ -26,8 +26,9 @@ export function formatSsnItinInput(raw: string): string {
 
 /**
  * Mask SSN / ITIN for display — only the last 4 digits visible.
- * Idempotent for already-masked values.
- * Examples: "" → ""; "1234" → "••••1234"; "123456789" → "•••-••-6789".
+ * Uses ASCII "X" so the value sits on one baseline with the digits (bullets look uneven).
+ * Idempotent for already-masked values (XXX-XX-1234 / •••-••-1234).
+ * Examples: "" → ""; "1234" → "XXXX1234"; "123456789" → "XXX-XX-6789".
  */
 export function maskSsnItinLast4(raw: string): string {
   const s = String(raw ?? "").trim()
@@ -36,12 +37,12 @@ export function maskSsnItinLast4(raw: string): string {
   const alreadyMasked = /^[X•x*]{3}-?[X•x*]{2}-?\d{4}$/.test(compact)
   if (alreadyMasked) {
     const last4 = compact.replace(/\D/g, "").slice(-4)
-    return last4 ? `•••-••-${last4}` : ""
+    return last4 ? `XXX-XX-${last4}` : ""
   }
   const d = nineDigitsFromSsnItinInput(s)
   if (!d) return ""
-  if (d.length <= 4) return `••••${d}`
-  return `•••-••-${d.slice(-4)}`
+  if (d.length <= 4) return `XXXX${d}`
+  return `XXX-XX-${d.slice(-4)}`
 }
 
 /** True when a field/answer key or label is an SSN / ITIN identifier. */

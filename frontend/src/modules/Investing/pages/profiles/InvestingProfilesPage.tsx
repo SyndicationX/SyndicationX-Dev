@@ -30,17 +30,19 @@ import { DEALS_LIST_REFETCH_EVENT } from "@/modules/Syndication/Deals/createDeal
 import {
   ADD_PROFILE_DRAFT_UPDATED_EVENT,
   PROFILE_BOOK_REFETCH_EVENT,
+  clearAddProfileDraft,
+  loadAddProfileDraft,
 } from "./addProfileFormDraftStorage"
 import {
   ADD_PROFILE_DRAFT_ROW_ID,
   buildAddProfileDraftListRow,
   isInvestorProfileListRowIncomplete,
 } from "./addProfileDraftListRow"
-import { loadAddProfileDraft } from "./addProfileFormDraftStorage"
 import { getMergedInvestmentListRows } from "../investments/investmentsRuntimeData"
 import type { InvestmentListRow } from "../investments/investments.types"
 import {
   fetchMyProfileBook,
+  deleteInvestorProfile,
   patchBeneficiaryArchived,
   patchInvestorProfileArchived,
   patchSavedAddressArchived,
@@ -618,46 +620,68 @@ export default function InvestingProfilesPage() {
     [editingAddress],
   )
 
-  const setProfileArchived = useCallback((id: string, archived: boolean) => {
-    void (async () => {
-      try {
-        const row = await patchInvestorProfileArchived(id, archived)
-        setProfiles((prev) => prev.map((p) => (p.id === id ? row : p)))
-      } catch (e) {
-        toast.error(
-          "Could not update profile",
-          e instanceof Error ? e.message : "Please try again.",
-        )
-      }
-    })()
+  const setProfileArchived = useCallback(async (id: string, archived: boolean) => {
+    try {
+      const row = await patchInvestorProfileArchived(id, archived)
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, ...row, archived } : p)),
+      )
+      setProfilesStatusTab(archived ? "archived" : "active")
+    } catch (e) {
+      toast.error(
+        "Could not update profile",
+        e instanceof Error ? e.message : "Please try again.",
+      )
+      throw e
+    }
   }, [])
 
-  const setBeneficiaryArchived = useCallback((id: string, archived: boolean) => {
-    void (async () => {
-      try {
-        const row = await patchBeneficiaryArchived(id, archived)
-        setBeneficiaries((prev) => prev.map((b) => (b.id === id ? row : b)))
-      } catch (e) {
-        toast.error(
-          "Could not update beneficiary",
-          e instanceof Error ? e.message : "Please try again.",
-        )
-      }
-    })()
+  const deleteProfile = useCallback(async (row: InvestorProfileListRow) => {
+    if (row.id === ADD_PROFILE_DRAFT_ROW_ID) {
+      clearAddProfileDraft()
+      return
+    }
+    try {
+      await deleteInvestorProfile(row.id)
+      setProfiles((prev) => prev.filter((p) => p.id !== row.id))
+      setViewModal((cur) =>
+        cur?.kind === "profile" && cur.row.id === row.id ? null : cur,
+      )
+    } catch (e) {
+      toast.error(
+        "Could not delete profile",
+        e instanceof Error ? e.message : "Please try again.",
+      )
+      throw e
+    }
   }, [])
 
-  const setAddressArchived = useCallback((id: string, archived: boolean) => {
-    void (async () => {
-      try {
-        const row = await patchSavedAddressArchived(id, archived)
-        setSavedAddresses((prev) => prev.map((a) => (a.id === id ? row : a)))
-      } catch (e) {
-        toast.error(
-          "Could not update address",
-          e instanceof Error ? e.message : "Please try again.",
-        )
-      }
-    })()
+  const setBeneficiaryArchived = useCallback(async (id: string, archived: boolean) => {
+    try {
+      const row = await patchBeneficiaryArchived(id, archived)
+      setBeneficiaries((prev) => prev.map((b) => (b.id === id ? row : b)))
+      setBeneStatusTab(archived ? "archived" : "active")
+    } catch (e) {
+      toast.error(
+        "Could not update beneficiary",
+        e instanceof Error ? e.message : "Please try again.",
+      )
+      throw e
+    }
+  }, [])
+
+  const setAddressArchived = useCallback(async (id: string, archived: boolean) => {
+    try {
+      const row = await patchSavedAddressArchived(id, archived)
+      setSavedAddresses((prev) => prev.map((a) => (a.id === id ? row : a)))
+      setAddrStatusTab(archived ? "archived" : "active")
+    } catch (e) {
+      toast.error(
+        "Could not update address",
+        e instanceof Error ? e.message : "Please try again.",
+      )
+      throw e
+    }
   }, [])
 
   const benInitialDraft = useMemo((): BeneficiaryDraft | null => {
@@ -1107,6 +1131,7 @@ export default function InvestingProfilesPage() {
                 ? undefined
                 : (v) => setProfileArchived(row.id, v)
             }
+            onDelete={() => deleteProfile(row)}
             onView={() => {
               const resumeTo = profileResumeHref(row)
               if (resumeTo) {
@@ -1132,6 +1157,7 @@ export default function InvestingProfilesPage() {
     ],
     [
       setProfileArchived,
+      deleteProfile,
       navigate,
       openProfileView,
       profileResumeHref,

@@ -7,11 +7,14 @@ import {
   MoreHorizontal,
   Pencil,
   Play,
+  Trash2,
 } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { ConfirmDeleteModal } from "@/common/components/ConfirmDeleteModal"
 import { toast } from "@/common/components/Toast"
 import "@/modules/Syndication/usermanagement/user_management.css"
+import "@/modules/Syndication/Deals/tabs/deal_members/components/deal-member-row-actions.css"
 
 type RowEntityKind = "profile" | "beneficiary" | "address"
 
@@ -22,13 +25,14 @@ function labels(kind: RowEntityKind) {
     viewTitle: `View ${noun}` as const,
     editTitle: `Edit ${noun}` as const,
     archiveTitle: `Archive ${noun}` as const,
+    deleteTitle: `Delete ${noun}` as const,
     exportTitle: `Export ${noun}` as const,
   }
 }
 
 /**
- * Kebab (⋯) for Investing profiles tables: View, Edit, Archive, Export.
- * Pass `onView` / `onEdit` / `onExport` to run real actions; otherwise archive-only uses `onSetArchived`.
+ * Kebab (⋯) for Investing profiles tables: View, Edit, Archive, Delete, Export.
+ * Pass `onView` / `onEdit` / `onExport` / `onDelete` to run real actions; archive uses `onSetArchived`.
  */
 export function InvestingProfilesRowActions({
   displayName,
@@ -39,6 +43,7 @@ export function InvestingProfilesRowActions({
   onView,
   onEdit,
   onExport,
+  onDelete,
   onSetupPayouts,
   bankSetupLabel = "Add bank account",
   onUseExistingBank,
@@ -50,10 +55,12 @@ export function InvestingProfilesRowActions({
   archived?: boolean
   /** Incomplete add-profile or session draft — show Resume instead of Edit. */
   incompleteDraft?: boolean
-  onSetArchived?: (archived: boolean) => void
+  onSetArchived?: (archived: boolean) => void | Promise<void>
   onView?: () => void
   onEdit?: () => void
   onExport?: () => void
+  /** Hard-delete after confirmation. Shown when provided. */
+  onDelete?: () => void | Promise<void>
   /** Opens hosted bank setup so this profile can receive ACH distributions. */
   onSetupPayouts?: () => void
   /** Menu label for bank setup (Add vs Update). */
@@ -64,15 +71,18 @@ export function InvestingProfilesRowActions({
   /** Start a new Stripe bank for this profile (different from shared ones). */
   onAddDifferentBank?: () => void
 }) {
-  const { viewTitle, editTitle, archiveTitle, exportTitle } = labels(kind)
+  const { viewTitle, editTitle, archiveTitle, deleteTitle, exportTitle } = labels(kind)
   const resumeLabel = incompleteDraft ? "Resume" : editTitle
   const archived = Boolean(archivedProp)
   const canToggleArchive = Boolean(onSetArchived)
+  const canDelete = Boolean(onDelete)
   const nameFallback =
     kind === "profile" ? "Profile" : kind === "beneficiary" ? "Beneficiary" : "Address"
   const nameForMsg = (displayName?.trim() || nameFallback).replace(/"/g, "”")
   const a11yLabel = nameForMsg
   const [open, setOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -87,6 +97,20 @@ export function InvestingProfilesRowActions({
     },
     [close],
   )
+
+  const confirmDelete = useCallback(async () => {
+    if (!onDelete) return
+    setDeleteBusy(true)
+    try {
+      await Promise.resolve(onDelete())
+      toast.success(deleteTitle, `“${nameForMsg}” was deleted.`)
+      setDeleteConfirmOpen(false)
+    } catch {
+      /* parent shows the error toast */
+    } finally {
+      setDeleteBusy(false)
+    }
+  }, [onDelete, deleteTitle, nameForMsg])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -146,6 +170,7 @@ export function InvestingProfilesRowActions({
   }, [open, close])
 
   return (
+    <>
     <div
       className="um_kebab_root"
       ref={wrapRef}
@@ -285,20 +310,29 @@ export function InvestingProfilesRowActions({
                   role="menuitem"
                   onClick={() =>
                     run(() => {
-                      if (canToggleArchive && onSetArchived) {
-                        const next = !archived
-                        onSetArchived(next)
-                        if (next) {
-                          toast.success(archiveTitle, `“${nameForMsg}” is archived.`)
-                        } else {
-                          toast.success(
-                            "Restored",
-                            `“${nameForMsg}” is back in the active list.`,
-                          )
-                        }
+                      if (!canToggleArchive || !onSetArchived) {
+                        toast.success(archiveTitle, apiHint("archive"))
                         return
                       }
-                      toast.success(archiveTitle, apiHint("archive"))
+                      const next = !archived
+                      void (async () => {
+                        try {
+                          await Promise.resolve(onSetArchived(next))
+                          if (next) {
+                            toast.success(
+                              archiveTitle,
+                              `“${nameForMsg}” is archived.`,
+                            )
+                          } else {
+                            toast.success(
+                              "Restored",
+                              `“${nameForMsg}” is back in the active list.`,
+                            )
+                          }
+                        } catch {
+                          /* parent shows the error toast */
+                        }
+                      })()
                     })
                   }
                 >
@@ -320,6 +354,27 @@ export function InvestingProfilesRowActions({
                   {archived && canToggleArchive ? "Restore" : "Archive"}
                 </button>
               </li>
+              {canDelete ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="um_kebab_menuitem deals_kebab_menuitem_danger"
+                    role="menuitem"
+                    onClick={() => {
+                      close()
+                      setDeleteConfirmOpen(true)
+                    }}
+                  >
+                    <Trash2
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    Delete
+                  </button>
+                </li>
+              ) : null}
               <li role="none">
                 <button
                   type="button"
@@ -346,5 +401,18 @@ export function InvestingProfilesRowActions({
           )
         : null}
     </div>
+    <ConfirmDeleteModal
+      open={deleteConfirmOpen}
+      title={deleteTitle}
+      message={`Are you sure you want to delete this ${kind}? This cannot be undone.`}
+      itemLabel={nameForMsg}
+      busy={deleteBusy}
+      onCancel={() => {
+        if (deleteBusy) return
+        setDeleteConfirmOpen(false)
+      }}
+      onConfirm={() => void confirmDelete()}
+    />
+    </>
   )
 }

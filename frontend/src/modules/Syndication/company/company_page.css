@@ -3342,15 +3342,6 @@ select.cp_settings_input_pill.um_field_select {
   max-width: none;
 }
 
-/* Org Members — Users & Roles / General Info: no underline strip below sub-tabs */
-.company_page .cp_settings_members_embed .um_members_tabs_row {
-  border-bottom: none;
-}
-
-.company_page .cp_settings_members_embed .um_members_tab {
-  margin-bottom: 0;
-}
-
 .company_page .cp_settings_members_embed .um_members_general_panel.um_panel {
   margin-top: 0;
 }

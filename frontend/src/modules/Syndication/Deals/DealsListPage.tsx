@@ -12,7 +12,11 @@ import {
 } from "lucide-react"
 import { DealAvatarIconRing } from "../../../common/components/entity-avatar/EntityAvatarNameCell"
 import { useCallback, useEffect, useId, useMemo, useState } from "react"
-import { Link, useLocation, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import {
+  TABLE_PAGE_SIZE_ID,
+  usePersistedTablePageSize,
+} from "@/common/hooks/usePersistedTablePageSize"
 import {
   applyDealsSearchToParams,
   readDealsSearchQuery,
@@ -54,8 +58,14 @@ import {
 import { dealStageLabel } from "../dealsDashboardUtils"
 import type { DealListRow } from "./types/deals.types"
 import { dealStageChipCompactClassName } from "./utils/dealStageChip"
+import {
+  dealSaasPaywallFromListRow,
+  isDealListRowSaasLocked,
+  type DealSaasPaywallDeal,
+} from "./utils/dealSaasAccess"
 import { DealPreviewModal } from "./components/DealPreviewModal"
 import { DealRowActions } from "./components/DealRowActions"
+import { DealSaasPaywallModal } from "./components/DealSaasPaywallModal"
 import { ExportDealsModal } from "./components/ExportDealsModal"
 import {
   FormTooltip,
@@ -138,7 +148,13 @@ function DealTableColumnHeader({
   )
 }
 
-function DealListNameCell({ row }: { row: DealListRow }) {
+function DealListNameCell({
+  row,
+  onOpenDeal,
+}: {
+  row: DealListRow
+  onOpenDeal?: (row: DealListRow) => void
+}) {
   const isSessionDraft = row.id === CREATE_DEAL_DRAFT_ROW_ID
   /** Pen icon while create wizard is in progress or required deal fields are still incomplete. */
   const showDraftMarker =
@@ -148,6 +164,17 @@ function DealListNameCell({ row }: { row: DealListRow }) {
     <Link className="deals_table_name_link" to="/deals/create?resume=1">
       {row.dealName || "—"}
     </Link>
+  ) : onOpenDeal ? (
+    <a
+      className="deals_table_name_link"
+      href={`/deals/${row.id}`}
+      onClick={(e) => {
+        e.preventDefault()
+        onOpenDeal(row)
+      }}
+    >
+      {row.dealName || "—"}
+    </a>
   ) : (
     <Link className="deals_table_name_link" to={`/deals/${row.id}`}>
       {row.dealName || "—"}
@@ -290,6 +317,7 @@ export function DealsListPage({
   onTabCountsChange,
 }: DealsListPageProps = {}) {
   const { mode } = usePortalMode()
+  const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const hideCreateDraftRow =
@@ -315,9 +343,13 @@ export function DealsListPage({
   }
   const [activeTab, setActiveTab] = useState<DealsListTab>("deals")
   const [dealsPage, setDealsPage] = useState(1)
-  const [dealsPageSize, setDealsPageSize] = useState(10)
+  const [dealsPageSize, setDealsPageSize] = usePersistedTablePageSize(
+    TABLE_PAGE_SIZE_ID.deals,
+  )
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [previewDealId, setPreviewDealId] = useState<string | null>(null)
+  const [saasPaywallDeal, setSaasPaywallDeal] =
+    useState<DealSaasPaywallDeal | null>(null)
   const [suspendAllOpen, setSuspendAllOpen] = useState(false)
   const [suspendAllIds, setSuspendAllIds] = useState<string[]>([])
   const [rows, setRows] = useState<DealListRow[]>([])
@@ -642,6 +674,21 @@ export function DealsListPage({
     })()
   }
 
+  const openSyndicatingDeal = useCallback(
+    (row: DealListRow) => {
+      if (dealsListContext === "investing") {
+        navigate(`/deals/${encodeURIComponent(row.id)}`)
+        return
+      }
+      if (isDealListRowSaasLocked(row)) {
+        setSaasPaywallDeal(dealSaasPaywallFromListRow(row))
+        return
+      }
+      navigate(`/deals/${encodeURIComponent(row.id)}`)
+    },
+    [dealsListContext, navigate],
+  )
+
   const columns: DataTableColumn<DealListRow>[] = useMemo(() => {
     const nameColumn: DataTableColumn<DealListRow> = {
       id: "name",
@@ -655,7 +702,14 @@ export function DealsListPage({
       thClassName: "deals_col_deal_name",
       tdClassName: "um_td_user deals_col_deal_name",
       sortValue: (row) => (row.dealName ?? "").toLowerCase(),
-      cell: (row) => <DealListNameCell row={row} />,
+      cell: (row) => (
+        <DealListNameCell
+          row={row}
+          onOpenDeal={
+            row.id === CREATE_DEAL_DRAFT_ROW_ID ? undefined : openSyndicatingDeal
+          }
+        />
+      ),
     }
 
     const dealStageColumn: DataTableColumn<DealListRow> = {
@@ -755,6 +809,56 @@ export function DealsListPage({
       tdClassName: "deals_td_align_center",
       sortValue: (row) => dateSortValue(row.closeDateDisplay),
       cell: (row) => formatDealListDateDisplay(row.closeDateDisplay),
+    }
+
+    const nextBillingColumn: DataTableColumn<DealListRow> = {
+      id: "nextBilling",
+      colWidth: "9.25rem",
+      header: (
+        <DealTableColumnHeader
+          label="Next billing"
+          hint="This month every deal stays fully accessible. SaaS billing starts on the 1st of next month. Draft, archived, and liquidated deals are not billed."
+          headerAlign="center"
+        />
+      ),
+      align: "center",
+      thClassName: "deals_th_align_center deals_col_next_billing",
+      tdClassName: "deals_td_align_center deals_col_next_billing",
+      sortValue: (row) => dateSortValue(row.nextBillingDate ?? ""),
+      cell: (row) => {
+        if (row.id === CREATE_DEAL_DRAFT_ROW_ID) {
+          return <span className="um_status_muted">—</span>
+        }
+        if (isDealListRowSaasLocked(row)) {
+          if (row.nextBillingDate) {
+            const expired =
+              Date.parse(row.nextBillingDate) < Date.now() ||
+              row.billingLockReason === "expired" ||
+              row.billingLockReason === "past_due"
+            return (
+              <span className="um_status_muted">
+                {expired
+                  ? `Past due · ${formatDealListDateDisplay(row.nextBillingDate)}`
+                  : "Payment due"}
+              </span>
+            )
+          }
+          return <span className="um_status_muted">Payment due</span>
+        }
+        if (row.nextBillingDate) {
+          return formatDealListDateDisplay(row.nextBillingDate)
+        }
+        const stage = (row.dealStage ?? "").trim().toLowerCase()
+        const notBilled =
+          row.archived ||
+          stage === "draft" ||
+          stage === "liquidated"
+        return (
+          <span className="um_status_muted">
+            {notBilled ? "Not billed" : "Pending"}
+          </span>
+        )
+      },
     }
 
     const investingYourRoleColumn: DataTableColumn<DealListRow> = {
@@ -951,6 +1055,7 @@ export function DealsListPage({
       ...(dealsListContext === "investing" ? investingPreviewColumns : []),
       startColumn,
       closeColumn,
+      ...(dealsListContext === "syndicating" ? [nextBillingColumn] : []),
       ...(dealsListContext === "syndicating" ? syndicatingFinancialColumns : []),
       {
         id: "actions",
@@ -968,6 +1073,13 @@ export function DealsListPage({
               dealName={row.dealName}
               dealStage={row.dealStage}
               archived={Boolean(row.archived)}
+              saasAccessLocked={
+                dealsListContext === "syndicating" &&
+                isDealListRowSaasLocked(row)
+              }
+              onSaasLocked={() =>
+                setSaasPaywallDeal(dealSaasPaywallFromListRow(row))
+              }
               onPreviewDeal={
                 row.id === CREATE_DEAL_DRAFT_ROW_ID ||
                 dealsListContext === "investing"
@@ -1027,7 +1139,7 @@ export function DealsListPage({
     ]
 
     return dataCols
-  }, [investorMetricsByDealId, dealsListContext])
+  }, [investorMetricsByDealId, dealsListContext, rows, openSyndicatingDeal])
 
   function handleOpenExportModal() {
     setExportModalOpen(true)
@@ -1147,6 +1259,10 @@ export function DealsListPage({
           listContext={dealsListContext}
           onClose={() => setPreviewDealId(null)}
         />
+        <DealSaasPaywallModal
+          deal={saasPaywallDeal}
+          onClose={() => setSaasPaywallDeal(null)}
+        />
       </>
     )
   }
@@ -1239,6 +1355,11 @@ export function DealsListPage({
         dealId={previewDealId}
         listContext={dealsListContext}
         onClose={() => setPreviewDealId(null)}
+      />
+
+      <DealSaasPaywallModal
+        deal={saasPaywallDeal}
+        onClose={() => setSaasPaywallDeal(null)}
       />
 
       <DealsSuspendAllConfirmModal

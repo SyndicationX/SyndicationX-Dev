@@ -60,15 +60,21 @@ import {
 import { getApiV1Base } from "../../../../../../common/utils/apiBaseUrl"
 import { MEMBER_SELECT_OPTIONS } from "../../../constants/member-options"
 import {
+  DEAL_MEMBERS_TAB_ROLE_VALUES,
+  GENERAL_PARTNER_ROLE_LABEL,
+  GENERAL_PARTNER_ROLE_VALUE,
   INVESTOR_PROFILE_SELECT_OPTIONS,
   INVESTOR_ROLE_SELECT_OPTIONS,
   LEAD_SPONSOR_ROLE_VALUE,
   LP_INVESTOR_ROLE_VALUE,
   LP_INVESTORS_ROLE_LABEL,
   isAdminSponsorOrCoSponsorRole,
+  isGeneralPartnerRole,
   isLeadSponsorRole,
+  isLpInvestorRole,
   leadSponsorContactIdExcludingRow,
   leadSponsorTakenByAnotherMember,
+  type DealInvestmentModalEntry,
 } from "../../../constants/investor-profile"
 
 import type { AddInvestmentFormValues } from "./add_deal_member_types"
@@ -90,6 +96,10 @@ import {
   type AddMemberFormDraft,
 } from "./addMemberFormDraftStorage"
 import type { DealInvestorClass } from "../../../types/deal-investor-class.types"
+import {
+  formatDealInvestorClassOptionLabel,
+  isGpInvestorClass,
+} from "../../../utils/investorClassOverviewFields"
 import { rowDisplayName } from "../../../../usermanagement/memberAdminShared"
 import {
   formatPercentTypeInputBare,
@@ -263,8 +273,8 @@ interface AddInvestmentModalProps {
   initialValues?: AddInvestmentFormValues | null
   /** Stable key when opening add vs edit (e.g. investment row id) so class prefill syncs correctly. */
   prefillKey?: string
-  /** Add mode only: “Add Investor” (Investors tab) vs “Add Member” (Deal Members). */
-  addEntry?: "member" | "investor"
+  /** Add mode: Investors tab vs Deal Members vs General Partners. */
+  addEntry?: DealInvestmentModalEntry
   /**
    * Add mode: when true (“Continue editing”), restore session draft into the form.
    * When false (“Add Member”), always open an empty form; the table draft row still reflects
@@ -301,6 +311,7 @@ export function AddInvestmentModal({
   dealBlocksInvitationEmails = false,
 }: AddInvestmentModalProps) {
   const isInvestorEntry = addEntry === "investor"
+  const isGpEntry = addEntry === "general_partner"
   const titleId = useId()
   const addMemberDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -334,7 +345,13 @@ export function AddInvestmentModal({
   const [submitting, setSubmitting] = useState(false)
   const [memberRows, setMemberRows] = useState<Record<string, unknown>[]>([])
   const [contactRows, setContactRows] = useState<ContactRow[]>([])
-  const [dealClasses, setDealClasses] = useState<DealInvestorClass[]>([])
+  const [allDealClasses, setAllDealClasses] = useState<DealInvestorClass[]>([])
+  const dealClasses = useMemo(() => {
+    if (isGpEntry) return allDealClasses.filter((c) => isGpInvestorClass(c))
+    if (isInvestorEntry)
+      return allDealClasses.filter((c) => !isGpInvestorClass(c))
+    return allDealClasses
+  }, [allDealClasses, isGpEntry, isInvestorEntry])
   const [investorClassesReady, setInvestorClassesReady] = useState(false)
   const [investorClassOptions, setInvestorClassOptions] = useState<
     { value: string; label: string }[]
@@ -431,16 +448,29 @@ export function AddInvestmentModal({
               disabled: false,
             },
           ]
-        : INVESTOR_ROLE_SELECT_OPTIONS.map((o) => ({
-            value: o.value,
-            label: o.label,
-            disabled:
-              (o.value === LEAD_SPONSOR_ROLE_VALUE && leadSponsorOptionDisabled) ||
-              (adminCoBlockedForSelectedContact &&
-                (o.value === "admin sponsor" || o.value === "Co-sponsor")),
-          })),
+        : isGpEntry
+          ? [
+              {
+                value: GENERAL_PARTNER_ROLE_VALUE,
+                label: GENERAL_PARTNER_ROLE_LABEL,
+                disabled: false,
+              },
+            ]
+          : INVESTOR_ROLE_SELECT_OPTIONS.filter(
+              (o) =>
+                !o.value || DEAL_MEMBERS_TAB_ROLE_VALUES.has(o.value),
+            ).map((o) => ({
+              value: o.value,
+              label: o.label,
+              disabled:
+                (o.value === LEAD_SPONSOR_ROLE_VALUE &&
+                  leadSponsorOptionDisabled) ||
+                (adminCoBlockedForSelectedContact &&
+                  (o.value === "admin sponsor" || o.value === "Co-sponsor")),
+            })),
     [
       isInvestorEntry,
+      isGpEntry,
       leadSponsorOptionDisabled,
       adminCoBlockedForSelectedContact,
     ],
@@ -500,15 +530,17 @@ export function AddInvestmentModal({
   useLayoutEffect(() => {
     if (!open) return
     setSectionTab("investor")
-    const lpRolePatch = isInvestorEntry
+    const rolePatch = isInvestorEntry
       ? { investorRole: LP_INVESTOR_ROLE_VALUE }
-      : {}
+      : isGpEntry
+        ? { investorRole: GENERAL_PARTNER_ROLE_VALUE }
+        : {}
     if (mode === "edit" && initialValues) {
       setForm(
         normalizePercentFormFields({
           ...emptyForm(),
           ...initialValues,
-          ...lpRolePatch,
+          ...rolePatch,
         }),
       )
       setBackendInvestmentId(null)
@@ -519,7 +551,7 @@ export function AddInvestmentModal({
       return
     }
     if (mode === "add" && !restoreAddMemberSessionDraft) {
-      setForm({ ...emptyForm(), offeringId: "primary", ...lpRolePatch })
+      setForm({ ...emptyForm(), offeringId: "primary", ...rolePatch })
       setBackendInvestmentId(null)
       backendInvestmentIdRef.current = null
       setBackendLpInvestorId(null)
@@ -528,13 +560,23 @@ export function AddInvestmentModal({
       return
     }
     const restored = loadAddMemberDraft(dealId)
-    if (mode === "add" && restored && addMemberDraftHasContent(restored)) {
+    const restoredRole = restored?.form?.investorRole
+    const restoredMatchesEntry = isGpEntry
+      ? isGeneralPartnerRole(restoredRole)
+      : !isGeneralPartnerRole(restoredRole) &&
+        !isLpInvestorRole(restoredRole)
+    if (
+      mode === "add" &&
+      restored &&
+      addMemberDraftHasContent(restored) &&
+      restoredMatchesEntry
+    ) {
       setForm(
         normalizePercentFormFields({
           ...emptyForm(),
           ...restored.form,
           offeringId: restored.form.offeringId?.trim() || "primary",
-          ...lpRolePatch,
+          ...rolePatch,
         }),
       )
       if (isInvestorEntry) {
@@ -561,7 +603,7 @@ export function AddInvestmentModal({
         }
       }
     } else {
-      setForm({ ...emptyForm(), offeringId: "primary", ...lpRolePatch })
+      setForm({ ...emptyForm(), offeringId: "primary", ...rolePatch })
       setBackendInvestmentId(null)
       backendInvestmentIdRef.current = null
       setBackendLpInvestorId(null)
@@ -576,6 +618,7 @@ export function AddInvestmentModal({
     prefillKey,
     restoreAddMemberSessionDraft,
     isInvestorEntry,
+    isGpEntry,
   ])
 
   latestAddMemberDraftRef.current = { form, step: 1 as const }
@@ -845,23 +888,7 @@ export function AddInvestmentModal({
       if (cancelled) return
       setMemberRows(users)
       setContactRows(contacts)
-      setDealClasses(classes)
-
-      if (classes.length > 0) {
-        setInvestorClassOptions([
-          { value: "", label: "Select investor class" },
-          ...classes.map((row) => ({
-            value: row.id,
-            label: row.name.trim() || "Unnamed class",
-          })),
-        ])
-      } else {
-        setInvestorClassOptions([
-          { value: "", label: "No investor classes defined" },
-        ])
-        setForm((prev) => ({ ...prev, investorClass: "" }))
-      }
-
+      setAllDealClasses(classes)
       setInvestorClassesReady(true)
       setMembersLoading(false)
     })()
@@ -869,6 +896,42 @@ export function AddInvestmentModal({
       cancelled = true
     }
   }, [open, dealId])
+
+  useEffect(() => {
+    if (!open) return
+    if (!investorClassesReady) {
+      setInvestorClassOptions([
+        { value: "", label: "Loading investor classes…" },
+      ])
+      return
+    }
+    if (dealClasses.length > 0) {
+      setInvestorClassOptions([
+        {
+          value: "",
+          label: isGpEntry
+            ? "Select general partner class"
+            : "Select investor class",
+        },
+        ...dealClasses.map((row) => ({
+          value: row.id,
+          label: formatDealInvestorClassOptionLabel(row),
+        })),
+      ])
+      return
+    }
+    setInvestorClassOptions([
+      {
+        value: "",
+        label: isGpEntry
+          ? "No general partner classes defined"
+          : "No investor classes defined",
+      },
+    ])
+    if (isInvestorEntry || isGpEntry) {
+      setForm((prev) => ({ ...prev, investorClass: "" }))
+    }
+  }, [open, investorClassesReady, dealClasses, isGpEntry, isInvestorEntry])
 
   useEffect(() => {
     if (!open || !investorClassesReady || dealClasses.length === 0) return
@@ -1228,6 +1291,9 @@ export function AddInvestmentModal({
   const noDealClasses =
     investorClassesReady && dealClasses.length === 0
 
+  const showInvestorClassField =
+    isInvestorEntry || (isGpEntry && dealClasses.length > 0)
+
   const showClassPercentFields = isInvestorEntry && !noDealClasses
 
   function blurFormatPercentClamped(raw: string): string {
@@ -1254,7 +1320,12 @@ export function AddInvestmentModal({
     if (!form.contactId.trim()) {
       return isInvestorEntry
         ? "Select an investor or contact."
-        : "Select a member."
+        : isGpEntry
+          ? "Select a general partner."
+          : "Select a member."
+    }
+    if (!isInvestorEntry && !form.investorRole.trim()) {
+      return "Select a role."
     }
     if (isInvestorEntry) {
       if (!investorClassesReady) return "Loading investor classes…"
@@ -1264,6 +1335,12 @@ export function AddInvestmentModal({
       if (!form.investorClass.trim()) return "Select an investor class."
       if (!dealClasses.some((c) => c.id === form.investorClass.trim())) {
         return "Select a valid investor class from this deal."
+      }
+    }
+    if (isGpEntry && dealClasses.length > 0) {
+      if (!form.investorClass.trim()) return "Select a general partner class."
+      if (!dealClasses.some((c) => c.id === form.investorClass.trim())) {
+        return "Select a valid general partner class from this deal."
       }
     }
     if (isInvestorEntry && !form.commitmentAmount.trim()) {
@@ -1427,10 +1504,14 @@ export function AddInvestmentModal({
               {mode === "edit"
                 ? addEntry === "investor"
                   ? "Edit Investor"
-                  : "Edit Member"
+                  : addEntry === "general_partner"
+                    ? "Edit General Partner"
+                    : "Edit Member"
                 : addEntry === "investor"
                   ? "Add Investor"
-                  : "Add Member"}
+                  : addEntry === "general_partner"
+                    ? "Add General Partner"
+                    : "Add Member"}
               {mode === "add" ? (
                 <span className="deals_add_inv_autosave_badge" aria-live="polite">
                   {/* Autosave on */}
@@ -1561,7 +1642,13 @@ export function AddInvestmentModal({
 
                     <InvFormField
                       id="add-inv-member"
-                      label={isInvestorEntry ? "Investor" : "Member"}
+                      label={
+                        isInvestorEntry
+                          ? "Investor"
+                          : isGpEntry
+                            ? "General Partner"
+                            : "Member"
+                      }
                       Icon={UserRound}
                       tight
                       labelSuffix={
@@ -1583,15 +1670,21 @@ export function AddInvestmentModal({
                           membersLoading
                             ? isInvestorEntry
                               ? "Loading contacts and directory users…"
-                              : "Loading contacts and members…"
+                              : isGpEntry
+                                ? "Loading contacts and general partners…"
+                                : "Loading contacts and members…"
                             : isInvestorEntry
                               ? "Select investor or contact"
-                              : "Select member or contact"
+                              : isGpEntry
+                                ? "Select general partner or contact"
+                                : "Select member or contact"
                         }
                         ariaLabel={
                           isInvestorEntry
                             ? "Investor or contact"
-                            : "Member or contact"
+                            : isGpEntry
+                              ? "General partner or contact"
+                              : "Member or contact"
                         }
                         header={
                           memberContactSelectLocked
@@ -1725,13 +1818,17 @@ export function AddInvestmentModal({
                       Icon={Shield}
                       tight
                     >
-                      {isInvestorEntry ? (
+                      {isInvestorEntry || isGpEntry ? (
                         <input
                           id="add-inv-role"
                           type="text"
                           readOnly
                           className="deals_add_inv_field_pill deals_lp_inv_role_readonly"
-                          value={LP_INVESTORS_ROLE_LABEL}
+                          value={
+                            isGpEntry
+                              ? GENERAL_PARTNER_ROLE_LABEL
+                              : LP_INVESTORS_ROLE_LABEL
+                          }
                           aria-readonly="true"
                           aria-label="Role"
                         />
@@ -1776,13 +1873,15 @@ export function AddInvestmentModal({
                   </InvFormField> */}
                   </div>
 
-                  {isInvestorEntry ? (
+                  {showInvestorClassField ? (
                     <InvFormField
                       id="add-inv-class"
-                      label="Investor class"
+                      label={
+                        isGpEntry ? "General partner class" : "Investor class"
+                      }
                       Icon={Tag}
                       labelSuffix={
-                        noDealClasses ? (
+                        isInvestorEntry && noDealClasses ? (
                           <span className="deals_add_inv_label_info">
                             <InfoIconPanel
                               ariaLabel="More information: Investor class"
@@ -1804,14 +1903,24 @@ export function AddInvestmentModal({
                           !investorClassesReady || dealClasses.length === 0
                         }
                         onChange={(v) => patch({ investorClass: v })}
-                        placeholder="Select investor class"
-                        ariaLabel="Investor class"
+                        placeholder={
+                          isGpEntry
+                            ? "Select general partner class"
+                            : "Select investor class"
+                        }
+                        ariaLabel={
+                          isGpEntry
+                            ? "General partner class"
+                            : "Investor class"
+                        }
                         ariaDescribedBy={
-                          noDealClasses ? "add-inv-class-hint" : undefined
+                          isInvestorEntry && noDealClasses
+                            ? "add-inv-class-hint"
+                            : undefined
                         }
                         triggerClassName={DROPDOWN_TRIGGER_PILL}
                       />
-                      {noDealClasses ? (
+                      {isInvestorEntry && noDealClasses ? (
                         <p id="add-inv-class-hint" className="visually_hidden">
                           {INVESTOR_CLASS_UNAVAILABLE_HINT}
                         </p>
@@ -2040,7 +2149,9 @@ export function AddInvestmentModal({
                       <span className="mail_text_label">
                         {isInvestorEntry
                           ? "Would you like to notify the investor about their addition to the deal?"
-                          : "Would you like to notify the member about their addition to the deal?"}
+                          : isGpEntry
+                            ? "Would you like to notify the general partner about their addition to the deal?"
+                            : "Would you like to notify the member about their addition to the deal?"}
                       </span>
                       {dealBlocksInvitationEmails ? (
                         <span className="deals_add_inv_label_info">

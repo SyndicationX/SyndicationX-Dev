@@ -386,6 +386,19 @@ function sqlRoleIsLeadOrAdmin(columnSql: string): string {
   return SQL_ROLE_IS_LEAD_OR_ADMIN.replaceAll("%COL%", columnSql);
 }
 
+const SQL_ROLE_IS_LEAD = `(
+  lower(trim(%COL%)) IN ('lead sponsor', 'lead_sponsor')
+  OR (
+    position('lead' in lower(trim(%COL%))) > 0
+    AND position('sponsor' in lower(trim(%COL%))) > 0
+    AND position('admin' in lower(trim(%COL%))) = 0
+  )
+)`;
+
+function sqlRoleIsLead(columnSql: string): string {
+  return SQL_ROLE_IS_LEAD.replaceAll("%COL%", columnSql);
+}
+
 /**
  * Distinct deal ids where this user is Lead Sponsor or Admin sponsor
  * (`deal_member` or `deal_investment`, portal user id or contact email match).
@@ -413,6 +426,53 @@ export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
      FROM deal_investment di
      INNER JOIN users u ON u.id = $1::uuid
      WHERE ${sqlRoleIsLeadOrAdmin("di.investor_role")}
+       AND trim(di.contact_id) <> $2
+       AND (
+         trim(di.contact_id) = u.id::text
+         OR EXISTS (
+           SELECT 1 FROM contact c
+           WHERE c.id::text = trim(di.contact_id)
+             AND lower(trim(c.email)) = lower(trim(u.email))
+         )
+       )`,
+    [uid, DEAL_INVESTMENT_AUTOSAVE_CONTACT],
+  );
+  return [
+    ...new Set(
+      res.rows
+        .map((r) => String(r.deal_id ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/**
+ * Distinct deal ids where this user is Lead Sponsor
+ * (`deal_member` or `deal_investment`, portal user id or contact email match).
+ */
+export async function listDealIdsWhereViewerIsLeadSponsor(
+  userId: string,
+): Promise<string[]> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return [];
+  const res = await pool.query<{ deal_id: string }>(
+    `SELECT DISTINCT dm.deal_id::text AS deal_id
+     FROM deal_member dm
+     INNER JOIN users u ON u.id = $1::uuid
+     WHERE ${sqlRoleIsLead("dm.deal_member_role")}
+       AND (
+         trim(dm.contact_member_id) = u.id::text
+         OR EXISTS (
+           SELECT 1 FROM contact c
+           WHERE c.id::text = trim(both from dm.contact_member_id)
+             AND lower(trim(c.email)) = lower(trim(u.email))
+         )
+       )
+     UNION
+     SELECT DISTINCT di.deal_id::text AS deal_id
+     FROM deal_investment di
+     INNER JOIN users u ON u.id = $1::uuid
+     WHERE ${sqlRoleIsLead("di.investor_role")}
        AND trim(di.contact_id) <> $2
        AND (
          trim(di.contact_id) = u.id::text

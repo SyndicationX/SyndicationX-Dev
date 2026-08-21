@@ -42,6 +42,10 @@ import {
   isCloudinaryDeliveryUrl,
   uploadDealImageToCloudinary,
 } from "../company/cloudinaryCompanyBranding.service.js";
+import {
+  cancelDealSaasBillingBeforeDelete,
+  scheduleDealSaasBillingSync,
+} from "../billing/dealBilling.service.js";
 
 const UPLOAD_SUBDIR = DEAL_ASSETS_UPLOAD_SUBDIR;
 
@@ -414,7 +418,9 @@ export async function insertAddDealForm(
         .set({ offeringPreviewToken: token })
         .where(eq(addDealForm.id, created.id))
         .returning();
-      return withPreview ?? created;
+      const saved = withPreview ?? created;
+      scheduleDealSaasBillingSync(String(saved.id));
+      return saved;
     } catch (err) {
       lastErr = err;
       if (!isDealStageCheckError(err) || stage === candidates[candidates.length - 1]) {
@@ -581,6 +587,7 @@ export async function ensureDealOfferingPreviewTokenStored(
 export async function deleteAddDealFormById(id: string): Promise<boolean> {
   const trimmed = String(id ?? "").trim();
   if (!trimmed) return false;
+  await cancelDealSaasBillingBeforeDelete(trimmed);
   const removed = await db
     .delete(addDealForm)
     .where(eq(addDealForm.id, trimmed))
@@ -629,6 +636,7 @@ export async function updateDealArchivedById(
     .set({ archived })
     .where(eq(addDealForm.id, id))
     .returning();
+  if (updated) scheduleDealSaasBillingSync(String(updated.id));
   return updated;
 }
 
@@ -1021,6 +1029,9 @@ export async function updateDealOfferingOverviewById(
     })
     .where(eq(addDealForm.id, id))
     .returning();
+  if (updated && promotedDealStage !== undefined) {
+    scheduleDealSaasBillingSync(String(updated.id));
+  }
   return updated;
 }
 
@@ -1264,6 +1275,7 @@ export async function updateAddDealFormById(
         })
         .where(eq(addDealForm.id, id))
         .returning();
+      if (updated) scheduleDealSaasBillingSync(String(updated.id));
       return updated;
     } catch (err) {
       lastErr = err;

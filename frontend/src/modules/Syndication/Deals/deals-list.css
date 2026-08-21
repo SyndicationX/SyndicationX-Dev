@@ -1098,6 +1098,13 @@ a.deals_list_add_link.um_btn_primary {
   box-sizing: border-box;
 }
 
+.deals_list_table_panel .um_table thead th.deals_col_next_billing,
+.deals_list_table_panel .um_table tbody td.deals_col_next_billing {
+  min-width: 9.25rem;
+  width: 9.25rem;
+  box-sizing: border-box;
+}
+
 .deals_list_table_panel .um_table_members tbody td.um_td_numeric {
   font-variant-numeric: tabular-nums;
 }

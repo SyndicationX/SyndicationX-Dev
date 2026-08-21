@@ -513,7 +513,8 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
     if (
       billing === "success" ||
       billing === "cancel" ||
-      billing === "portal_return"
+      billing === "portal_return" ||
+      billing === "pay"
     ) {
       setCompanyPageTab("billing");
       return;
@@ -1213,6 +1214,10 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
             >
               <CompanyBillingTab
                 workspaceCompanyId={workspaceCompanyId || undefined}
+                focusDealId={
+                  new URLSearchParams(location.search).get("dealId")?.trim() ||
+                  undefined
+                }
               />
             </div>
 

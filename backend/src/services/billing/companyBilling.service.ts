@@ -67,6 +67,62 @@ export async function userCanManageCompanyBilling(
   return userHasAccessToOrganization(userId, cid);
 }
 
+export type CompanyBillingViewerScope = "all_deals" | "lead_sponsor";
+
+export type CompanyBillingAccess = {
+  canView: boolean;
+  canManage: boolean;
+  canPay: boolean;
+  viewerScope: CompanyBillingViewerScope;
+  /** `null` = every deal in the company; otherwise only these deal ids. */
+  dealIds: string[] | null;
+};
+
+const DENIED_BILLING_ACCESS: CompanyBillingAccess = {
+  canView: false,
+  canManage: false,
+  canPay: false,
+  viewerScope: "lead_sponsor",
+  dealIds: [],
+};
+
+/**
+ * Org / platform admins manage billing and see every deal.
+ * Lead sponsors may view billing only for deals they lead.
+ */
+export async function resolveCompanyBillingAccess(
+  userId: string,
+  userRole: string | undefined,
+  companyId: string,
+): Promise<CompanyBillingAccess> {
+  const cid = normalizeCompanyId(companyId);
+  if (!cid) return DENIED_BILLING_ACCESS;
+
+  const canManage = await userCanManageCompanyBilling(userId, userRole, cid);
+  if (canManage) {
+    return {
+      canView: true,
+      canManage: true,
+      canPay: true,
+      viewerScope: "all_deals",
+      dealIds: null,
+    };
+  }
+
+  const { listLeadSponsorDealIdsInCompany } = await import(
+    "./dealBilling.service.js"
+  );
+  const dealIds = await listLeadSponsorDealIdsInCompany(userId, cid);
+  if (dealIds.length === 0) return DENIED_BILLING_ACCESS;
+  return {
+    canView: true,
+    canManage: false,
+    canPay: true,
+    viewerScope: "lead_sponsor",
+    dealIds,
+  };
+}
+
 export type CompanyBillingStatus = {
   configured: boolean;
   testMode: boolean;
@@ -82,6 +138,11 @@ export type CompanyBillingStatus = {
   lastPaymentError: string | null;
   lastPaymentFailedAt: string | null;
   paymentHealthy: boolean;
+  /** Active per-deal SaaS subscriptions (capital raising / asset managing). */
+  billedDealCount: number;
+  canManage: boolean;
+  canPay: boolean;
+  viewerScope: CompanyBillingViewerScope;
   plansConfigured: Array<{
     id: StripeBillingPlanId;
     monthlyReady: boolean;
@@ -100,6 +161,12 @@ export type CompanyBillingStatus = {
 
 export async function getCompanyBillingStatus(
   companyId: string,
+  options?: {
+    dealIds?: string[] | null;
+    canManage?: boolean;
+    canPay?: boolean;
+    viewerScope?: CompanyBillingViewerScope;
+  },
 ): Promise<CompanyBillingStatus | null> {
   const cid = normalizeCompanyId(companyId);
   if (!cid) return null;
@@ -149,7 +216,7 @@ export async function getCompanyBillingStatus(
     subscriptionStatus !== "unpaid" &&
     subscriptionStatus !== "incomplete";
 
-  return {
+  const status: CompanyBillingStatus = {
     configured: Boolean(cfg),
     testMode: cfg?.testMode ?? false,
     webhookConfigured: Boolean(cfg?.webhookSecret),
@@ -168,8 +235,39 @@ export async function getCompanyBillingStatus(
       ? row.stripeLastPaymentFailedAt.toISOString()
       : null,
     paymentHealthy,
+    billedDealCount: 0,
+    canManage: options?.canManage ?? true,
+    canPay: options?.canPay ?? options?.canManage ?? true,
+    viewerScope: options?.viewerScope ?? "all_deals",
     plansConfigured: publicPlans,
   };
+
+  try {
+    const { countBilledDealsForCompany } = await import(
+      "./dealBilling.service.js"
+    );
+    const scopedDealIds = options?.dealIds;
+    const dealBilling = await countBilledDealsForCompany(
+      row.id,
+      scopedDealIds,
+    );
+    status.billedDealCount = dealBilling.billedDealCount;
+    if (Array.isArray(scopedDealIds)) {
+      status.currentPeriodEnd = dealBilling.nextDealBillingDate;
+      status.hasSubscription = dealBilling.billedDealCount > 0;
+    } else {
+      if (dealBilling.nextDealBillingDate) {
+        status.currentPeriodEnd = dealBilling.nextDealBillingDate;
+      }
+      if (dealBilling.billedDealCount > 0) {
+        status.hasSubscription = true;
+      }
+    }
+  } catch (err) {
+    console.warn("getCompanyBillingStatus deal billing:", err);
+  }
+
+  return status;
 }
 
 async function ensureStripeCustomer(params: {
@@ -237,6 +335,10 @@ export async function createCompanyCheckoutSession(params: {
   planId: string;
   seatBand?: string;
   billingCycle: string;
+  /** Required: each billable deal has its own SaaS subscription paid by the lead sponsor. */
+  dealId?: string;
+  /** `null` = org admin (all deals); otherwise only these deal ids. */
+  allowedDealIds?: string[] | null;
 }): Promise<CheckoutResult> {
   const cfg = getStripeConfig();
   if (!cfg) {
@@ -326,24 +428,30 @@ export async function createCompanyCheckoutSession(params: {
       return { ok: false, status: 404, message: "Company not found" };
     }
 
-    const existingStatus = String(company.stripeSubscriptionStatus ?? "none");
-    const blockingStatuses = new Set([
-      "active",
-      "trialing",
-      "past_due",
-      "unpaid",
-    ]);
-    if (
-      company.stripeSubscriptionId?.trim() &&
-      blockingStatuses.has(existingStatus)
-    ) {
+    const dealId = String(params.dealId ?? "").trim();
+    if (!dealId) {
       return {
         ok: false,
-        status: 409,
-        message:
-          "This company already has a subscription. Use Manage billing to update payment method or plan.",
+        status: 400,
+        message: "Select a deal to pay monthly SaaS billing for.",
       };
     }
+    const { loadPayableDeal, dealSaasStripeTrialEndUnix } = await import(
+      "./dealBilling.service.js"
+    );
+    const payable = await loadPayableDeal({
+      companyId: cid,
+      dealId,
+      allowedDealIds: params.allowedDealIds ?? null,
+    });
+    if (!payable.ok) {
+      return {
+        ok: false,
+        status: payable.status,
+        message: payable.message,
+      };
+    }
+    const deal = payable.deal;
 
     const customerId = await ensureStripeCustomer({
       companyId: cid,
@@ -351,22 +459,26 @@ export async function createCompanyCheckoutSession(params: {
     });
     const stripe = getStripeClient();
 
-    // Clear a prior incomplete Payment Element attempt so Checkout can proceed.
-    if (
-      company.stripeSubscriptionId?.trim() &&
-      existingStatus === "incomplete"
-    ) {
+    const existingDealSub = deal.stripeSubscriptionId?.trim() ?? "";
+    const dealSubStatus = String(deal.stripeSubscriptionStatus ?? "none");
+    if (existingDealSub && dealSubStatus === "incomplete") {
       try {
-        await stripe.subscriptions.cancel(company.stripeSubscriptionId.trim());
+        await stripe.subscriptions.cancel(existingDealSub);
       } catch (cancelErr) {
         console.warn(
-          "createCompanyCheckoutSession: cancel incomplete sub:",
+          "createCompanyCheckoutSession: cancel incomplete deal sub:",
           cancelErr,
         );
       }
-      await clearCompanySubscription(cid, { keepCustomer: true });
+      const { clearDealSaasSubscription } = await import(
+        "./dealBilling.service.js"
+      );
+      await clearDealSaasSubscription(String(deal.id));
     }
 
+    const trialEnd = dealSaasStripeTrialEndUnix({
+      saasBillingStartsAt: deal.saasBillingStartsAt,
+    });
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
@@ -378,16 +490,25 @@ export async function createCompanyCheckoutSession(params: {
       client_reference_id: cid,
       metadata: {
         companyId: cid,
+        dealId: String(deal.id),
+        dealName: deal.dealName ?? "",
         planId: resolvedPlan,
         billingCycle: cycle,
         seatBand: resolvedSeat,
+        billingScope: "deal",
+        payerUserId: params.actorUserId,
       },
       subscription_data: {
+        ...(trialEnd ? { trial_end: trialEnd } : {}),
         metadata: {
           companyId: cid,
+          dealId: String(deal.id),
+          dealName: deal.dealName ?? "",
           planId: resolvedPlan,
           billingCycle: cycle,
           seatBand: resolvedSeat,
+          billingScope: "deal",
+          payerUserId: params.actorUserId,
         },
       },
       payment_method_options: {
@@ -605,6 +726,8 @@ export async function createCompanySubscriptionPaymentElement(params: {
   planId: string;
   seatBand?: string;
   billingCycle: string;
+  dealId?: string;
+  allowedDealIds?: string[] | null;
 }): Promise<PaymentElementSubscriptionResult> {
   const cfg = getStripeConfig();
   if (!cfg) {
@@ -626,8 +749,7 @@ export async function createCompanySubscriptionPaymentElement(params: {
   try {
     const [company] = await db
       .select({
-        stripeSubscriptionId: companies.stripeSubscriptionId,
-        stripeSubscriptionStatus: companies.stripeSubscriptionStatus,
+        id: companies.id,
       })
       .from(companies)
       .where(eq(companies.id, cid))
@@ -636,46 +758,54 @@ export async function createCompanySubscriptionPaymentElement(params: {
       return { ok: false, status: 404, message: "Company not found" };
     }
 
-    const existingStatus = String(company.stripeSubscriptionStatus ?? "none");
-    const blockingStatuses = new Set([
-      "active",
-      "trialing",
-      "past_due",
-      "unpaid",
-    ]);
-    if (
-      company.stripeSubscriptionId?.trim() &&
-      blockingStatuses.has(existingStatus)
-    ) {
+    const dealId = String(params.dealId ?? "").trim();
+    if (!dealId) {
       return {
         ok: false,
-        status: 409,
-        message:
-          "This company already has a subscription. Use Manage billing to update payment method or plan.",
+        status: 400,
+        message: "Select a deal to pay monthly SaaS billing for.",
       };
     }
-
+    const { loadPayableDeal, clearDealSaasSubscription, dealSaasStripeTrialEndUnix } =
+      await import("./dealBilling.service.js");
+    const payable = await loadPayableDeal({
+      companyId: cid,
+      dealId,
+      allowedDealIds: params.allowedDealIds ?? null,
+    });
+    if (!payable.ok) {
+      return {
+        ok: false,
+        status: payable.status,
+        message: payable.message,
+      };
+    }
+    const deal = payable.deal;
     const stripe = getStripeClient();
 
-    // Replace a prior incomplete subscription so the customer can retry cleanly.
+    const existingDealSub = deal.stripeSubscriptionId?.trim() ?? "";
     if (
-      company.stripeSubscriptionId?.trim() &&
-      existingStatus === "incomplete"
+      existingDealSub &&
+      String(deal.stripeSubscriptionStatus ?? "none") === "incomplete"
     ) {
       try {
-        await stripe.subscriptions.cancel(company.stripeSubscriptionId.trim());
+        await stripe.subscriptions.cancel(existingDealSub);
       } catch (cancelErr) {
         console.warn(
-          "createCompanySubscriptionPaymentElement: cancel incomplete sub:",
+          "createCompanySubscriptionPaymentElement: cancel incomplete deal sub:",
           cancelErr,
         );
       }
-      await clearCompanySubscription(cid, { keepCustomer: true });
+      await clearDealSaasSubscription(String(deal.id));
     }
 
     const customerId = await ensureStripeCustomer({
       companyId: cid,
       actorUserId: params.actorUserId,
+    });
+
+    const trialEnd = dealSaasStripeTrialEndUnix({
+      saasBillingStartsAt: deal.saasBillingStartsAt,
     });
 
     const subscription = await stripe.subscriptions.create({
@@ -690,12 +820,17 @@ export async function createCompanySubscriptionPaymentElement(params: {
         "latest_invoice.confirmation_secret",
         "latest_invoice.payment_intent",
       ],
+      ...(trialEnd ? { trial_end: trialEnd } : {}),
       metadata: {
         companyId: cid,
+        dealId: String(deal.id),
+        dealName: deal.dealName ?? "",
         planId: selection.planId,
         billingCycle: selection.cycle,
         seatBand: selection.seatBand,
         checkoutMode: "payment_element",
+        billingScope: "deal",
+        payerUserId: params.actorUserId,
       },
     });
 
@@ -897,6 +1032,7 @@ export async function syncCompanySubscriptionPayment(params: {
     }
 
     await applySubscriptionToCompany(cid, sub);
+    await syncDealSubscriptionsAfterCompanyPayment(cid);
     const customerId =
       typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null;
     try {
@@ -992,6 +1128,8 @@ export type BillingInvoiceRow = {
   invoicePdf: string | null;
   paymentFailureMessage: string | null;
   paymentFailedAt: string | null;
+  dealId: string | null;
+  dealName: string | null;
 };
 
 function formatMoneyCents(cents: number, currency: string): string {
@@ -1172,6 +1310,7 @@ export async function upsertBillingInvoiceFromStripe(params: {
 
 export async function listCompanyStripeInvoices(
   companyId: string,
+  options?: { dealIds?: string[] | null },
 ): Promise<
   | { ok: true; invoices: BillingInvoiceRow[] }
   | { ok: false; status: number; message: string }
@@ -1220,23 +1359,42 @@ export async function listCompanyStripeInvoices(
     .orderBy(desc(companyBillingInvoices.invoiceDate))
     .limit(50);
 
-  const invoices: BillingInvoiceRow[] = rows.map((row) => ({
-    id: row.stripeInvoiceId,
-    invoiceNumber: row.invoiceNumber || row.stripeInvoiceId,
-    invoiceDate: isoDateOnly(row.invoiceDate),
-    dueDate: isoDateOnly(row.dueDate) || isoDateOnly(row.invoiceDate),
-    status: row.status,
-    amount: formatMoneyCents(
-      row.status === "paid" ? row.amountPaidCents || row.amountDueCents : row.amountDueCents,
-      row.currency,
-    ),
-    hostedInvoiceUrl: row.hostedInvoiceUrl,
-    invoicePdf: row.invoicePdf,
-    paymentFailureMessage: row.paymentFailureMessage,
-    paymentFailedAt: row.paymentFailedAt
-      ? row.paymentFailedAt.toISOString()
-      : null,
-  }));
+  const { mapStripeSubscriptionsToDeals } = await import(
+    "./dealBilling.service.js"
+  );
+  const dealBySub = await mapStripeSubscriptionsToDeals(
+    cid,
+    options?.dealIds ?? null,
+  );
+  const scoped = Array.isArray(options?.dealIds);
+
+  const invoices: BillingInvoiceRow[] = [];
+  for (const row of rows) {
+    const sub = row.stripeSubscriptionId?.trim() ?? "";
+    const deal = sub ? dealBySub.get(sub) : undefined;
+    if (scoped && !deal) continue;
+    invoices.push({
+      id: row.stripeInvoiceId,
+      invoiceNumber: row.invoiceNumber || row.stripeInvoiceId,
+      invoiceDate: isoDateOnly(row.invoiceDate),
+      dueDate: isoDateOnly(row.dueDate) || isoDateOnly(row.invoiceDate),
+      status: row.status,
+      amount: formatMoneyCents(
+        row.status === "paid"
+          ? row.amountPaidCents || row.amountDueCents
+          : row.amountDueCents,
+        row.currency,
+      ),
+      hostedInvoiceUrl: row.hostedInvoiceUrl,
+      invoicePdf: row.invoicePdf,
+      paymentFailureMessage: row.paymentFailureMessage,
+      paymentFailedAt: row.paymentFailedAt
+        ? row.paymentFailedAt.toISOString()
+        : null,
+      dealId: deal?.dealId ?? null,
+      dealName: deal?.dealName?.trim() ? deal.dealName : null,
+    });
+  }
 
   return { ok: true, invoices };
 }
@@ -1267,6 +1425,19 @@ function subscriptionIdFromInvoice(inv: Stripe.Invoice): string | null {
   return typeof legacy === "string" ? legacy : legacy.id ?? null;
 }
 
+async function syncDealSubscriptionsAfterCompanyPayment(
+  companyId: string,
+): Promise<void> {
+  try {
+    const { syncCompanyDealSaasSubscriptions } = await import(
+      "./dealBilling.service.js"
+    );
+    await syncCompanyDealSaasSubscriptions(companyId);
+  } catch (err) {
+    console.warn("syncDealSubscriptionsAfterCompanyPayment:", err);
+  }
+}
+
 export async function applySubscriptionToCompany(
   companyId: string,
   sub: Stripe.Subscription,
@@ -1295,16 +1466,32 @@ export async function applySubscriptionToCompany(
   const clearFailure =
     status === "active" || status === "trialing" || status === "canceled";
 
+  const dealIdRaw = String(sub.metadata?.dealId ?? "").trim();
+  const isDealScoped = Boolean(dealIdRaw);
+
+  const [existing] = await db
+    .select({ stripeSubscriptionId: companies.stripeSubscriptionId })
+    .from(companies)
+    .where(eq(companies.id, cid))
+    .limit(1);
+  const existingSub = existing?.stripeSubscriptionId?.trim() ?? "";
+  const writeCompanySub =
+    !existingSub || existingSub === sub.id || !isDealScoped;
+
   await db
     .update(companies)
     .set({
       stripeCustomerId: customerId,
-      stripeSubscriptionId: sub.id,
-      stripePlanId: planId,
-      stripeBillingCycle: cycle,
-      stripeSubscriptionStatus: status || "none",
-      stripePriceId: priceId,
-      stripeCurrentPeriodEnd: periodEndFromSubscription(sub),
+      ...(writeCompanySub
+        ? {
+            stripeSubscriptionId: sub.id,
+            stripePlanId: planId,
+            stripeBillingCycle: cycle,
+            stripeSubscriptionStatus: status || "none",
+            stripePriceId: priceId,
+            stripeCurrentPeriodEnd: periodEndFromSubscription(sub),
+          }
+        : {}),
       ...(clearFailure
         ? {
             stripeLastPaymentError: null,
@@ -1314,6 +1501,16 @@ export async function applySubscriptionToCompany(
       updatedAt: new Date(),
     })
     .where(eq(companies.id, cid));
+
+  try {
+    const dealBilling = await import("./dealBilling.service.js");
+    if (dealIdRaw) {
+      await dealBilling.applyStripeSubscriptionToDeal(dealIdRaw, sub);
+    }
+    await dealBilling.refreshCompanyBillingFromDeals(cid);
+  } catch (err) {
+    console.warn("applySubscriptionToCompany deal billing:", err);
+  }
 }
 
 export async function clearCompanySubscription(
@@ -1462,6 +1659,7 @@ export async function syncCompanyBillingFromCheckoutSession(params: {
         ? await stripe.subscriptions.retrieve(subId)
         : (subRef as Stripe.Subscription);
     await applySubscriptionToCompany(cid, sub);
+    await syncDealSubscriptionsAfterCompanyPayment(cid);
 
     const customerId =
       typeof session.customer === "string"
@@ -1549,7 +1747,16 @@ async function findCompanyIdForSubscription(
     .from(companies)
     .where(eq(companies.stripeSubscriptionId, id))
     .limit(1);
-  return row?.id ?? null;
+  if (row?.id) return row.id;
+  try {
+    const { findCompanyIdForDealSubscription } = await import(
+      "./dealBilling.service.js"
+    );
+    return findCompanyIdForDealSubscription(id);
+  } catch (err) {
+    console.warn("findCompanyIdForSubscription deal lookup:", err);
+    return null;
+  }
 }
 
 export type CompanyBillingPaymentMethodDto = {
@@ -1970,6 +2177,7 @@ async function processStripeWebhookEvent(event: Stripe.Event): Promise<void> {
           );
         }
       }
+      await syncDealSubscriptionsAfterCompanyPayment(companyId);
       return;
     }
     case "customer.subscription.created":
@@ -2001,7 +2209,34 @@ async function processStripeWebhookEvent(event: Stripe.Event): Promise<void> {
         (await findCompanyIdForSubscription(sub.id)) ||
         (customerId ? await findCompanyIdForStripeCustomer(customerId) : null);
       if (!companyId) return;
-      await clearCompanySubscription(companyId, { keepCustomer: true });
+      try {
+        const dealBilling = await import("./dealBilling.service.js");
+        const dealId =
+          String(sub.metadata?.dealId ?? "").trim() ||
+          (await dealBilling.findDealIdForStripeSubscription(sub.id));
+        if (dealId) {
+          await dealBilling.clearDealSaasSubscription(dealId);
+        }
+        await dealBilling.refreshCompanyBillingFromDeals(companyId);
+      } catch (err) {
+        console.warn("[stripe webhook] deal subscription deleted:", err);
+      }
+      const [company] = await db
+        .select({ stripeSubscriptionId: companies.stripeSubscriptionId })
+        .from(companies)
+        .where(eq(companies.id, companyId))
+        .limit(1);
+      if (company?.stripeSubscriptionId?.trim() === sub.id) {
+        await clearCompanySubscription(companyId, { keepCustomer: true });
+        try {
+          const { refreshCompanyBillingFromDeals } = await import(
+            "./dealBilling.service.js"
+          );
+          await refreshCompanyBillingFromDeals(companyId);
+        } catch {
+          /* already logged */
+        }
+      }
       return;
     }
     case "invoice.paid": {

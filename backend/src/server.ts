@@ -543,6 +543,21 @@ async function ensureDealFormArchivedColumn(): Promise<void> {
 
 
 
+async function ensureDealSaasBillingColumns(): Promise<void> {
+  await pool.query(`
+    ALTER TABLE add_deal_form
+      ADD COLUMN IF NOT EXISTS stripe_subscription_id varchar(255),
+      ADD COLUMN IF NOT EXISTS stripe_plan_id varchar(64),
+      ADD COLUMN IF NOT EXISTS stripe_billing_cycle varchar(32),
+      ADD COLUMN IF NOT EXISTS stripe_subscription_status varchar(64) NOT NULL DEFAULT 'none',
+      ADD COLUMN IF NOT EXISTS stripe_price_id varchar(255),
+      ADD COLUMN IF NOT EXISTS stripe_current_period_end timestamp with time zone,
+      ADD COLUMN IF NOT EXISTS saas_billing_starts_at timestamp with time zone
+  `);
+}
+
+
+
 async function runMigrations(): Promise<void> {
 
   const migrationsFolder = path.resolve(__dirname, "..", "migrations");
@@ -554,6 +569,8 @@ async function runMigrations(): Promise<void> {
   await ensureDealInvestmentInvestNowColumns();
 
   await ensureDealFormArchivedColumn();
+
+  await ensureDealSaasBillingColumns();
 
   console.log("Database migrations applied.");
 

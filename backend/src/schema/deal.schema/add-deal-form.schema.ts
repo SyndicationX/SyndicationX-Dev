@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 import { companies } from "../company.schema/company.js";
 
@@ -119,6 +120,29 @@ export const addDealForm = pgTable("add_deal_form", {
     "stripe_distribution_funding_updated_at",
     { withTimezone: true },
   ),
+  /**
+   * Per-deal SaaS subscription (company still owns the Stripe Customer).
+   * Draft / archived / liquidated deals are not billed.
+   */
+  stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
+  stripePlanId: varchar("stripe_plan_id", { length: 64 }),
+  stripeBillingCycle: varchar("stripe_billing_cycle", { length: 32 }),
+  stripeSubscriptionStatus: varchar("stripe_subscription_status", {
+    length: 64,
+  })
+    .notNull()
+    .default("none"),
+  stripePriceId: varchar("stripe_price_id", { length: 255 }),
+  stripeCurrentPeriodEnd: timestamp("stripe_current_period_end", {
+    withTimezone: true,
+  }),
+  /**
+   * First charge / paywall date. Set once to 00:00 UTC on the 1st of next
+   * month so the current calendar month stays fully accessible.
+   */
+  saasBillingStartsAt: timestamp("saas_billing_starts_at", {
+    withTimezone: true,
+  }),
 });
 
 export type AddDealFormRow = typeof addDealForm.$inferSelect;

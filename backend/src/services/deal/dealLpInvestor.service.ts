@@ -31,7 +31,9 @@ import {
   resolveInvestorClassForDealInvestment,
   resolveUserInvestorProfileNamesByIds,
   resolveUsersByContactIds,
+  rowIsGeneralPartnerForRoster,
 } from "./dealInvestment.service.js";
+import { listInvestorClassesByDealId } from "./dealInvestorClass.service.js";
 import type { DealViewerScope } from "./dealForm.service.js";
 import { resolveViewerDealMemberRoleOnDeal } from "./dealMemberScope.service.js";
 import { resolveInvestNowViewerContactOnDeal } from "./dealInvestNowViewerContact.service.js";
@@ -277,6 +279,7 @@ function isDealMembersSponsorRole(raw: string | null | undefined): boolean {
 /**
  * Investors tab: each LP commitment, plus Lead/Admin/Co only when they are also
  * investors (on the LP roster or have a positive commitment).
+ * General partners (GP role or GP class) are listed on Deal Members → General Partners.
  */
 export async function listMergedLpInvestorsForDeal(
   dealId: string,
@@ -328,6 +331,8 @@ export async function listMergedLpInvestorsForDeal(
       rosterByCanonical.set(c, m);
   }
 
+  const classes = await listInvestorClassesByDealId(dealId);
+
   const rows: DealInvestmentRow[] = [];
   const coveredCanonical = new Set<string>();
 
@@ -335,6 +340,9 @@ export async function listMergedLpInvestorsForDeal(
     const k = normalizeContactKey(inv.contactId ?? "");
     const canonical = k ? canonicalOf(k) : "";
     const role = inv.investor_role ?? "";
+    if (rowIsGeneralPartnerForRoster(role, inv.investorClass, classes)) {
+      continue;
+    }
     const onLpRoster = Boolean(canonical && rosterByCanonical.has(canonical));
     const lpRole = isLpInvestorRole(role);
     const sponsorRole = isDealMembersSponsorRole(role);
@@ -352,6 +360,9 @@ export async function listMergedLpInvestorsForDeal(
 
   for (const [canonical, m] of rosterByCanonical) {
     if (coveredCanonical.has(canonical)) continue;
+    if (rowIsGeneralPartnerForRoster(m.role, m.investorClass, classes)) {
+      continue;
+    }
     rows.push(syntheticInvestmentFromDealLpInvestor(m));
     coveredCanonical.add(canonical);
   }

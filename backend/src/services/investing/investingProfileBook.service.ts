@@ -2,6 +2,9 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../database/db.js";
 import { parseUsPhoneToE164 } from "../../utils/usPhone.js";
 import {
+  dealInvestment,
+  dealLpInvestor,
+  investorDistributionPayouts,
   userBeneficiaries,
   userInvestorProfiles,
   userSavedAddresses,
@@ -62,6 +65,15 @@ export class InvestorProfileDuplicateError extends Error {
   constructor() {
     super("A profile with this name and type already exists.");
     this.name = "InvestorProfileDuplicateError";
+  }
+}
+
+export class InvestorProfileInUseError extends Error {
+  constructor() {
+    super(
+      "This profile is used on investments or payouts. Archive it instead of deleting.",
+    );
+    this.name = "InvestorProfileInUseError";
   }
 }
 
@@ -392,6 +404,49 @@ export async function setInvestorProfileArchived(
     .returning();
   if (!row) return null;
   return mapProfileRow(row);
+}
+
+export async function deleteInvestorProfileForUser(
+  userId: string,
+  profileId: string,
+): Promise<boolean> {
+  const [owned] = await db
+    .select({ id: userInvestorProfiles.id })
+    .from(userInvestorProfiles)
+    .where(
+      and(eq(userInvestorProfiles.id, profileId), eq(userInvestorProfiles.userId, userId)),
+    )
+    .limit(1);
+  if (!owned) return false;
+
+  const [payout] = await db
+    .select({ id: investorDistributionPayouts.id })
+    .from(investorDistributionPayouts)
+    .where(eq(investorDistributionPayouts.userInvestorProfileId, profileId))
+    .limit(1);
+  if (payout) throw new InvestorProfileInUseError();
+
+  const [investment] = await db
+    .select({ id: dealInvestment.id })
+    .from(dealInvestment)
+    .where(eq(dealInvestment.userInvestorProfileId, profileId))
+    .limit(1);
+  if (investment) throw new InvestorProfileInUseError();
+
+  const [lp] = await db
+    .select({ id: dealLpInvestor.id })
+    .from(dealLpInvestor)
+    .where(eq(dealLpInvestor.userInvestorProfileId, profileId))
+    .limit(1);
+  if (lp) throw new InvestorProfileInUseError();
+
+  const deleted = await db
+    .delete(userInvestorProfiles)
+    .where(
+      and(eq(userInvestorProfiles.id, profileId), eq(userInvestorProfiles.userId, userId)),
+    )
+    .returning({ id: userInvestorProfiles.id });
+  return deleted.length > 0;
 }
 
 export async function createBeneficiaryForUser(

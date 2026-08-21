@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  deleteMyProfileBookProfile,
   getMyProfileBook,
   patchMyProfileBookAddress,
   patchMyProfileBookBeneficiary,
@@ -19,6 +20,10 @@ router.post("/investing/my-profile-book/profiles", postMyProfileBookProfile);
 router.patch(
   "/investing/my-profile-book/profiles/:id",
   patchMyProfileBookProfile,
+);
+router.delete(
+  "/investing/my-profile-book/profiles/:id",
+  deleteMyProfileBookProfile,
 );
 router.put("/investing/my-profile-book/profiles/:id", putMyProfileBookProfile);
 router.post("/investing/my-profile-book/beneficiaries", postMyProfileBookBeneficiary);

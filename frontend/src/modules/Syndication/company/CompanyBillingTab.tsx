@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BadgeDollarSign,
+  Briefcase,
   Calendar,
   Check,
   CreditCard,
@@ -18,6 +19,7 @@ import {
 } from "../../../common/components/data-table/DataTable";
 import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip";
 import {
+  fetchCompanyBillingDeals,
   fetchCompanyBillingInvoices,
   fetchCompanyBillingPaymentMethods,
   fetchCompanyBillingStatus,
@@ -31,10 +33,14 @@ import {
   type CompanyBillingInvoice,
   type CompanyBillingPaymentMethod,
   type CompanyBillingStatus,
+  type CompanyDealBillingRow,
 } from "./companyBillingApi";
 import { BillingPaymentElementModal } from "./BillingPaymentElementModal";
+import { isCompanyAdmin, isPlatformAdmin } from "../../../common/auth/roleUtils";
+import { dealStageLabel } from "../dealsDashboardUtils";
+import { formatDealListDateDisplay } from "../Deals/dealsListDisplay";
 
-type BillingSubTab = "pricing" | "payment-methods" | "payment-history";
+type BillingSubTab = "pricing" | "deals" | "payment-methods" | "payment-history";
 type InvoiceRow = CompanyBillingInvoice;
 type SeatBand = "5" | "10" | "10plus";
 
@@ -169,6 +175,50 @@ function invoiceStatusClassName(status: string): string {
   return "cp_billing_invoice_status";
 }
 
+function billingPlanLabel(planId: string | null | undefined): string {
+  const id = String(planId ?? "").trim().toLowerCase();
+  if (!id) return "—";
+  const tier = DEAL_TIERS.find((t) => t.id === id);
+  if (tier) return tier.name;
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+function billingCycleLabel(cycle: string | null | undefined): string {
+  const c = String(cycle ?? "").trim().toLowerCase();
+  if (c === "annual" || c === "annually" || c === "yearly") return "Annual";
+  if (c === "monthly") return "Monthly";
+  return c ? c.charAt(0).toUpperCase() + c.slice(1) : "—";
+}
+
+function dealBillingStatusLabel(row: CompanyDealBillingRow): string {
+  if (row.billed) {
+    const s = row.subscriptionStatus.trim();
+    return s ? s.replace(/_/g, " ") : "Active";
+  }
+  const stage = (row.dealStage ?? "").trim().toLowerCase();
+  const notBilled =
+    row.archived || stage === "draft" || stage === "liquidated";
+  if (notBilled) return "Not billed";
+  if (row.nextBillingDate && Date.parse(row.nextBillingDate) > Date.now()) {
+    return "This month free";
+  }
+  return "Pending";
+}
+
+function dealBillingStatusClassName(row: CompanyDealBillingRow): string {
+  if (row.billed) {
+    const s = row.subscriptionStatus.trim().toLowerCase();
+    if (s === "past_due" || s === "unpaid" || s === "incomplete") {
+      return invoiceStatusClassName("overdue");
+    }
+    return invoiceStatusClassName("paid");
+  }
+  const label = dealBillingStatusLabel(row);
+  return label === "Pending" || label === "This month free"
+    ? invoiceStatusClassName("open")
+    : invoiceStatusClassName("void");
+}
+
 function invoiceMatchesFilters(
   row: InvoiceRow,
   status: string,
@@ -206,17 +256,51 @@ function BillingPricingPanel({
   companyId,
   billingStatus,
   onStatusRefresh,
+  initialDealId,
 }: {
   billingCycle: "monthly" | "annually";
   onBillingCycleChange: (cycle: "monthly" | "annually") => void;
   companyId: string;
   billingStatus: CompanyBillingStatus | null;
   onStatusRefresh: () => void;
+  initialDealId?: string;
 }) {
   const [seatBand, setSeatBand] = useState<SeatBand>("5");
   const [busyPlanId, setBusyPlanId] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [payableDeals, setPayableDeals] = useState<CompanyDealBillingRow[]>([]);
+  const [selectedDealId, setSelectedDealId] = useState(initialDealId ?? "");
+
+  useEffect(() => {
+    if (!companyId) {
+      setPayableDeals([]);
+      setSelectedDealId("");
+      return;
+    }
+    let cancelled = false;
+    void fetchCompanyBillingDeals(companyId).then((result) => {
+      if (cancelled || !result.ok) return;
+      const payable = result.deals.filter(
+        (row) => row.billable === true && !row.billed,
+      );
+      setPayableDeals(payable);
+      const preferred = (initialDealId ?? "").trim();
+      setSelectedDealId((current) => {
+        if (preferred && payable.some((row) => row.id === preferred)) {
+          return preferred;
+        }
+        if (current && payable.some((row) => row.id === current)) return current;
+        return payable[0]?.id ?? "";
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, billingStatus?.billedDealCount, initialDealId]);
+
+  const selectedDeal = payableDeals.find((row) => row.id === selectedDealId);
+  const canManageBilling = billingStatus?.canManage === true;
 
   const activePlanId = billingStatus?.planId?.trim().toLowerCase() ?? "";
   const subStatus =
@@ -250,6 +334,12 @@ function BillingPricingPanel({
       setActionError("No company workspace selected.");
       return;
     }
+    if (!selectedDealId) {
+      setActionError(
+        "Select a deal to pay monthly SaaS for. Billing starts when the deal is raising capital or asset managing.",
+      );
+      return;
+    }
     if (!billingStatus?.configured) {
       setActionError(
         "Stripe is not configured. Set STRIPE_SECRET_KEY in backend/.env.local.",
@@ -275,6 +365,7 @@ function BillingPricingPanel({
       id,
       billingCycle,
       seatBand,
+      selectedDealId,
     );
     setBusyPlanId(null);
     if (!result.ok) {
@@ -305,9 +396,11 @@ function BillingPricingPanel({
       <div className="cp_billing_header">
         <h3 className="cp_settings_billing_tab_title">Billing</h3>
         <p className="cp_billing_subtitle">
-          Pricing by deal size and company users. No charge for draft or
-          archived deals — billing starts when you begin raising capital /
-          asset managing. Pay with card or ACH (US bank account) via Stripe Checkout.
+          Lead sponsors pay monthly SaaS (MRR) for each deal they lead. This
+          month they have full access to every deal. Billing starts on the 1st
+          of next month — after that, view and edit stay locked until they
+          upgrade the plan. No charge for draft, archived, or liquidated deals.
+          Pay with card or ACH (US bank account) via Stripe Checkout.
         </p>
       </div>
 
@@ -368,6 +461,7 @@ function BillingPricingPanel({
             )}
           </p>
           {isPaid || billingStatus.hasCustomer || hasPaymentIssue ? (
+            canManageBilling ? (
             <button
               type="button"
               className="um_btn_secondary"
@@ -378,6 +472,7 @@ function BillingPricingPanel({
               <ExternalLink size={14} aria-hidden />
               {portalBusy ? "Opening…" : "Manage billing"}
             </button>
+            ) : null
           ) : null}
         </div>
       ) : null}
@@ -393,6 +488,34 @@ function BillingPricingPanel({
       ) : null}
 
       <div className="cp_billing_filters">
+        <div className="cp_billing_filter_row">
+          <span className="cp_billing_filter_heading" id="cp-billing-deal-label">
+            Deal to pay
+          </span>
+          {payableDeals.length > 0 ? (
+            <select
+              id="cp-billing-deal-select"
+              className="cp_billing_filter_input cp_billing_status_select"
+              value={selectedDealId}
+              onChange={(e) => setSelectedDealId(e.target.value)}
+              aria-labelledby="cp-billing-deal-label"
+            >
+              {payableDeals.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.dealName.trim() || "Untitled deal"}
+                  {row.suggestedPlanId
+                    ? ` · ${billingPlanLabel(row.suggestedPlanId)}`
+                    : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="cp_billing_filter_hint" style={{ margin: 0 }}>
+              No billable deals are waiting for payment. Move a deal to capital
+              raising or asset managing, then pay its monthly SaaS here.
+            </p>
+          )}
+        </div>
         <div className="cp_billing_filter_row">
           <span className="cp_billing_filter_heading" id="cp-billing-cycle-label">
             Billing cycle
@@ -478,9 +601,13 @@ function BillingPricingPanel({
             billingCycle === "monthly" ? priceRow.monthly : priceRow.annual;
           const priceSuffix = billingCycle === "monthly" ? "/mo" : "/yr";
           const id = planKey(tier.id);
+          const selectedPlan =
+            selectedDeal?.suggestedPlanId?.trim().toLowerCase() ?? "";
+          const isSuggested = selectedPlan === tier.id;
           const isCurrent =
-            isPaid &&
-            (activePlanId === id || activePlanId.startsWith(`${id}_`));
+            Boolean(selectedDeal?.billed) &&
+            (selectedDeal?.planId?.trim().toLowerCase() === id ||
+              (selectedDeal?.planId ?? "").toLowerCase().startsWith(`${id}_`));
           const ctaBusy = busyPlanId === id;
           const disabledCard = !tier.enabled;
           return (
@@ -496,7 +623,9 @@ function BillingPricingPanel({
               }
               aria-disabled={disabledCard || undefined}
             >
-              {tier.featured ? (
+              {isSuggested ? (
+                <span className="cp_billing_plan_badge">For this deal</span>
+              ) : tier.featured ? (
                 <span className="cp_billing_plan_badge">Most popular</span>
               ) : (
                 <span className="cp_billing_plan_badge">Available now</span>
@@ -537,8 +666,8 @@ function BillingPricingPanel({
                     <Check size={16} aria-hidden="true" />
                     <span>
                       {billingCycle === "annually"
-                        ? "Yearly billing — 2 months free"
-                        : "Recurring monthly or annual billing"}
+                        ? "This month included · yearly billing — 2 months free"
+                        : "This month included · billed from next month"}
                     </span>
                   </li>
                 </ul>
@@ -571,7 +700,9 @@ function BillingPricingPanel({
                     ? "Current plan"
                     : ctaBusy
                       ? "Redirecting…"
-                      : `Choose ${tier.name}`}
+                      : selectedDeal
+                        ? `Pay ${tier.name}`
+                        : `Choose ${tier.name}`}
               </button>
             </div>
           );
@@ -775,6 +906,330 @@ function BillingPaymentMethodsPanel({
   );
 }
 
+function BillingDealDetailsPanel({
+  companyId,
+  viewerScope,
+  canPay,
+  billingCycle,
+  onPaid,
+}: {
+  companyId: string;
+  viewerScope: "all_deals" | "lead_sponsor" | undefined;
+  canPay: boolean;
+  billingCycle: "monthly" | "annually";
+  onPaid?: () => void;
+}) {
+  const [deals, setDeals] = useState<CompanyDealBillingRow[]>([]);
+  const [loadError, setLoadError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [query, setQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
+  const [resolvedScope, setResolvedScope] = useState<
+    "all_deals" | "lead_sponsor" | undefined
+  >(viewerScope);
+  const [payBusyId, setPayBusyId] = useState<string | null>(null);
+  const [payError, setPayError] = useState("");
+
+  useEffect(() => {
+    if (!companyId) {
+      setDeals([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+    void fetchCompanyBillingDeals(companyId).then((result) => {
+      if (cancelled) return;
+      setLoading(false);
+      if (!result.ok) {
+        setLoadError(result.message);
+        setDeals([]);
+        return;
+      }
+      setDeals(result.deals);
+      setResolvedScope(result.viewerScope);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId]);
+
+  const filteredDeals = useMemo(() => {
+    const q = appliedQuery.trim().toLowerCase();
+    if (!q) return deals;
+    return deals.filter((row) => {
+      const name = row.dealName.toLowerCase();
+      const plan = billingPlanLabel(row.planId).toLowerCase();
+      const status = dealBillingStatusLabel(row).toLowerCase();
+      const stage = dealStageLabel(row.dealStage).toLowerCase();
+      return (
+        name.includes(q) ||
+        plan.includes(q) ||
+        status.includes(q) ||
+        stage.includes(q)
+      );
+    });
+  }, [appliedQuery, deals]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [appliedQuery]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredDeals.length / pageSize));
+    if (page > totalPages) setPage(totalPages);
+  }, [filteredDeals.length, pageSize, page]);
+
+  const pagination = useMemo(
+    () => ({
+      page,
+      pageSize,
+      totalItems: filteredDeals.length,
+      onPageChange: setPage,
+      onPageSizeChange: setPageSize,
+      ariaLabel: "Deal billing table pagination",
+    }),
+    [page, pageSize, filteredDeals.length],
+  );
+
+  const billedCount = useMemo(
+    () => deals.filter((row) => row.billed).length,
+    [deals],
+  );
+
+  const handlePayDeal = async (row: CompanyDealBillingRow) => {
+    setPayError("");
+    if (!companyId) {
+      setPayError("No company workspace selected.");
+      return;
+    }
+    const planId = (
+      row.suggestedPlanId ||
+      row.planId ||
+      "starter"
+    )
+      .trim()
+      .toLowerCase();
+    setPayBusyId(row.id);
+    const result = await startCompanyBillingCheckout(
+      companyId,
+      planId,
+      billingCycle,
+      "5",
+      row.id,
+    );
+    setPayBusyId(null);
+    if (!result.ok) {
+      setPayError(result.message);
+      return;
+    }
+    onPaid?.();
+    window.location.assign(result.url);
+  };
+
+  const columns: DataTableColumn<CompanyDealBillingRow>[] = useMemo(
+    () => [
+      {
+        id: "dealName",
+        header: "Deal",
+        sortValue: (row) => row.dealName.toLowerCase(),
+        tdClassName: "cp_billing_invoice_number_td",
+        cell: (row) => (
+          <span className="cp_billing_invoice_number">
+            {row.dealName.trim() || "Untitled deal"}
+          </span>
+        ),
+      },
+      {
+        id: "dealStage",
+        header: "Stage",
+        sortValue: (row) => dealStageLabel(row.dealStage).toLowerCase(),
+        cell: (row) => dealStageLabel(row.dealStage) || "—",
+      },
+      {
+        id: "plan",
+        header: "Plan",
+        sortValue: (row) => billingPlanLabel(row.planId).toLowerCase(),
+        cell: (row) => billingPlanLabel(row.planId),
+      },
+      {
+        id: "cycle",
+        header: "Cycle",
+        sortValue: (row) => billingCycleLabel(row.billingCycle).toLowerCase(),
+        cell: (row) => billingCycleLabel(row.billingCycle),
+      },
+      {
+        id: "status",
+        header: "Status",
+        sortValue: (row) => dealBillingStatusLabel(row).toLowerCase(),
+        cell: (row) => (
+          <span className={dealBillingStatusClassName(row)}>
+            {dealBillingStatusLabel(row)}
+          </span>
+        ),
+      },
+      {
+        id: "nextBilling",
+        header: "Next billing",
+        sortValue: (row) => row.nextBillingDate ?? "",
+        cell: (row) =>
+          row.nextBillingDate
+            ? formatDealListDateDisplay(row.nextBillingDate)
+            : "—",
+      },
+      ...(canPay
+        ? ([
+            {
+              id: "pay",
+              header: "Pay",
+              align: "center" as const,
+              thClassName: "deals_th_align_center um_th_actions",
+              tdClassName: "um_td_actions",
+              cell: (row: CompanyDealBillingRow) => {
+                const canPayRow = row.billable === true && !row.billed;
+                if (!canPayRow) {
+                  return <span className="um_status_muted">—</span>;
+                }
+                const busy = payBusyId === row.id;
+                return (
+                  <button
+                    type="button"
+                    className="um_btn_primary"
+                    disabled={busy}
+                    onClick={() => void handlePayDeal(row)}
+                  >
+                    {busy ? "Redirecting…" : "Pay MRR"}
+                  </button>
+                );
+              },
+            },
+          ] satisfies DataTableColumn<CompanyDealBillingRow>[])
+        : []),
+    ],
+    [billingCycle, canPay, companyId, onPaid, payBusyId],
+  );
+
+  const isLeadSponsorScope =
+    (resolvedScope ?? viewerScope) === "lead_sponsor";
+
+  return (
+    <div className="cp_billing_payment_history">
+      <header className="cp_billing_payment_history_head">
+        <h3 className="cp_billing_payment_history_title">Deal billing</h3>
+        <p className="cp_billing_payment_history_lead">
+          {isLeadSponsorScope
+            ? "You pay monthly SaaS (MRR) for deals where you are Lead Sponsor. This month you have full access; billing starts next month. Draft, archived, and liquidated deals are not billed."
+            : "Lead sponsors pay monthly SaaS (MRR) for each deal they lead. This month they have full access; billing starts next month. Draft, archived, and liquidated deals are not billed."}
+        </p>
+      </header>
+
+      {loadError ? (
+        <p role="alert" style={{ color: "#b91c1c", marginBottom: "0.75rem" }}>
+          {loadError}
+        </p>
+      ) : null}
+      {payError ? (
+        <p role="alert" style={{ color: "#b91c1c", marginBottom: "0.75rem" }}>
+          {payError}
+        </p>
+      ) : null}
+
+      <section
+        className="cp_billing_payment_filters_panel"
+        role="search"
+        aria-label="Deal billing filters"
+      >
+        <div className="cp_billing_payment_filters_grid">
+          <div className="cp_billing_filter_field">
+            <label className="cp_billing_filter_label" htmlFor="cp-billing-deal-search">
+              <Search size={14} strokeWidth={2} aria-hidden />
+              Search deals
+            </label>
+            <input
+              id="cp-billing-deal-search"
+              type="search"
+              className="cp_billing_filter_input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Deal name, plan, or status"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  setAppliedQuery(query);
+                  setPage(1);
+                }
+              }}
+            />
+          </div>
+        </div>
+        <div className="cp_billing_payment_filters_actions">
+          <button
+            type="button"
+            className="um_btn_secondary cp_billing_reset_btn"
+            onClick={() => {
+              setQuery("");
+              setAppliedQuery("");
+              setPage(1);
+            }}
+          >
+            <RotateCcw size={16} strokeWidth={2} aria-hidden />
+            Reset
+          </button>
+          <button
+            type="button"
+            className="um_btn_primary cp_billing_search_btn"
+            onClick={() => {
+              setAppliedQuery(query);
+              setPage(1);
+            }}
+          >
+            <Search size={16} strokeWidth={2} aria-hidden />
+            Search
+          </button>
+        </div>
+      </section>
+
+      <div
+        className="cp_billing_outstanding_banner"
+        role="status"
+        aria-live="polite"
+      >
+        <span className="cp_billing_outstanding_icon" aria-hidden="true">
+          <Check size={14} strokeWidth={2.5} />
+        </span>
+        <p>
+          {loading
+            ? "Loading deal billing…"
+            : billedCount === 0
+              ? isLeadSponsorScope
+                ? "None of your deals have an active SaaS subscription yet."
+                : "No deals currently have an active SaaS subscription."
+              : `${billedCount} deal${billedCount === 1 ? "" : "s"} currently billed.`}
+        </p>
+      </div>
+
+      <div className="cp_billing_invoices_table_wrap deal_inv_table_panel">
+        <DataTable
+          columns={columns}
+          rows={filteredDeals}
+          getRowKey={(row) => row.id}
+          emptyLabel={
+            loading ? "Loading deal billing…" : "No deals found for billing."
+          }
+          isLoading={loading}
+          visualVariant="members"
+          membersTableClassName="um_table_members deal_inv_table"
+          membersShell="default"
+          initialSort={{ columnId: "dealName", direction: "asc" }}
+          pagination={pagination}
+        />
+      </div>
+    </div>
+  );
+}
+
 function BillingPaymentHistoryPanel({ companyId }: { companyId: string }) {
   const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM);
   const [dateTo, setDateTo] = useState(DEFAULT_DATE_TO);
@@ -908,6 +1363,17 @@ function BillingPaymentHistoryPanel({ companyId }: { companyId: string }) {
         ),
       },
       {
+        id: "dealName",
+        header: "Deal",
+        sortValue: (row) => (row.dealName ?? "").toLowerCase(),
+        cell: (row) =>
+          row.dealName?.trim() ? (
+            <span className="cp_billing_invoice_number">{row.dealName}</span>
+          ) : (
+            <span className="um_status_muted">—</span>
+          ),
+      },
+      {
         id: "invoiceDate",
         header: "Invoice Date",
         sortValue: (row) => row.invoiceDate,
@@ -1009,7 +1475,8 @@ function BillingPaymentHistoryPanel({ companyId }: { companyId: string }) {
       <header className="cp_billing_payment_history_head">
         <h3 className="cp_billing_payment_history_title">Payment history</h3>
         <p className="cp_billing_payment_history_lead">
-          Filter invoices by date and status. Download receipts when available.
+          Filter invoices by date, status, and deal. Download receipts when
+          available.
         </p>
       </header>
 
@@ -1126,11 +1593,15 @@ function BillingPaymentHistoryPanel({ companyId }: { companyId: string }) {
 
 export function CompanyBillingTab({
   workspaceCompanyId,
+  focusDealId,
 }: {
   workspaceCompanyId?: string;
+  focusDealId?: string;
 } = {}) {
-  const [billingSubTab, setBillingSubTab] =
-    useState<BillingSubTab>("pricing");
+  const likelyManager = isCompanyAdmin() || isPlatformAdmin();
+  const [billingSubTab, setBillingSubTab] = useState<BillingSubTab>(
+    likelyManager ? "pricing" : "deals",
+  );
   const [billingCycle, setBillingCycle] = useState<"monthly" | "annually">(
     "monthly",
   );
@@ -1141,6 +1612,9 @@ export function CompanyBillingTab({
   >([]);
   const [statusError, setStatusError] = useState("");
   const companyId = (workspaceCompanyId ?? "").trim();
+
+  const canManageBilling = billingStatus?.canManage ?? likelyManager;
+  const canPayBilling = billingStatus?.canPay ?? canManageBilling;
 
   const refreshPaymentMethods = useCallback(() => {
     if (!companyId) {
@@ -1166,6 +1640,14 @@ export function CompanyBillingTab({
       }
       setStatusError("");
       setBillingStatus(result.status);
+      if (result.status.canManage === false) {
+        setBillingSubTab((current) =>
+          current === "payment-methods" ? "deals" : current,
+        );
+        setPaymentMethods([]);
+      } else {
+        refreshPaymentMethods();
+      }
       if (
         result.status.billingCycle === "annual" ||
         result.status.billingCycle === "annually"
@@ -1175,12 +1657,17 @@ export function CompanyBillingTab({
         setBillingCycle("monthly");
       }
     });
-    refreshPaymentMethods();
   }, [companyId, refreshPaymentMethods]);
 
   useEffect(() => {
     refreshStatus();
   }, [refreshStatus]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("billing") !== "pay") return;
+    setBillingSubTab(canPayBilling ? "pricing" : "deals");
+  }, [canPayBilling, focusDealId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1199,7 +1686,15 @@ export function CompanyBillingTab({
         ""
       ).trim();
       setBillingSubTab(
-        billing === "setup_return" ? "payment-methods" : "pricing",
+        billing === "setup_return"
+          ? "payment-methods"
+          : billing === "success" ||
+              billing === "portal_return" ||
+              billing === "payment_return"
+            ? likelyManager
+              ? "pricing"
+              : "deals"
+            : "deals",
       );
 
       const finish = () => {
@@ -1224,7 +1719,9 @@ export function CompanyBillingTab({
             setStatusError(result.message);
             refreshStatus();
           }
-          refreshPaymentMethods();
+          if (result.ok ? result.status.canManage !== false : likelyManager) {
+            refreshPaymentMethods();
+          }
           finish();
         });
         return;
@@ -1242,7 +1739,9 @@ export function CompanyBillingTab({
             setStatusError(result.message);
             refreshStatus();
           }
-          refreshPaymentMethods();
+          if (result.ok ? result.status.canManage !== false : likelyManager) {
+            refreshPaymentMethods();
+          }
           finish();
         });
         return;
@@ -1297,50 +1796,75 @@ export function CompanyBillingTab({
             role="tablist"
             aria-label="Billing sections"
           >
+            {canPayBilling ? (
+              <button
+                type="button"
+                id="cp-billing-subtab-pricing"
+                role="tab"
+                aria-selected={billingSubTab === "pricing"}
+                aria-controls="cp-billing-panel-pricing"
+                className={`um_members_tab deals_tabs_tab um_segmented_tab${
+                  billingSubTab === "pricing" ? " um_members_tab_active" : ""
+                }`}
+                onClick={() => setBillingSubTab("pricing")}
+              >
+                <BadgeDollarSign
+                  className="deals_tabs_icon um_segmented_tab_icon"
+                  size={16}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span className="deals_tabs_label um_segmented_tab_label">
+                  Pricing
+                </span>
+              </button>
+            ) : null}
             <button
               type="button"
-              id="cp-billing-subtab-pricing"
+              id="cp-billing-subtab-deals"
               role="tab"
-              aria-selected={billingSubTab === "pricing"}
-              aria-controls="cp-billing-panel-pricing"
+              aria-selected={billingSubTab === "deals"}
+              aria-controls="cp-billing-panel-deals"
               className={`um_members_tab deals_tabs_tab um_segmented_tab${
-                billingSubTab === "pricing" ? " um_members_tab_active" : ""
+                billingSubTab === "deals" ? " um_members_tab_active" : ""
               }`}
-              onClick={() => setBillingSubTab("pricing")}
+              onClick={() => setBillingSubTab("deals")}
             >
-              <BadgeDollarSign
+              <Briefcase
                 className="deals_tabs_icon um_segmented_tab_icon"
                 size={16}
                 strokeWidth={2}
                 aria-hidden
               />
               <span className="deals_tabs_label um_segmented_tab_label">
-                Pricing
+                Deal billing
               </span>
             </button>
-            <button
-              type="button"
-              id="cp-billing-subtab-payment-methods"
-              role="tab"
-              aria-selected={billingSubTab === "payment-methods"}
-              aria-controls="cp-billing-panel-payment-methods"
-              className={`um_members_tab deals_tabs_tab um_segmented_tab${
-                billingSubTab === "payment-methods"
-                  ? " um_members_tab_active"
-                  : ""
-              }`}
-              onClick={() => setBillingSubTab("payment-methods")}
-            >
-              <WalletCards
-                className="deals_tabs_icon um_segmented_tab_icon"
-                size={16}
-                strokeWidth={2}
-                aria-hidden
-              />
-              <span className="deals_tabs_label um_segmented_tab_label">
-                Payment Methods
-              </span>
-            </button>
+            {canManageBilling ? (
+              <button
+                type="button"
+                id="cp-billing-subtab-payment-methods"
+                role="tab"
+                aria-selected={billingSubTab === "payment-methods"}
+                aria-controls="cp-billing-panel-payment-methods"
+                className={`um_members_tab deals_tabs_tab um_segmented_tab${
+                  billingSubTab === "payment-methods"
+                    ? " um_members_tab_active"
+                    : ""
+                }`}
+                onClick={() => setBillingSubTab("payment-methods")}
+              >
+                <WalletCards
+                  className="deals_tabs_icon um_segmented_tab_icon"
+                  size={16}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span className="deals_tabs_label um_segmented_tab_label">
+                  Payment Methods
+                </span>
+              </button>
+            ) : null}
             <button
               type="button"
               id="cp-billing-subtab-payment-history"
@@ -1368,40 +1892,63 @@ export function CompanyBillingTab({
         </TabsScrollStrip>
       </div>
 
+      {canPayBilling ? (
+        <div
+          id="cp-billing-panel-pricing"
+          role="tabpanel"
+          aria-labelledby="cp-billing-subtab-pricing"
+          hidden={billingSubTab !== "pricing"}
+          className="cp_billing_subtab_panel cp_billing_subtab_panel_pricing"
+        >
+          {billingSubTab === "pricing" ? (
+            <BillingPricingPanel
+              billingCycle={billingCycle}
+              onBillingCycleChange={setBillingCycle}
+              companyId={companyId}
+              billingStatus={billingStatus}
+              onStatusRefresh={refreshStatus}
+              initialDealId={focusDealId}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       <div
-        id="cp-billing-panel-pricing"
+        id="cp-billing-panel-deals"
         role="tabpanel"
-        aria-labelledby="cp-billing-subtab-pricing"
-        hidden={billingSubTab !== "pricing"}
-        className="cp_billing_subtab_panel cp_billing_subtab_panel_pricing"
+        aria-labelledby="cp-billing-subtab-deals"
+        hidden={billingSubTab !== "deals"}
+        className="cp_billing_subtab_panel"
       >
-        {billingSubTab === "pricing" ? (
-          <BillingPricingPanel
-            billingCycle={billingCycle}
-            onBillingCycleChange={setBillingCycle}
+        {billingSubTab === "deals" ? (
+          <BillingDealDetailsPanel
             companyId={companyId}
-            billingStatus={billingStatus}
-            onStatusRefresh={refreshStatus}
+            viewerScope={billingStatus?.viewerScope}
+            canPay={canPayBilling}
+            billingCycle={billingCycle}
+            onPaid={refreshStatus}
           />
         ) : null}
       </div>
 
-      <div
-        id="cp-billing-panel-payment-methods"
-        role="tabpanel"
-        aria-labelledby="cp-billing-subtab-payment-methods"
-        hidden={billingSubTab !== "payment-methods"}
-        className="cp_billing_subtab_panel cp_billing_subtab_panel_payment_methods"
-      >
-        {billingSubTab === "payment-methods" ? (
-          <BillingPaymentMethodsPanel
-            companyId={companyId}
-            billingStatus={billingStatus}
-            paymentMethods={paymentMethods}
-            onStatusRefresh={refreshStatus}
-          />
-        ) : null}
-      </div>
+      {canManageBilling ? (
+        <div
+          id="cp-billing-panel-payment-methods"
+          role="tabpanel"
+          aria-labelledby="cp-billing-subtab-payment-methods"
+          hidden={billingSubTab !== "payment-methods"}
+          className="cp_billing_subtab_panel cp_billing_subtab_panel_payment_methods"
+        >
+          {billingSubTab === "payment-methods" ? (
+            <BillingPaymentMethodsPanel
+              companyId={companyId}
+              billingStatus={billingStatus}
+              paymentMethods={paymentMethods}
+              onStatusRefresh={refreshStatus}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <div
         id="cp-billing-panel-payment-history"

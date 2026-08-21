@@ -1,5 +1,9 @@
 import type { DealInvestorClass } from "../types/deal-investor-class.types"
 import {
+  isDealMembersTabRole,
+  isGeneralPartnerRole,
+} from "../constants/investor-profile"
+import {
   blurFormatMoneyInput,
   parseMoneyDigits,
   parseNumberOfUnitsDigits,
@@ -61,6 +65,95 @@ export function investorOnboardingSelectableClasses(
   classes: DealInvestorClass[],
 ): DealInvestorClass[] {
   return classes.filter((c) => isInvestorOnboardingSelectableClass(c))
+}
+
+/** Investors tab: every class type except GP (those belong on General Partners). */
+export function isInvestorsTabSelectableClass(
+  row: Pick<DealInvestorClass, "subscriptionType"> | undefined,
+): boolean {
+  return !isGpInvestorClass(row)
+}
+
+export function matchDealInvestorClass(
+  stored: string | undefined,
+  classes: DealInvestorClass[],
+): DealInvestorClass | undefined {
+  const raw = String(stored ?? "").trim()
+  if (!raw) return undefined
+  const lower = raw.toLowerCase()
+  return classes.find(
+    (c) =>
+      c.id.trim().toLowerCase() === lower ||
+      c.name.trim().toLowerCase() === lower,
+  )
+}
+
+const CLASS_TYPE_TABLE_SUFFIX: Record<string, string> = {
+  lp: "Limited Partners",
+  gp: "General Partners",
+  mezzanine: "Mezzanine",
+  preferred_equity: "Preferred Equity",
+}
+
+export function investorClassTypeTableSuffix(
+  subscriptionType: string | undefined,
+): string {
+  const t = String(subscriptionType ?? "").trim().toLowerCase()
+  return CLASS_TYPE_TABLE_SUFFIX[t] ?? ""
+}
+
+/**
+ * Table / dropdown label: `Class B - General Partners` when the stored name is
+ * just `Class B` (or similar) and the class type is known.
+ */
+export function applyInvestorClassTypeSuffix(
+  name: string,
+  subscriptionType: string | undefined,
+): string {
+  const n = String(name ?? "").trim()
+  if (!n || n === "—") return n
+  if (/\s[-–—]\s/.test(n)) return n
+  const suffix = investorClassTypeTableSuffix(subscriptionType)
+  if (!suffix) return n
+  if (n.toLowerCase().includes(suffix.toLowerCase())) return n
+  return `${n} - ${suffix}`
+}
+
+export function formatDealInvestorClassOptionLabel(
+  row: Pick<DealInvestorClass, "name" | "subscriptionType">,
+): string {
+  const name = String(row.name ?? "").trim() || "Unnamed class"
+  return applyInvestorClassTypeSuffix(name, row.subscriptionType)
+}
+
+export function formatInvestorClassTableLabel(
+  stored: string | undefined,
+  classes: DealInvestorClass[],
+): string {
+  const matched = matchDealInvestorClass(stored, classes)
+  if (matched) return formatDealInvestorClassOptionLabel(matched)
+  const raw = String(stored ?? "").trim()
+  if (!raw || raw === "—") return ""
+  return applyInvestorClassTypeSuffix(
+    raw,
+    /\bgp\b|general partner/i.test(raw) ? "gp" : undefined,
+  )
+}
+
+/**
+ * General Partners tab identity: stored GP role, or a GP class when the row is
+ * not already a Deal Members team role.
+ */
+export function investorRowIsGeneralPartner(
+  row: { investorRole?: string; investorClass?: string },
+  classes: DealInvestorClass[],
+): boolean {
+  if (isGeneralPartnerRole(row.investorRole)) return true
+  if (isDealMembersTabRole(row.investorRole)) return false
+  const matched = matchDealInvestorClass(row.investorClass, classes)
+  if (matched) return isGpInvestorClass(matched)
+  const className = String(row.investorClass ?? "").trim().toLowerCase()
+  return /\bgp\b|general partner/.test(className)
 }
 
 export function hasInvestorClassNumberOfUnits(

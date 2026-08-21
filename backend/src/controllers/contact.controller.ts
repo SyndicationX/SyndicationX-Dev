@@ -544,13 +544,7 @@ export async function patchContact(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    const creatorLabel = (await getUserDisplayNameById(user.id)).trim();
-    const fallback = user.email?.trim() || creatorLabel || "User";
-    const primaryOwner = creatorLabel || fallback;
-    const owners = dedupeOwnersPreserveOrder([
-      primaryOwner,
-      ...ownersFromClient,
-    ]);
+    const owners = dedupeOwnersPreserveOrder(ownersFromClient);
 
     const updated = await updateContactFieldsForViewer(
       user.id,

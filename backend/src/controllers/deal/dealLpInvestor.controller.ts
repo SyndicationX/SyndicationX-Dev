@@ -10,6 +10,7 @@ import { db } from "../../database/db.js";
 import { users } from "../../schema/schema.js";
 import { eq } from "drizzle-orm";
 import {
+  isGeneralPartnerStoredRole,
   isLpInvestorRole,
   resolveInvestorClassForDealInvestment,
 } from "../../services/deal/dealInvestment.service.js";
@@ -183,6 +184,9 @@ export async function postDealLpInvestor(
     const classResolution = await resolveInvestorClassForDealInvestment(
       dealId,
       investorClass,
+      {
+        excludeGp: !isGeneralPartnerStoredRole(investorRole),
+      },
     );
     if (!classResolution.ok) {
       res.status(400).json({ message: classResolution.message });
@@ -337,6 +341,9 @@ export async function putDealLpInvestor(
     const classResolution = await resolveInvestorClassForDealInvestment(
       dealId,
       investorClass,
+      {
+        excludeGp: !isGeneralPartnerStoredRole(investorRole),
+      },
     );
     if (!classResolution.ok) {
       res.status(400).json({ message: classResolution.message });

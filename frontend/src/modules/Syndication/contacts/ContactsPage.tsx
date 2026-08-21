@@ -56,6 +56,10 @@ import {
 } from "../../../common/components/usage-filter-tabs/UsageFilterTabs"
 import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { toast } from "../../../common/components/Toast"
+import {
+  TABLE_PAGE_SIZE_ID,
+  usePersistedTablePageSize,
+} from "@/common/hooks/usePersistedTablePageSize"
 import { PORTAL_ACTIVE_COMPANY_CHANGED_EVENT } from "../../../common/auth/setActiveCompany"
 import { getSessionOrganizationCompanyId } from "../../../common/auth/sessionOrganization"
 import "../usermanagement/user_management.css"
@@ -258,7 +262,9 @@ function ContactsPage() {
   const [sendMailEmailPreview, setSendMailEmailPreview] =
     useState<SendMailEmailPreviewPayload | null>(null)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [pageSize, setPageSize] = usePersistedTablePageSize(
+    TABLE_PAGE_SIZE_ID.contacts,
+  )
   /** Bumps DataTable remount so sort state resets on Refresh. */
   const [tableResetKey, setTableResetKey] = useState(0)
   const [searchQuery, setSearchQuery] = useState("")

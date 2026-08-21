@@ -280,6 +280,7 @@ export function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
 /** Which deal detail tab ids the viewer may open, based on roster role. */
 export function visibleDealDetailTabIds(
   role: ViewerDealMemberRole,
+  opts?: { isWorkspaceAdmin?: boolean },
 ): Set<string> {
   const all = new Set([
     "offering_details",
@@ -290,6 +291,8 @@ export function visibleDealDetailTabIds(
     "distributions",
     "deal_members",
   ])
+  // Company / platform admin keep Deal Members even if they are also an LP on the deal.
+  if (opts?.isWorkspaceAdmin) return all
   if (role === null) return all
   if (
     role === "lead_sponsor" ||

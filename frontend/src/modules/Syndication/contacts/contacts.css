@@ -1964,6 +1964,28 @@
   display: grid;
   gap: 0 1em;
   grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.add_contact_name_grid .um_field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.add_contact_name_grid .um_field_label_row {
+  min-height: 1.375em;
+  flex-shrink: 0;
+}
+
+.add_contact_name_grid .um_field_label_with_suffix {
+  flex-wrap: nowrap;
+}
+
+.add_contact_name_grid .um_field_label_text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (min-width: 480px) {

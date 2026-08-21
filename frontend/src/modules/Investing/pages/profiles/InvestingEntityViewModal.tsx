@@ -104,6 +104,18 @@ function isFullWidthViewLabel(label: string): boolean {
   )
 }
 
+function isMonoViewLabel(label: string): boolean {
+  const t = label.toLowerCase()
+  return (
+    t.includes("account number") ||
+    t.includes("routing") ||
+    t.includes("ssn") ||
+    t.includes("itin") ||
+    t.includes("ein") ||
+    t.includes("tax id")
+  )
+}
+
 function ViewFieldGrid({
   rows,
   gridClassName,
@@ -126,9 +138,12 @@ function ViewFieldGrid({
             Icon={Icon}
             label={r.label}
             value={v}
-            fieldClassName={
-              isFullWidthViewLabel(r.label) ? "um_view_field_span_full" : undefined
-            }
+            fieldClassName={[
+              isFullWidthViewLabel(r.label) ? "um_view_field_span_full" : "",
+              isMonoViewLabel(r.label) ? "um_view_field_mono" : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined}
           />
         )
       })}

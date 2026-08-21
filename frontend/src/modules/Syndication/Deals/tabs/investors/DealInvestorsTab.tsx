@@ -84,6 +84,10 @@ import { ToolStyleCard } from "../../../../../common/components/tool-style-card/
 import { cardCompactAmountOrDash } from "../../../../../common/components/card-compact-amount/CardCompactAmount";
 import { getApiV1Base } from "../../../../../common/utils/apiBaseUrl";
 import {
+  TABLE_PAGE_SIZE_ID,
+  usePersistedTablePageSize,
+} from "@/common/hooks/usePersistedTablePageSize";
+import {
   upsertRuntimeForViewerFromInvestorsPayload,
   upsertRuntimeFromViewerAddInvestmentForm,
 } from "@/modules/Investing/pages/investments/upsertRuntimeFromDealSession";
@@ -100,10 +104,17 @@ import {
 import { isDealStageDraft } from "../../constants/deal-lifecycle";
 import type { DealInvestorClass } from "../../types/deal-investor-class.types";
 import {
+  formatInvestorClassTableLabel,
+  investorRowIsGeneralPartner,
+} from "../../utils/investorClassOverviewFields";
+import {
   investorProfileIdFromLabel,
   investorRoleSelectValueFromStored,
+  isDealMembersTabRole,
+  isGeneralPartnerRole,
   isLpInvestorRole,
   dealInvestorProfileDisplayName,
+  type DealInvestmentModalEntry,
 } from "../../constants/investor-profile";
 import { INVESTMENT_STATUS_APPROVE_FUND } from "../../constants/investment-status";
 import { formatMemberUsername } from "../../../usermanagement/memberAdminShared";
@@ -162,6 +173,7 @@ export interface DealInvestorsTabHandle {
 /** Same compact “Add Investors” modal as add — `deal_lp_investor` rows, not full investment form. */
 function shouldUseLpInvestorsModalForEdit(row: DealInvestorRow): boolean {
   if (row.id === ADD_MEMBER_DRAFT_ROW_ID) return false;
+  if (isGeneralPartnerRole(row.investorRole ?? "")) return false;
   if (row.investorKind === "lp_roster") return true;
   /** Investment list rows that are LP role still edit via LP modal (percents live on roster). */
   return isLpInvestorRole(row.investorRole ?? "");
@@ -169,6 +181,8 @@ function shouldUseLpInvestorsModalForEdit(row: DealInvestorRow): boolean {
 
 /** LP tab row, or add-member draft with a contact picked but role not set yet. */
 function isLpInvestorsTabRow(r: DealInvestorRow): boolean {
+  if (isGeneralPartnerRole(r.investorRole ?? "")) return false
+  if (isDealMembersTabRole(r.investorRole ?? "")) return false
   if (r.id === ADD_MEMBER_DRAFT_ROW_ID) {
     if (isLpInvestorRole(r.investorRole ?? "")) return true;
     const role = String(r.investorRole ?? "").trim();
@@ -190,7 +204,7 @@ interface DealInvestorsTabProps {
   /** Opens the full add/edit investment modal (Deal Members flow + draft “Continue editing”). */
   onOpenFullInvestmentModal?: () => void;
   /** Mirrors deal detail state: drives “Add Investor” vs “Add Member” modal title. */
-  addInvestmentEntry?: "member" | "investor";
+  addInvestmentEntry?: DealInvestmentModalEntry;
   /**
    * Add mode: restore autosaved add-member draft (default true). Deal detail sets false for
    * “Add Member” (empty form without clearing the table draft row); draft “Continue editing” uses true.
@@ -271,7 +285,7 @@ function buildDealClassNamesLine(
   dealDetail: DealDetailApi | null | undefined,
 ): string {
   const fromClasses = investorClasses
-    .map((c) => String(c.name ?? "").trim())
+    .map((c) => formatInvestorClassTableLabel(c.name, [c]))
     .filter(Boolean)
     .join(", ");
   if (fromClasses) return fromClasses;
@@ -340,11 +354,7 @@ function resolveInvestorClassLabelForRow(
   formValue: string,
   classes: DealInvestorClass[],
 ): string {
-  const t = formValue.trim();
-  if (!t) return "";
-  const byId = classes.find((c) => c.id === t);
-  if (byId) return byId.name.trim() || byId.id;
-  return t;
+  return formatInvestorClassTableLabel(formValue, classes)
 }
 
 function VerifiedAccBadge({ label }: { label: string }) {
@@ -654,7 +664,9 @@ function DealInvestorsPopulated({
   const [filterFunding, setFilterFunding] = useState("");
   const [filterAccreditation, setFilterAccreditation] = useState("");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = usePersistedTablePageSize(
+    TABLE_PAGE_SIZE_ID.dealInvestors,
+  );
 
   /** Count of investors with a signed date (excludes add-member draft row). */
   const documentSignedKpi = useMemo(() => {
@@ -1154,12 +1166,18 @@ function DealInvestorsPopulated({
         tdClassName:
           "deal_inv_td_investor_class deal_inv_td_investor_class_cell deal_inv_td_investor_class_center",
         sortValue: (row) => {
-          const a = (row.investorClass ?? "").trim();
+          const a = formatInvestorClassTableLabel(
+            row.investorClass,
+            investorClasses,
+          );
           if (a) return a.toLowerCase();
           return dealAllClassNamesLine.toLowerCase();
         },
         cell: (row) => {
-          const assignedRaw = (row.investorClass ?? "").trim();
+          const assignedRaw = formatInvestorClassTableLabel(
+            row.investorClass,
+            investorClasses,
+          );
           const dealLine = dealAllClassNamesLine.trim();
           const pillSource = assignedRaw || dealLine;
           if (!pillSource.trim())
@@ -1339,7 +1357,7 @@ function DealInvestorsPopulated({
     ],
     [
       dealAllClassNamesLine,
-      investorClasses.length,
+      investorClasses,
       allFilteredInvestorsSelected,
       toggleSelectAllFilteredInvestors,
       selectedInvestorIds,
@@ -2109,7 +2127,10 @@ export const DealInvestorsTab = forwardRef<
      * investment. Do not drop rows with a second FE role filter (that was hiding
      * valid commitments when role metadata differed).
      */
-    const fromApi = combined.filter((r) => r.id !== ADD_MEMBER_DRAFT_ROW_ID)
+    const fromApi = combined.filter((r) => {
+      if (r.id === ADD_MEMBER_DRAFT_ROW_ID) return false
+      return !investorRowIsGeneralPartner(r, investorClasses)
+    })
     const scopedLpOnly = scopeDealInvestorRowsForViewer(
       fromApi,
       effectiveViewerRole,
@@ -2140,6 +2161,7 @@ export const DealInvestorsTab = forwardRef<
     addLpInvestorOpen,
     effectiveViewerRole,
     sessionUserId,
+    investorClasses,
   ]);
 
   const mergedPayload = useMemo((): DealInvestorsPayload | null => {
@@ -2283,7 +2305,7 @@ export const DealInvestorsTab = forwardRef<
 
   const addModalBlocksInvites =
     requiredDealDetailsIncomplete ||
-    (addEntryForModal === "member" &&
+    (addEntryForModal !== "investor" &&
       dealDetail != null &&
       isDealStageDraft(dealDetail.dealStage));
 

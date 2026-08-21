@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   getBillingConfig,
   getCompanyBilling,
+  getCompanyBillingDeals,
   getCompanyBillingInvoices,
   getCompanyBillingPaymentMethods,
   postCompanyBillingCheckout,
@@ -16,12 +17,13 @@ import {
 const router = Router();
 
 router.get("/billing/config", getBillingConfig);
-router.get("/companies/:companyId/billing", getCompanyBilling);
+router.get("/companies/:companyId/billing/deals", getCompanyBillingDeals);
 router.get("/companies/:companyId/billing/invoices", getCompanyBillingInvoices);
 router.get(
   "/companies/:companyId/billing/payment-methods",
   getCompanyBillingPaymentMethods,
 );
+router.get("/companies/:companyId/billing", getCompanyBilling);
 router.post(
   "/companies/:companyId/billing/checkout",
   postCompanyBillingCheckout,

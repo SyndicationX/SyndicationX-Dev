@@ -219,6 +219,21 @@ export async function patchInvestorProfileArchived(
   return normalizeInvestorProfileListRow(profile)
 }
 
+export async function deleteInvestorProfile(id: string): Promise<void> {
+  const base = getApiV1Base()
+  if (!base) throw new Error("API base URL is not configured (VITE_BASE_URL).")
+  const res = await fetch(
+    `${base}/investing/my-profile-book/profiles/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+      headers: authJsonHeaders(),
+      credentials: "include",
+    },
+  )
+  const data = await readJson(res)
+  if (!res.ok) throw new Error(errMsg(data, res))
+}
+
 export async function postBeneficiary(
   body: BeneficiaryDraft,
 ): Promise<BeneficiaryDraft & { id: string; archived?: boolean }> {

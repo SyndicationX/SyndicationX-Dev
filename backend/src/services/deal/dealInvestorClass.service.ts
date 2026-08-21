@@ -5,6 +5,7 @@ import {
   type DealInvestorClassInsert,
   type DealInvestorClassRow,
 } from "../../schema/deal.schema/deal-investor-class.schema.js";
+import { scheduleDealSaasBillingSync } from "../billing/dealBilling.service.js";
 
 export type InvestorClassInput = {
   name: string;
@@ -82,6 +83,7 @@ export async function insertInvestorClass(params: {
   };
   const [inserted] = await db.insert(dealInvestorClass).values(row).returning();
   if (!inserted) throw new Error("INSERT_INVESTOR_CLASS_FAILED");
+  scheduleDealSaasBillingSync(params.dealId);
   return inserted;
 }
 
@@ -115,6 +117,7 @@ export async function updateInvestorClass(params: {
       ),
     )
     .returning();
+  if (updated) scheduleDealSaasBillingSync(params.dealId);
   return updated ?? null;
 }
 
@@ -131,5 +134,6 @@ export async function deleteInvestorClass(params: {
       ),
     )
     .returning({ id: dealInvestorClass.id });
+  if (deleted.length > 0) scheduleDealSaasBillingSync(params.dealId);
   return deleted.length > 0;
 }

@@ -275,8 +275,32 @@ function seedFormFromListRow(row: {
 }
 
 function partialWizardFromSaved(raw: unknown): Partial<WizardForm> {
-  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return {}
-  const src = raw as Record<string, unknown>
+  let parsed: unknown = raw
+  if (typeof parsed === "string") {
+    const t = parsed.trim()
+    if (!t) return {}
+    try {
+      parsed = JSON.parse(t) as unknown
+    } catch {
+      return {}
+    }
+  }
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {}
+  }
+  let src = parsed as Record<string, unknown>
+  const inner = src.form
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const formRec = inner as Record<string, unknown>
+    if (
+      "firstName" in formRec ||
+      "profileType" in formRec ||
+      "entityLegalName" in formRec ||
+      "legalIraName" in formRec
+    ) {
+      src = formRec
+    }
+  }
   const out: Partial<WizardForm> = {}
   for (const k of WIZARD_KEYS) {
     if (!(k in src)) continue
@@ -347,8 +371,8 @@ function maskTaxId(raw: string): string {
 function maskAccountNumber(raw: string): string {
   const d = raw.replace(/\D/g, "")
   if (!d) return "—"
-  if (d.length <= 4) return `••••${d}`
-  return `••••••${d.slice(-4)}`
+  const last4 = d.length <= 4 ? d : d.slice(-4)
+  return `···· ${last4}`
 }
 
 function optionLabel(

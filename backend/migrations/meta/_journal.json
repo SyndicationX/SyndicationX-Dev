@@ -547,6 +547,20 @@
       "when": 1894450000000,
       "tag": "0078_user_investor_profiles_shared_stripe_connect",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1894500000000,
+      "tag": "0079_deal_saas_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1894550000000,
+      "tag": "0080_deal_saas_billing_starts_at",
+      "breakpoints": true
     }
   ]
 }

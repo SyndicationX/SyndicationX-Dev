@@ -34,7 +34,10 @@ import {
   resolveDealMemberPortalUserId,
   resolveOfferingPreviewSponsorAttribution,
 } from "../../services/deal/offeringPreviewSponsorRef.service.js";
-import { isPortalUserSponsorOnDeal } from "../../services/deal/dealMemberScope.service.js";
+import {
+  isPortalUserSponsorOnDeal,
+  listDealIdsWhereViewerIsLeadSponsor,
+} from "../../services/deal/dealMemberScope.service.js";
 import { canInvestorAccessPublicOffering } from "../../constants/deal-lifecycle/index.js";
 import { isDealStageDraft } from "../../constants/deal-lifecycle/deal-stage.js";
 import {
@@ -109,6 +112,13 @@ import {
   mapRowToJson as mapInvestorClassRowToJson,
 } from "../../services/deal/dealInvestorClass.service.js";
 import { enrichDealListRowForApi } from "../../services/deal/dealListRowEnrichment.service.js";
+import {
+  dealSaasBillingListFields,
+  dealSaasPaymentRequiredPayload,
+  ensureDealSaasComplimentaryPeriod,
+  evaluateDealSaasWorkspaceAccess,
+} from "../../services/billing/dealBilling.service.js";
+import { isInvestingPortalRequest } from "../../middleware/portalMode.middleware.js";
 
 function parseBoolField(
   v: unknown,
@@ -129,6 +139,30 @@ function bodyString(v: unknown): string {
 function organizationIdFromBody(b: Record<string, unknown>): string | null {
   const raw = bodyString(b.organization_id ?? b.organizationId).trim();
   return DEALS_ORG_UUID_RE.test(raw) ? raw : null;
+}
+
+/**
+ * Billable deals stay in the list. This month they remain viewable; from next
+ * month unpaid MRR locks view/edit (Deal billing / Upgrade the plan to continue).
+ * Returns true when the response has already been sent.
+ */
+function sendDealSaasLockIfNeeded(
+  res: Response,
+  row: AddDealFormRow,
+  scope: DealViewerScope,
+  opts?: { allowInvestingRead?: boolean },
+): boolean {
+  if (scope.isPlatformAdmin) return false;
+  if (opts?.allowInvestingRead && isInvestingPortalRequest()) return false;
+  if (!row.saasBillingStartsAt) {
+    void ensureDealSaasComplimentaryPeriod(row).catch((err) => {
+      console.warn("ensureDealSaasComplimentaryPeriod:", row.id, err);
+    });
+  }
+  const access = evaluateDealSaasWorkspaceAccess(row);
+  if (!access.locked) return false;
+  res.status(402).json(dealSaasPaymentRequiredPayload(row, access));
+  return true;
 }
 
 function mapRowToJson(
@@ -373,6 +407,15 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
         ? await countDealLpInvestorsByDealIdsForViewer(dealIds, scope)
         : new Map<string, number>();
 
+    const leadSponsorDealIds =
+      !includeParticipantDeals && dealIds.length > 0
+        ? new Set(
+            (await listDealIdsWhereViewerIsLeadSponsor(user.id)).map((id) =>
+              String(id).trim().toLowerCase(),
+            ),
+          )
+        : new Set<string>();
+
     let lpRoleByDealId = new Map<string, string>();
     const shouldAttachLpRole =
       rows.length > 0 &&
@@ -418,7 +461,16 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
                 ...listRow,
                 yourRole: lpRoleByDealId.get(id) ?? "LP Investor",
               };
-          if (!includeParticipantDeals) return withRole;
+          const withBilling = !includeParticipantDeals
+            ? {
+                ...withRole,
+                ...dealSaasBillingListFields(r),
+                viewerIsLeadSponsor: leadSponsorDealIds.has(
+                  id.trim().toLowerCase(),
+                ),
+              }
+            : withRole;
+          if (!includeParticipantDeals) return withBilling;
           const readable = await assertDealIdReadableOrAssignedParticipant(
             id,
             scope,
@@ -426,7 +478,7 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
           // Do not return deals the viewer cannot open (e.g. contact offering
           // visibility Hide / 506c-only) — avoids "Deal not found" on click.
           if (!readable) return null;
-          return { ...withRole, rosterReadable: true as const };
+          return { ...withBilling, rosterReadable: true as const };
         }),
       )
     ).filter((row): row is NonNullable<typeof row> => row != null);
@@ -474,6 +526,7 @@ export async function patchDealInvestorSummary(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealInvestorSummaryById(dealId, htmlRaw);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -541,6 +594,7 @@ export async function patchDealAnnouncement(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const { title, message } = sanitizeDealAnnouncement({
       title: titleRaw,
       message: messageRaw,
@@ -647,6 +701,7 @@ export async function patchDealOfferingOverview(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealOfferingOverviewById(
       dealId,
       sanitized.set,
@@ -699,6 +754,11 @@ export async function getDealOfferingInvestorPreview(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (
+      sendDealSaasLockIfNeeded(res, row, scope, { allowInvestingRead: true })
+    ) {
+      return;
+    }
     res.status(200).json({
       offeringInvestorPreviewJson: row.offeringInvestorPreviewJson ?? null,
     });
@@ -737,6 +797,7 @@ export async function patchDealOfferingInvestorPreview(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const canonical = sanitizeOfferingInvestorPreviewBody(body);
     const updated = await updateDealOfferingInvestorPreviewById(
       dealId,
@@ -802,6 +863,7 @@ export async function patchDealKeyHighlights(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealKeyHighlightsById(dealId, jsonRaw);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -863,6 +925,7 @@ export async function patchDealFundingInstructions(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealFundingInstructionsById(dealId, jsonRaw);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -941,6 +1004,7 @@ export async function patchDealGalleryCover(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealGalleryCoverById(dealId, toStore);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -993,6 +1057,7 @@ export async function patchDealOfferingGallery(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealOfferingGalleryPathsById(
       dealId,
       norm.paths,
@@ -1052,6 +1117,7 @@ export async function postDealOfferingDocumentUploads(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const newPaths = await saveDealAssetFiles({ files: fileList, dealId });
     logSocDealOfferingAssetUpload({
       actorUserId: user.id,
@@ -1098,6 +1164,7 @@ export async function postDealOfferingGalleryUploads(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const newPaths = await saveDealAssetFiles({
       files: fileList,
       dealId,
@@ -1156,6 +1223,11 @@ export async function getOfferingPreviewToken(
     );
     if (!visible) {
       res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    if (
+      sendDealSaasLockIfNeeded(res, visible, scope, { allowInvestingRead: true })
+    ) {
       return;
     }
     if (isDealStageDraft(visible.dealStage)) {
@@ -1253,6 +1325,7 @@ export async function postOfferingPreviewShareEmail(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
     if (isDealStageDraft(visible.dealStage)) {
       res.status(403).json({
         message:
@@ -1426,6 +1499,11 @@ export async function getDealById(req: Request, res: Response): Promise<void> {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (
+      sendDealSaasLockIfNeeded(res, row, scope, { allowInvestingRead: true })
+    ) {
+      return;
+    }
     const withPreview = await ensureDealOfferingPreviewTokenStored(dealId);
     const rowForJson = withPreview ?? row;
     res.status(200).json({
@@ -1564,6 +1642,7 @@ export async function putDeal(req: Request, res: Response): Promise<void> {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
 
     const [actor] = await db
       .select({ organizationId: users.organizationId, role: users.role })

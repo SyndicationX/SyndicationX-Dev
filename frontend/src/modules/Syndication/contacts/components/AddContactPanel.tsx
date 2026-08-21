@@ -462,11 +462,7 @@ export function AddContactPanel({
       setNote(contactToEdit.note)
       setTags([...contactToEdit.tags])
       setLists([...contactToEdit.lists])
-      setOwners(
-        contactToEdit.owners.length > 0
-          ? [...contactToEdit.owners]
-          : defaultOwnerChips(),
-      )
+      setOwners([...contactToEdit.owners])
       setTagInput("")
       setListInput("")
       setTagPickerOpen(false)
@@ -666,7 +662,11 @@ export function AddContactPanel({
         note: note.trim(),
         tags: [...tags],
         lists: [...lists],
-        owners: owners.length > 0 ? [...owners] : defaultOwnerChips(),
+        owners: contactToEdit
+          ? [...owners]
+          : owners.length > 0
+            ? [...owners]
+            : defaultOwnerChips(),
       }
       if (contactToEdit) {
         if (!onUpdate) throw new Error("Update handler is not configured.")

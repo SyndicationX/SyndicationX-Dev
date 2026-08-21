@@ -7,6 +7,7 @@ import {
   type DealTypeOption,
 } from "../types/deals.types"
 import { formatAmountNumberExport, parseMoneyDigits } from "./offeringMoneyFormat"
+import { formatDealListDateDisplay } from "../dealsListDisplay"
 
 function dealTypeLabel(code: string): string {
   if (code === "—" || !code) return "—"
@@ -58,6 +59,7 @@ export function buildDealsListExportCsv(rows: DealListRow[]): string {
     "Total in progress",
     "Total accepted",
     "Raise target",
+    "Next billing",
     "Distributions",
     "Investors",
     "Investor class",
@@ -88,6 +90,11 @@ export function buildDealsListExportCsv(rows: DealListRow[]): string {
         dealMoneyCsvCell(row.totalInProgress),
         dealMoneyCsvCell(row.totalAccepted),
         dealMoneyCsvCell(row.raiseTarget),
+        row.nextBillingDate
+          ? formatDealListDateDisplay(row.nextBillingDate)
+          : row.archived
+            ? "Not billed"
+            : "",
         row.distributions,
         row.investors,
         row.investorClass,

@@ -107,6 +107,7 @@ import {
   type SendMailEmailPreviewPayload,
 } from "../contacts/components/SendMailEmailPreviewModal";
 import { RadioPillGroup } from "../../../common/components/radio-pill-group/RadioPillGroup";
+import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip";
 import { DealsCreateDropdownSelect } from "../Deals/components/DealsCreateDropdownSelect";
 import {
   loadEmailTemplates,
@@ -1568,41 +1569,57 @@ export default function UserManagementPage({
   return (
     <section className="um_page" aria-label="Members">
       <div className="um_members_top_row">
-        <div className="um_members_tabs_outer">
-          <div
-            className="um_members_tabs_row"
-            role="tablist"
-            aria-label="Members sections"
-          >
-            <button
-              type="button"
-              id="um-members-tab-users"
-              role="tab"
-              aria-selected={membersTab === "users"}
-              aria-controls="um-members-panel-users"
-              className={`um_members_tab${
-                membersTab === "users" ? " um_members_tab_active" : ""
-              }`}
-              onClick={() => setMembersTab("users")}
+        <div className="um_members_tabs_outer deals_tabs_outer um_segmented_tabs_outer">
+          <TabsScrollStrip scrollClassName="deals_tabs_scroll um_segmented_tabs_scroll">
+            <div
+              className="um_members_tabs_row deals_tabs_row um_segmented_tabs_row"
+              role="tablist"
+              aria-label="Members sections"
             >
-              <Users size={18} strokeWidth={1.75} aria-hidden />
-              <span>Users &amp; Roles</span>
-            </button>
-            <button
-              type="button"
-              id="um-members-tab-general"
-              role="tab"
-              aria-selected={membersTab === "general"}
-              aria-controls="um-members-panel-general"
-              className={`um_members_tab${
-                membersTab === "general" ? " um_members_tab_active" : ""
-              }`}
-              onClick={() => setMembersTab("general")}
-            >
-              <Info size={18} strokeWidth={1.75} aria-hidden />
-              <span>General Info</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                id="um-members-tab-users"
+                role="tab"
+                aria-selected={membersTab === "users"}
+                aria-controls="um-members-panel-users"
+                className={`um_members_tab deals_tabs_tab um_segmented_tab${
+                  membersTab === "users" ? " um_members_tab_active" : ""
+                }`}
+                onClick={() => setMembersTab("users")}
+              >
+                <Users
+                  className="deals_tabs_icon um_segmented_tab_icon"
+                  size={16}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span className="deals_tabs_label um_segmented_tab_label">
+                  Users &amp; Roles
+                </span>
+              </button>
+              <button
+                type="button"
+                id="um-members-tab-general"
+                role="tab"
+                aria-selected={membersTab === "general"}
+                aria-controls="um-members-panel-general"
+                className={`um_members_tab deals_tabs_tab um_segmented_tab${
+                  membersTab === "general" ? " um_members_tab_active" : ""
+                }`}
+                onClick={() => setMembersTab("general")}
+              >
+                <Info
+                  className="deals_tabs_icon um_segmented_tab_icon"
+                  size={16}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span className="deals_tabs_label um_segmented_tab_label">
+                  General Info
+                </span>
+              </button>
+            </div>
+          </TabsScrollStrip>
         </div>
         {membersTab === "users" ? (
           <div className="um_members_top_row_actions">

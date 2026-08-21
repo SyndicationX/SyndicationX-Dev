@@ -46,6 +46,9 @@ const UPLOAD_SUBDIR = DEAL_ASSETS_UPLOAD_SUBDIR;
 /** Canonical `investor_role` for LP investors (Investors tab add + list filter). */
 export const LP_INVESTOR_ROLE_STORED = "lp_investors";
 
+/** Stored `investor_role` / `deal_member_role` for Deal Members → General Partners. */
+export const GENERAL_PARTNER_ROLE_STORED = "General Partner";
+
 const LP_INVESTOR_ROLE_MATCH = [
   LP_INVESTOR_ROLE_STORED,
   "LP Investors",
@@ -56,6 +59,71 @@ const LP_INVESTOR_ROLE_MATCH = [
 export function isLpInvestorRole(raw: string | null | undefined): boolean {
   const s = String(raw ?? "").trim().toLowerCase();
   return s === "lp_investors" || s === "lp investors" || s === "lp investor";
+}
+
+/** True when the stored role is General Partner (value or plural label). */
+export function isGeneralPartnerStoredRole(
+  raw: string | null | undefined,
+): boolean {
+  const s = String(raw ?? "").trim().toLowerCase();
+  return s === "general partner" || s === "general partners";
+}
+
+/** Lead / Admin / Co-sponsor / Deal Member — stay on Deal Members, not General Partners. */
+export function isDealTeamRosterRole(raw: string | null | undefined): boolean {
+  const s = String(raw ?? "").trim().toLowerCase();
+  return (
+    s === "lead sponsor" ||
+    s === "admin sponsor" ||
+    s === "co-sponsor" ||
+    s === "co sponsor" ||
+    s === "deal member"
+  );
+}
+
+export function isGpSubscriptionType(subscriptionType: string): boolean {
+  return String(subscriptionType ?? "").trim().toLowerCase() === "gp";
+}
+
+/** True when the stored class id/name is a GP (General Partner) class on this deal. */
+export function storedInvestorClassIsGp(
+  stored: string | null | undefined,
+  classes: ReadonlyArray<{
+    id: string;
+    name: string;
+    subscriptionType: string;
+  }>,
+): boolean {
+  const t = String(stored ?? "").trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  const matched = classes.find(
+    (c) =>
+      c.id.trim().toLowerCase() === lower ||
+      c.name.trim().toLowerCase() === lower,
+  );
+  if (matched) return isGpSubscriptionType(matched.subscriptionType);
+  return /\bgp\b|general partner/.test(lower);
+}
+
+/**
+ * GP roster identity: General Partner role, or a GP class when the person is not
+ * already a Deal Members team role (Lead / Admin / Co / Deal Member).
+ */
+export function rowIsGeneralPartnerForRoster(
+  role: string | null | undefined,
+  investorClass: string | null | undefined,
+  classes: ReadonlyArray<{
+    id: string;
+    name: string;
+    subscriptionType: string;
+  }>,
+): boolean {
+  if (isDealTeamRosterRole(role)) return false;
+  return (
+    isGeneralPartnerStoredRole(role) ||
+    storedInvestorClassIsGp(investorClass, classes)
+  );
 }
 
 const MEMBER_NAME: Record<string, string> = {
@@ -116,6 +184,9 @@ function isInvestorOnboardingSubscriptionType(subscriptionType: string): boolean
 const LP_ONBOARDING_CLASS_UNAVAILABLE_MESSAGE =
   "General partner classes are not available during investor onboarding. Select a limited partner (LP) or mezzanine class.";
 
+const GP_CLASS_ON_INVESTORS_TAB_MESSAGE =
+  "General partner classes belong on Deal Members → General Partners, not on the Investors list.";
+
 export async function resolveFirstInvestorClassForDeal(
   dealId: string,
 ): Promise<
@@ -161,6 +232,8 @@ export type ResolveInvestorClassOpts = {
   optional?: boolean;
   /** Investor onboarding: LP and mezzanine classes only (GP excluded). */
   lpOnboardingOnly?: boolean;
+  /** Investors tab: reject GP classes (they belong on General Partners). */
+  excludeGp?: boolean;
 };
 
 export async function resolveInvestorClassForDealInvestment(
@@ -197,14 +270,25 @@ export async function resolveInvestorClassForDealInvestment(
     return { ok: false, message: "Investor class is required." };
   }
 
-  const byId = classes.find((c) => c.id === t);
-  if (byId) {
+  function rejectIfClassNotAllowed(
+    subscriptionType: string,
+  ): { ok: false; message: string } | null {
     if (
       opts?.lpOnboardingOnly &&
-      !isInvestorOnboardingSubscriptionType(byId.subscriptionType)
+      !isInvestorOnboardingSubscriptionType(subscriptionType)
     ) {
       return { ok: false, message: LP_ONBOARDING_CLASS_UNAVAILABLE_MESSAGE };
     }
+    if (opts?.excludeGp && isGpSubscriptionType(subscriptionType)) {
+      return { ok: false, message: GP_CLASS_ON_INVESTORS_TAB_MESSAGE };
+    }
+    return null;
+  }
+
+  const byId = classes.find((c) => c.id === t);
+  if (byId) {
+    const blocked = rejectIfClassNotAllowed(byId.subscriptionType);
+    if (blocked) return blocked;
     const name = byId.name?.trim();
     return {
       ok: true,
@@ -215,12 +299,8 @@ export async function resolveInvestorClassForDealInvestment(
   const norm = (s: string) => s.trim().toLowerCase();
   const byName = classes.find((c) => norm(c.name) === norm(t));
   if (byName) {
-    if (
-      opts?.lpOnboardingOnly &&
-      !isInvestorOnboardingSubscriptionType(byName.subscriptionType)
-    ) {
-      return { ok: false, message: LP_ONBOARDING_CLASS_UNAVAILABLE_MESSAGE };
-    }
+    const blocked = rejectIfClassNotAllowed(byName.subscriptionType);
+    if (blocked) return blocked;
     const name = byName.name?.trim();
     return {
       ok: true,
