@@ -1,6 +1,6 @@
 import { ArrowLeft, Landmark, Loader2, Search } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
   DataTable,
   type DataTableColumn,
@@ -214,9 +214,11 @@ function linesFromStoredPayments(
 
 export function DistributionDetailsPage() {
   const { dealId: dealIdParam, distributionId: distIdParam } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const dealId = (dealIdParam ?? "").trim()
   const distributionId = (distIdParam ?? "").trim()
+  const filterClassId = (searchParams.get("classId") ?? "").trim()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -497,13 +499,39 @@ export function DistributionDetailsPage() {
   }, [computedLines])
 
   useEffect(() => {
+    setQuery("")
     setPage(1)
-  }, [lines.length, query])
+  }, [distributionId, filterClassId])
+
+  const selectedClassLabel = useMemo(() => {
+    if (!filterClassId) return ""
+    const fromLine = lines.find(
+      (row) => row.classId === filterClassId || row.className === filterClassId,
+    )
+    if (fromLine?.className.trim()) return fromLine.className.trim()
+    const fromSetup = (bundle?.classes ?? []).find((c) => c.id === filterClassId)
+    if (fromSetup?.name.trim()) return fromSetup.name.trim()
+    const fromDeal = investorClasses.find((c) => c.id === filterClassId)
+    return String(fromDeal?.name ?? "").trim()
+  }, [filterClassId, lines, bundle, investorClasses])
+
+  useEffect(() => {
+    setPage(1)
+  }, [lines.length, query, filterClassId])
 
   const filteredLines = useMemo(() => {
+    const classId = filterClassId.trim()
+    const className = selectedClassLabel.trim().toLowerCase()
+    const byClass = !classId
+      ? lines
+      : lines.filter((row) => {
+          if (row.classId === classId) return true
+          const rowName = row.className.trim().toLowerCase()
+          return Boolean(className && rowName && rowName === className)
+        })
     const q = query.trim().toLowerCase()
-    if (!q) return lines
-    return lines.filter((row) => {
+    if (!q) return byClass
+    return byClass.filter((row) => {
       const hay = [
         row.investorName,
         row.className,
@@ -517,7 +545,7 @@ export function DistributionDetailsPage() {
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [lines, query])
+  }, [lines, query, filterClassId, selectedClassLabel])
 
   const pagination = useMemo(
     () => ({
@@ -1255,7 +1283,11 @@ export function DistributionDetailsPage() {
             <h1 className="deals_list_title">Distribution details</h1>
             <p className="ds_page_subtitle">
               {bundle?.dealName ? `${bundle.dealName} · ` : ""}
-              {title} · Investor payments for this run
+              {title}
+              {selectedClassLabel
+                ? ` · ${selectedClassLabel}`
+                : ""}
+              {" · Investor payments for this run"}
             </p>
           </div>
         </div>
@@ -1357,7 +1389,11 @@ export function DistributionDetailsPage() {
               aria-label="Investor payments"
             >
               <div className="deal_dist_details_table_intro">
-                <h2 className="deal_dist_heading">Investors</h2>
+                <h2 className="deal_dist_heading">
+                  {selectedClassLabel
+                    ? `${selectedClassLabel} investors`
+                    : "Investors"}
+                </h2>
               </div>
               <div className="um_search_wrap deal_dist_search">
                 <Search className="um_search_icon" size={18} aria-hidden />
@@ -1382,7 +1418,9 @@ export function DistributionDetailsPage() {
               emptyLabel={
                 query.trim()
                   ? "No investors match your search."
-                  : "No funded investors matched to classes for this distribution."
+                  : filterClassId
+                    ? "No investors in this class for this distribution."
+                    : "No funded investors matched to classes for this distribution."
               }
               initialSort={{ columnId: "payment", direction: "desc" }}
               pagination={pagination}

@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -98,6 +99,11 @@ type DataTableProps<T> = {
   floatingHorizontalScroll?: boolean;
   /** Accessible name for the floating left/right control group. */
   floatingHorizontalScrollLabel?: string;
+  /**
+   * Optional content rendered in a full-width row immediately under that body
+   * row (e.g. nested class details under a distribution).
+   */
+  renderExpandedContent?: (row: T, rowIndex: number) => ReactNode;
 };
 
 function sortHeaderLabel(header: ReactNode, columnId: string): string {
@@ -171,13 +177,13 @@ function TableScrollRegion({
       return;
     }
     const measure = () => {
-      const table = el.querySelector("table");
-      if (!table) {
-        setOverflowX(false);
-        return;
-      }
       const regionWidth = el.clientWidth;
-      if (regionWidth <= 0) {
+      el.style.setProperty(
+        "--data-table-scroll-port-width",
+        regionWidth > 0 ? `${regionWidth}px` : "100%",
+      );
+      const table = el.querySelector("table");
+      if (!table || regionWidth <= 0) {
         setOverflowX(false);
         return;
       }
@@ -254,6 +260,7 @@ export function DataTable<T>({
   forceHorizontalScroll: forceHorizontalScrollProp,
   floatingHorizontalScroll = false,
   floatingHorizontalScrollLabel = "Columns",
+  renderExpandedContent,
 }: DataTableProps<T>) {
   const forceHorizontalScroll =
     forceHorizontalScrollProp ?? visualVariant === "members";
@@ -526,9 +533,11 @@ export function DataTable<T>({
                   return;
                 onBodyRowClick(row, i);
               }
+              const rowKey = getRowKey(row, i);
+              const expandedContent = renderExpandedContent?.(row, i);
               return (
+              <Fragment key={rowKey}>
               <tr
-                key={getRowKey(row, i)}
                 className={rowClass || undefined}
                 onClick={onBodyRowClick ? handleRowClick : undefined}
               >
@@ -554,6 +563,17 @@ export function DataTable<T>({
                   );
                 })}
               </tr>
+              {expandedContent ? (
+                <tr className="data_table_expanded_row">
+                  <td
+                    className="data_table_expanded_cell"
+                    colSpan={columns.length}
+                  >
+                    {expandedContent}
+                  </td>
+                </tr>
+              ) : null}
+              </Fragment>
             );
             })
           )}

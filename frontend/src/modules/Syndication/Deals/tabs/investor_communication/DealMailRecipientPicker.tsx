@@ -1,4 +1,11 @@
-import { ArrowDown, ChevronDown, Info, ListChecks, ListX } from "lucide-react"
+import {
+  ArrowDown,
+  ChevronDown,
+  Info,
+  ListChecks,
+  ListX,
+  Search,
+} from "lucide-react"
 import {
   useCallback,
   useLayoutEffect,
@@ -87,6 +94,27 @@ function toggleIds(
 function emailLine(recipient: DealMailRecipient): string {
   if (recipient.email.includes("@")) return recipient.email
   return EMAIL_UNAVAILABLE_LABEL
+}
+
+function filterRecipientsByQuery(
+  rows: DealMailRecipient[],
+  query: string,
+): DealMailRecipient[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return rows
+  return rows.filter((recipient) => {
+    const haystack = [
+      recipient.displayName,
+      recipient.email,
+      recipient.className,
+      recipient.roleLabel,
+      recipient.sponsorName,
+      recipient.sponsorEmail,
+    ]
+      .join(" ")
+      .toLowerCase()
+    return haystack.includes(q)
+  })
 }
 
 function InvestorRow({
@@ -274,14 +302,23 @@ export function DealMailRecipientPicker({
   viewerIsCosponsor = false,
 }: DealMailRecipientPickerProps) {
   const [tab, setTab] = useState<RecipientTab>("all")
+  const [query, setQuery] = useState("")
   const listScrollRef = useRef<HTMLDivElement>(null)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const tree = useMemo(() => groupDealMailRecipients(recipients), [recipients])
+  const filteredLps = useMemo(
+    () => filterRecipientsByQuery(tree.lps, query),
+    [tree.lps, query],
+  )
+  const filteredGps = useMemo(
+    () => filterRecipientsByQuery(tree.gps, query),
+    [tree.gps, query],
+  )
   const visibleIds = useMemo(() => {
-    if (tab === "lp") return tree.lps.map((r) => r.id)
-    if (tab === "gp") return tree.gps.map((r) => r.id)
-    return recipients.map((r) => r.id)
-  }, [tab, tree, recipients])
+    if (tab === "lp") return filteredLps.map((r) => r.id)
+    if (tab === "gp") return filteredGps.map((r) => r.id)
+    return [...filteredLps, ...filteredGps].map((r) => r.id)
+  }, [tab, filteredLps, filteredGps])
   const visibleState = selectionState(visibleIds, selectedIds)
   const selectedCount = recipients.filter((r) => selectedIds.has(r.id)).length
   const releaseCount = recipients.filter(
@@ -312,9 +349,10 @@ export function DealMailRecipientPicker({
   }, [
     syncScrollToBottomButton,
     tab,
+    query,
     recipients.length,
-    tree.lps.length,
-    tree.gps.length,
+    filteredLps.length,
+    filteredGps.length,
   ])
 
   function scrollListToBottom() {
@@ -337,27 +375,38 @@ export function DealMailRecipientPicker({
         <TabButton
           id="all"
           label="All"
-          count={recipients.length}
+          count={filteredLps.length + filteredGps.length}
           active={tab === "all"}
           onSelect={setTab}
         />
         <TabButton
           id="lp"
           label="Limited Partners"
-          count={tree.lps.length}
+          count={filteredLps.length}
           active={tab === "lp"}
           onSelect={setTab}
         />
         <TabButton
           id="gp"
           label="General Partners"
-          count={tree.gps.length}
+          count={filteredGps.length}
           active={tab === "gp"}
           onSelect={setTab}
         />
       </div>
 
       <div className="deal_inv_comm_recip_toolbar">
+        <div className="deal_inv_comm_recip_search">
+          <Search className="um_search_icon" size={16} aria-hidden />
+          <input
+            type="search"
+            className="um_search_input deal_inv_comm_recip_search_input"
+            placeholder="Search LP or GP…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search limited partners or general partners"
+          />
+        </div>
         <div className="deal_inv_comm_recip_bulk">
           <button
             type="button"
@@ -411,32 +460,32 @@ export function DealMailRecipientPicker({
           className="deal_inv_comm_recip_groups"
           role="tabpanel"
         >
-          {tab !== "gp" && tree.lps.length > 0 ? (
+          {tab !== "gp" && filteredLps.length > 0 ? (
             <div className={tab === "all" ? "deal_inv_comm_recip_section" : undefined}>
               {tab === "all" ? (
                 <p className="deal_inv_comm_recip_section_label">Limited Partners</p>
               ) : null}
               <FlatRecipientList
-                rows={tree.lps}
+                rows={filteredLps}
                 selectedIds={selectedIds}
                 onChangeSelectedIds={onChangeSelectedIds}
               />
             </div>
           ) : null}
 
-          {tab !== "lp" && tree.gps.length > 0 ? (
+          {tab !== "lp" && filteredGps.length > 0 ? (
             <div className={tab === "all" ? "deal_inv_comm_recip_section" : undefined}>
               {tab === "all" ? (
                 <p className="deal_inv_comm_recip_section_label">General Partners</p>
               ) : null}
               <GroupBlock
                 title="General Partners"
-                countLabel={`${tree.gps.length}`}
-                ids={tree.gps.map((r) => r.id)}
+                countLabel={`${filteredGps.length}`}
+                ids={filteredGps.map((r) => r.id)}
                 selectedIds={selectedIds}
                 onChangeSelectedIds={onChangeSelectedIds}
               >
-                {tree.gps.map((r) => (
+                {filteredGps.map((r) => (
                   <InvestorRow
                     key={r.id}
                     recipient={r}
@@ -452,14 +501,25 @@ export function DealMailRecipientPicker({
             </div>
           ) : null}
 
-          {tab === "lp" && tree.lps.length === 0 ? (
+          {tab === "all" &&
+          filteredLps.length === 0 &&
+          filteredGps.length === 0 ? (
             <p className="deal_inv_comm_recipient_empty deal_inv_comm_recipient_empty_inset">
-              No limited partners on this deal.
+              No investors match your search.
             </p>
           ) : null}
-          {tab === "gp" && tree.gps.length === 0 ? (
+          {tab === "lp" && filteredLps.length === 0 ? (
             <p className="deal_inv_comm_recipient_empty deal_inv_comm_recipient_empty_inset">
-              No general partners on this deal.
+              {query.trim()
+                ? "No limited partners match your search."
+                : "No limited partners on this deal."}
+            </p>
+          ) : null}
+          {tab === "gp" && filteredGps.length === 0 ? (
+            <p className="deal_inv_comm_recipient_empty deal_inv_comm_recipient_empty_inset">
+              {query.trim()
+                ? "No general partners match your search."
+                : "No general partners on this deal."}
             </p>
           ) : null}
         </div>

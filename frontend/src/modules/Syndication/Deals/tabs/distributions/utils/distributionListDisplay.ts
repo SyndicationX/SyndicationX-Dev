@@ -4,6 +4,10 @@
  */
 
 import { formatDateDdMmmYyyy } from "../../../../../../common/utils/formatDateDisplay"
+import {
+  CLASS_TYPE_META,
+  type ClassSetupType,
+} from "../../../class-setup/types/class-setup.types"
 import type {
   DistributionSetupClass,
   PriorDistributionRecord,
@@ -14,6 +18,7 @@ import {
 } from "../../../distribution-setup/utils/distributionPeriod"
 import type { DealInvestorRow } from "../../../types/deal-investors.types"
 import { parseMoneyDigits } from "../../../utils/offeringMoneyFormat"
+import { parseStoredClassPercent } from "./investorDistributionAllocation"
 import { allocateInvestorsByPreferredDue } from "./investorPreferredAllocation"
 
 export type DistributionListMetrics = {
@@ -324,4 +329,305 @@ export function computeDistributionListMetrics(params: {
     periodEnd: window.end,
     paymentDate,
   }
+}
+
+export type DistributionClassOption = {
+  id: string
+  name: string
+  typeLabel: string
+}
+
+function classTypeLabel(classType: string | undefined): string {
+  const t = String(classType ?? "").trim().toLowerCase()
+  if (t in CLASS_TYPE_META) {
+    return CLASS_TYPE_META[t as ClassSetupType].shortLabel
+  }
+  return ""
+}
+
+/** Unique investor classes that belong to a completed distribution run. */
+export function classesInDistribution(
+  row: PriorDistributionRecord,
+  classes: DistributionSetupClass[],
+): DistributionClassOption[] {
+  const byId = new Map(classes.map((c) => [c.id, c]))
+  const map = new Map<string, DistributionClassOption>()
+
+  for (const payment of row.investorPayments ?? []) {
+    const id = String(payment.classId ?? "").trim()
+    if (!id) continue
+    const setup = byId.get(id)
+    const name =
+      String(payment.className ?? "").trim() || setup?.name.trim() || id
+    if (!map.has(id)) {
+      map.set(id, {
+        id,
+        name,
+        typeLabel: classTypeLabel(setup?.classType),
+      })
+    }
+  }
+
+  if (map.size === 0) {
+    for (const cls of classes) {
+      const id = String(cls.id ?? "").trim()
+      if (!id) continue
+      map.set(id, {
+        id,
+        name: cls.name.trim() || id,
+        typeLabel: classTypeLabel(cls.classType),
+      })
+    }
+  }
+
+  return [...map.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  )
+}
+
+export type DistributionClassTableRow = {
+  id: string
+  name: string
+  typeLabel: string
+  investorCount: number
+  capital: number
+  payment: number
+  required: number
+  unpaid: number
+  sharePct: number
+}
+
+type ClassAgg = {
+  investorIds: Set<string>
+  capital: number
+  payment: number
+  required: number
+}
+
+export function classTableRowsForDistribution(params: {
+  row: PriorDistributionRecord
+  setupClasses: DistributionSetupClass[]
+  investors: DealInvestorRow[]
+}): DistributionClassTableRow[] {
+  const { row, setupClasses, investors } = params
+  const cash = parseMoneyDigits(row.amount)
+  const cashSafe = Number.isFinite(cash) ? Math.max(0, cash) : 0
+  const window = resolvePeriodWindow(row)
+  const setupById = new Map(setupClasses.map((c) => [c.id, c]))
+  const options = classesInDistribution(row, setupClasses)
+  const aggs = new Map<string, ClassAgg>()
+
+  function aggFor(classId: string): ClassAgg {
+    const existing = aggs.get(classId)
+    if (existing) return existing
+    const next: ClassAgg = {
+      investorIds: new Set(),
+      capital: 0,
+      payment: 0,
+      required: 0,
+    }
+    aggs.set(classId, next)
+    return next
+  }
+
+  const stored = row.investorPayments ?? []
+  if (stored.length > 0) {
+    for (const pay of stored) {
+      const classId = String(pay.classId ?? "").trim()
+      if (!classId) continue
+      const a = aggFor(classId)
+      const investorId = String(pay.investorId ?? "").trim()
+      if (investorId) a.investorIds.add(investorId)
+      a.capital += parseMoneyDigits(pay.capital) || 0
+      a.payment += parseMoneyDigits(pay.payment) || 0
+    }
+  }
+
+  if (investors.length > 0 && setupClasses.length > 0) {
+    const lines = allocateInvestorsByPreferredDue({
+      distributionAmount: cashSafe,
+      periodStartIso: window.start,
+      periodEndIso: window.end,
+      dayCountMode: "period_window",
+      investors,
+      classes: setupClasses,
+    })
+    for (const line of lines) {
+      const classId = String(line.classId ?? "").trim()
+      if (!classId) continue
+      const a = aggFor(classId)
+      if (line.investorId) a.investorIds.add(line.investorId)
+      a.required += line.required || 0
+      if (stored.length === 0) {
+        a.capital += line.capital || 0
+        a.payment += line.payment || 0
+      }
+    }
+  }
+
+  return options.map((opt) => {
+    const setup = setupById.get(opt.id)
+    const a = aggs.get(opt.id)
+    const payment = a?.payment ?? 0
+    const required = a?.required ?? 0
+    return {
+      id: opt.id,
+      name: opt.name,
+      typeLabel: opt.typeLabel || classTypeLabel(setup?.classType) || "—",
+      investorCount: a?.investorIds.size ?? 0,
+      capital: a?.capital ?? 0,
+      payment,
+      required,
+      unpaid: Math.max(0, required - payment),
+      sharePct: cashSafe > 0 ? (payment / cashSafe) * 100 : 0,
+    }
+  })
+}
+
+export type DistributionClassInvestorRow = {
+  id: string
+  name: string
+  email: string
+  capital: number
+  percentOfClass: number
+  payment: number
+  required: number
+  unpaid: number
+}
+
+function investorDisplayName(
+  inv: DealInvestorRow | undefined,
+  fallback: string,
+): string {
+  if (!inv) return fallback.trim() || "—"
+  const first = String(inv.firstName ?? "").trim()
+  const last = String(inv.lastName ?? "").trim()
+  const fromParts = [first, last].filter(Boolean).join(" ")
+  if (fromParts) return fromParts
+  const display = String(inv.displayName ?? "").trim()
+  return display || fallback.trim() || "—"
+}
+
+function matchesDistributionClass(
+  classId: string,
+  className: string,
+  targetId: string,
+  targetName: string,
+): boolean {
+  const id = String(classId ?? "").trim()
+  const target = String(targetId ?? "").trim()
+  if (id && target && id === target) return true
+  const a = String(className ?? "").trim().toLowerCase()
+  const b = String(targetName ?? "").trim().toLowerCase()
+  return Boolean(a && b && a === b)
+}
+
+/** Per-investor payments for one class on one completed distribution run. */
+export function investorRowsForDistributionClass(params: {
+  row: PriorDistributionRecord
+  classId: string
+  className: string
+  setupClasses: DistributionSetupClass[]
+  investors: DealInvestorRow[]
+}): DistributionClassInvestorRow[] {
+  const { row, classId, className, setupClasses, investors } = params
+  const cash = parseMoneyDigits(row.amount)
+  const cashSafe = Number.isFinite(cash) ? Math.max(0, cash) : 0
+  const window = resolvePeriodWindow(row)
+  const investorsById = new Map(
+    investors.map((inv) => [String(inv.id ?? "").trim(), inv]),
+  )
+
+  const allocByInvestor = new Map<
+    string,
+    { capital: number; percentOfClass: number; payment: number; required: number }
+  >()
+  if (investors.length > 0 && setupClasses.length > 0) {
+    const lines = allocateInvestorsByPreferredDue({
+      distributionAmount: cashSafe,
+      periodStartIso: window.start,
+      periodEndIso: window.end,
+      dayCountMode: "period_window",
+      investors,
+      classes: setupClasses,
+    })
+    for (const line of lines) {
+      if (
+        !matchesDistributionClass(
+          line.classId,
+          line.className,
+          classId,
+          className,
+        )
+      ) {
+        continue
+      }
+      const id = String(line.investorId ?? "").trim()
+      if (!id) continue
+      allocByInvestor.set(id, {
+        capital: line.capital || 0,
+        percentOfClass: line.percentOfClass || 0,
+        payment: line.payment || 0,
+        required: line.required || 0,
+      })
+    }
+  }
+
+  const stored = (row.investorPayments ?? []).filter((pay) =>
+    matchesDistributionClass(pay.classId, pay.className, classId, className),
+  )
+
+  const toRow = (args: {
+    id: string
+    name: string
+    email: string
+    capital: number
+    percentOfClass: number
+    payment: number
+    required: number
+  }): DistributionClassInvestorRow => ({
+    ...args,
+    unpaid: Math.max(0, args.required - args.payment),
+  })
+
+  const mapped =
+    stored.length > 0
+      ? stored.map((pay) => {
+          const id = String(pay.investorId ?? "").trim()
+          const inv = id ? investorsById.get(id) : undefined
+          const alloc = id ? allocByInvestor.get(id) : undefined
+          const payment = parseMoneyDigits(pay.payment) || 0
+          const capital =
+            parseMoneyDigits(pay.capital) || alloc?.capital || 0
+          const percentOfClass =
+            parseStoredClassPercent(pay.percentOfClass) ??
+            parseStoredClassPercent(inv?.percentOfClassDistributions) ??
+            alloc?.percentOfClass ??
+            0
+          return toRow({
+            id: id || `${pay.investorName}-${pay.classId}`,
+            name: investorDisplayName(inv, pay.investorName),
+            email: String(inv?.userEmail ?? pay.userEmail ?? "").trim(),
+            capital,
+            percentOfClass,
+            payment,
+            required: alloc?.required ?? 0,
+          })
+        })
+      : [...allocByInvestor.entries()].map(([id, alloc]) => {
+          const inv = investorsById.get(id)
+          return toRow({
+            id,
+            name: investorDisplayName(inv, ""),
+            email: String(inv?.userEmail ?? "").trim(),
+            capital: alloc.capital,
+            percentOfClass: alloc.percentOfClass,
+            payment: alloc.payment,
+            required: alloc.required,
+          })
+        })
+
+  return mapped.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  )
 }

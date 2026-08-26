@@ -233,3 +233,33 @@
   outline: 2px solid var(--um-focus-ring, #2563eb);
   outline-offset: 1px;
 }
+
+/* Deal Members + GP: header fills the card; no right-edge gutter strip. */
+.deal_members_tab .deal_inv_table_panel .um_table_wrap.data_table_shell {
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100%;
+}
+
+.deal_members_tab .deal_inv_table_panel .data_table_scroll_region {
+  width: 100%;
+  max-width: 100%;
+  overflow-y: hidden;
+  scrollbar-gutter: auto;
+}
+
+.deal_members_tab
+  .deal_inv_table_panel
+  .um_table_wrap.data_table_shell
+  .data_table_scroll_region
+  .um_table.deal_inv_table,
+.deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table {
+  width: 100%;
+  min-width: max-content;
+  max-width: none;
+  table-layout: auto;
+}
+
+.deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table thead {
+  background: var(--portal-table-header-bg, #f8fafc);
+}

@@ -723,6 +723,7 @@ export function DealDetailPage() {
   return (
     <div className="deals_list_page deals_detail_page">
       {showSyndicatingDealChrome ? (
+      <div className="deals_detail_sticky_chrome">
       <header className="deals_list_head">
         <DealAnnouncementBanner
           title={announcementTitle}
@@ -767,23 +768,7 @@ export function DealDetailPage() {
           </button>
         </div>
       </header>
-      ) : null}
 
-      {mode === "investing" && dealDetailApi ? (
-        <>
-          <LpDealDetailsPage
-            deal={dealDetailApi}
-            classes={investingOfferingClasses}
-            investorsPayload={investingOfferingInvestors}
-            onInvestNow={openInvestNow}
-            backTo={dealsListBackPath}
-            viewerRoleLabel={viewerDealInvestorRoleRaw}
-          />
-        </>
-      ) : null}
-
-      {showSyndicatingDealChrome ? (
-        <>
       <div className="um_members_tabs_outer deals_tabs_outer um_segmented_tabs_outer">
         <TabsScrollStrip scrollClassName="deals_tabs_scroll um_segmented_tabs_scroll">
           <div
@@ -827,7 +812,24 @@ export function DealDetailPage() {
           </div>
         </TabsScrollStrip>
       </div>
+      </div>
+      ) : null}
 
+      {mode === "investing" && dealDetailApi ? (
+        <>
+          <LpDealDetailsPage
+            deal={dealDetailApi}
+            classes={investingOfferingClasses}
+            investorsPayload={investingOfferingInvestors}
+            onInvestNow={openInvestNow}
+            backTo={dealsListBackPath}
+            viewerRoleLabel={viewerDealInvestorRoleRaw}
+          />
+        </>
+      ) : null}
+
+      {showSyndicatingDealChrome ? (
+        <>
       <div
         className={
           activeTab === "deal_members"

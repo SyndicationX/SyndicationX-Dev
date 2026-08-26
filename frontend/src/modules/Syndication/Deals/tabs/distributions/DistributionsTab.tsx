@@ -23,6 +23,7 @@ import {
   fetchDistributionSetup,
 } from "../../distribution-setup/api/distributionSetupApi"
 import type {
+  DistributionSetupBundle,
   DistributionSetupClass,
   PriorDistributionRecord,
 } from "../../distribution-setup/types/distribution-setup.types"
@@ -39,9 +40,12 @@ import type { DealInvestorRow } from "../../types/deal-investors.types"
 // import { DistributionFeeTab } from "./DistributionFeeTab"
 import { DistributionRowActions } from "./DistributionRowActions"
 import { DistributionPeriodCell } from "./DistributionPeriodCell"
+import { DistributionNameClassMenu } from "./DistributionNameClassMenu"
+import { DistributionClassesPanel } from "./DistributionClassesPanel"
 import { downloadDistributionsExportCsv } from "./utils/distributionsExportCsv"
 import { sanitizePriorDistributions } from "./utils/investorPreferredAllocation"
 import {
+  classTableRowsForDistribution,
   computeDistributionListMetrics,
   deductsFromDisplayLabel,
   distributionDisplayName,
@@ -163,15 +167,9 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
   const [deleteTarget, setDeleteTarget] =
     useState<PriorDistributionRecord | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
-
-  const openDetails = useCallback(
-    (row: PriorDistributionRecord) => {
-      navigate(
-        `/deals/${encodeURIComponent(id)}/distributions/${encodeURIComponent(row.id)}`,
-      )
-    },
-    [id, navigate],
-  )
+  const [expandedDistributionId, setExpandedDistributionId] = useState<
+    string | null
+  >(null)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -200,6 +198,23 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       )
     } finally {
       setLoading(false)
+    }
+  }, [id])
+
+  const refreshDistributionsQuietly = useCallback(async () => {
+    if (!id) return
+    try {
+      const [bundle, invPack] = await Promise.all([
+        fetchDistributionSetup(id),
+        fetchDealInvestors(id, { lpInvestorsOnly: false }),
+      ])
+      setPriorDistributions(
+        sanitizePriorDistributions(bundle.priorDistributions ?? []),
+      )
+      setClasses(bundle.classes ?? [])
+      setInvestors(invPack.investors ?? [])
+    } catch {
+      /* keep the current table if a background refresh fails */
     }
   }, [id])
 
@@ -340,6 +355,15 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
     setPage(1)
   }, [filtered.length, query])
 
+  useEffect(() => {
+    if (
+      expandedDistributionId &&
+      !filtered.some((r) => r.id === expandedDistributionId)
+    ) {
+      setExpandedDistributionId(null)
+    }
+  }, [filtered, expandedDistributionId])
+
   const pagination = useMemo(
     () => ({
       page,
@@ -474,6 +498,29 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
     [id, deleteTarget],
   )
 
+  const handleClassInvestorSaved = useCallback(
+    (
+      saved: DistributionSetupBundle,
+      investorId: string,
+      nextPct?: number,
+    ) => {
+      setPriorDistributions(
+        sanitizePriorDistributions(saved.priorDistributions ?? []),
+      )
+      if (saved.classes?.length) setClasses(saved.classes)
+      if (nextPct == null) return
+      const pctLabel = `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`
+      setInvestors((prev) =>
+        prev.map((inv) =>
+          inv.id === investorId
+            ? { ...inv, percentOfClassDistributions: pctLabel }
+            : inv,
+        ),
+      )
+    },
+    [],
+  )
+
   // Visibility toggle — commented out for now
   // const setVisible = useCallback((distributionId: string, next: boolean) => {
   //   setPriorDistributions((prev) =>
@@ -488,21 +535,20 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       {
         id: "name",
         header: "Distribution name",
-        colWidth: "12rem",
+        colWidth: "16rem",
         thClassName: "deal_dist_th_name",
         tdClassName: "deal_dist_td_name",
         sortValue: (row) => distributionDisplayName(row).toLowerCase(),
         cell: (row) => (
-          <button
-            type="button"
-            className="deal_dist_name_link"
-            onClick={(e) => {
-              e.stopPropagation()
-              openDetails(row)
-            }}
-          >
-            {distributionDisplayName(row)}
-          </button>
+          <DistributionNameClassMenu
+            name={distributionDisplayName(row)}
+            expanded={expandedDistributionId === row.id}
+            onToggle={() =>
+              setExpandedDistributionId((prev) =>
+                prev === row.id ? null : row.id,
+              )
+            }
+          />
         ),
       },
       {
@@ -647,7 +693,7 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       // },
     ],
     [
-      openDetails,
+      expandedDistributionId,
       totals.paid,
       totals.unpaid,
       openEditSetup,
@@ -965,11 +1011,35 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
                 getRowKey={(row) => row.id}
                 emptyLabel={emptyLabel}
                 initialSort={{ columnId: "paymentDate", direction: "desc" }}
-                onBodyRowClick={(row) => openDetails(row)}
-                getRowClassName={() => "deal_dist_table_row"}
+                getRowClassName={(row) =>
+                  `deal_dist_table_row${
+                    expandedDistributionId === row.id
+                      ? " deal_dist_table_row_expanded"
+                      : ""
+                  }`
+                }
                 stickyFirstColumn
                 forceHorizontalScroll
                 pagination={pagination}
+                renderExpandedContent={(row) =>
+                  expandedDistributionId === row.id ? (
+                    <DistributionClassesPanel
+                      dealId={id}
+                      distributionName={distributionDisplayName(row)}
+                      distribution={row}
+                      setupClasses={classes}
+                      investors={investors}
+                      rows={classTableRowsForDistribution({
+                        row,
+                        setupClasses: classes,
+                        investors,
+                      })}
+                      fundingReady={Boolean(dealFunding?.fundingReady)}
+                      onSaved={handleClassInvestorSaved}
+                      onReload={refreshDistributionsQuietly}
+                    />
+                  ) : null
+                }
               />
             </div>
 

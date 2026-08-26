@@ -173,6 +173,8 @@
 
 .deal_inv_table_panel .data_table_scroll_region {
   min-width: 0;
+  overflow-y: hidden;
+  scrollbar-gutter: auto;
 }
 
 .deal_inv_table_panel
@@ -181,8 +183,8 @@
   .um_table.deal_inv_table,
 .deal_inv_table_panel .um_table.deal_inv_table {
   table-layout: auto;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: max-content;
   max-width: none;
 }
 

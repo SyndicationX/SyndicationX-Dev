@@ -155,7 +155,7 @@ export function DealSendMailModal({
                 )
               })
               .map((r) => r.id)
-          : merged.map((r) => r.id)
+          : []
       setSelectedRecipientIds(new Set(ids))
       const active = templates.filter((t) => !t.archived)
       setEmailTemplates(active)
@@ -338,13 +338,15 @@ export function DealSendMailModal({
             <span>
               {loadingRecipients
                 ? "Loading investors for this deal…"
-                : viewerIsCosponsor
-                  ? `${selectedRecipients.length} selected. Sending as a cosponsor releases this email to your investors.`
-                  : selectedReleaseCount > 0
-                    ? `${selectedRecipients.length} selected · ${selectedReleaseCount} require cosponsor release.`
-                    : `Sending to ${selectedRecipients.length} selected investor${
-                        selectedRecipients.length === 1 ? "" : "s"
-                      } on this deal.`}
+                : selectedRecipients.length === 0
+                  ? "Select limited partners or general partners to send this email."
+                  : viewerIsCosponsor
+                    ? `${selectedRecipients.length} selected. Sending as a cosponsor releases this email to your investors.`
+                    : selectedReleaseCount > 0
+                      ? `${selectedRecipients.length} selected · ${selectedReleaseCount} require cosponsor release.`
+                      : `Sending to ${selectedRecipients.length} selected investor${
+                          selectedRecipients.length === 1 ? "" : "s"
+                        } on this deal.`}
             </span>
           </p>
 

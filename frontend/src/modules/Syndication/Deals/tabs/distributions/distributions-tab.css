@@ -437,20 +437,209 @@
   color: #b91c1c;
 }
 
-.deal_dist_name_link {
+.deal_dist_name_toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  width: 100%;
+  max-width: 18rem;
+  margin: 0;
+  padding: 0.15rem 0;
+  border: none;
   background: none;
-  border: 0;
-  padding: 0;
   font: inherit;
   font-weight: 650;
   color: inherit;
   cursor: pointer;
   text-align: left;
-  text-decoration: none;
 }
 
-.deal_dist_name_link:hover {
+.deal_dist_name_toggle_label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deal_dist_name_chevron {
+  flex-shrink: 0;
+  color: var(--portal-text-muted, #64748b);
+  transition: transform 0.2s ease;
+}
+
+.deal_dist_name_chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.deal_dist_name_toggle:hover .deal_dist_name_toggle_label {
   text-decoration: underline;
+}
+
+.deal_dist_name_toggle:focus-visible {
+  outline: 2px solid var(--portal-primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.deal_dist_table_row_expanded {
+  background: color-mix(in srgb, var(--portal-gold-accent, #d4af37) 8%, transparent);
+}
+
+.deal_dist_classes_panel {
+  margin: 0;
+  border: none;
+  background: color-mix(in srgb, var(--portal-text) 2.5%, var(--portal-surface, #fff));
+}
+
+.deal_dist_classes_panel_head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.85rem 1rem 0.35rem;
+}
+
+.deal_dist_classes_panel_title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--portal-text, #0f172a);
+}
+
+.deal_dist_classes_toolbar {
+  margin: 0 !important;
+  padding: 0.45rem 1rem 0.65rem !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+.deal_dist_classes_panel .deals_table_name_link.deal_classes_name_btn {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--portal-text, #1b1b1d);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deal_dist_classes_panel .deals_table_name_link.deal_classes_name_btn:hover {
+  text-decoration: underline;
+}
+
+.deal_dist_classes_panel .deal_dist_name_toggle {
+  max-width: none;
+}
+
+.deal_dist_class_investors_panel {
+  margin: 0;
+  border: none;
+  background: color-mix(in srgb, var(--portal-text) 3.5%, var(--portal-surface, #fff));
+}
+
+.deal_dist_class_investor_cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.deal_dist_class_investor_name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deal_dist_class_investor_email {
+  overflow: hidden;
+  color: var(--portal-text-muted, #64748b);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deal_dist_class_investors_panel .deal_dist_pct_input_wrap {
+  max-width: 6.75rem;
+}
+
+.deal_dist_class_investors_panel .deal_dist_details_pay_input {
+  width: 100%;
+  max-width: 8.5rem;
+  margin-left: auto;
+}
+
+.deal_dist_classes_panel .um_table_wrap,
+.deal_dist_classes_panel .um_table_wrap.data_table_shell,
+.deal_dist_class_investors_panel .um_table_wrap,
+.deal_dist_class_investors_panel .um_table_wrap.data_table_shell {
+  width: 100%;
+  max-width: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow-x: auto;
+}
+
+.deal_dist_classes_panel .um_table.deal_dist_table,
+.deal_dist_class_investors_panel .um_table.deal_dist_table {
+  table-layout: auto !important;
+  width: 100% !important;
+  min-width: max-content !important;
+  max-width: none !important;
+}
+
+.deal_dist_classes_panel .um_table.deal_dist_table thead,
+.deal_dist_class_investors_panel .um_table.deal_dist_table thead {
+  background: var(--portal-table-header-bg, #f8fafc);
+}
+
+.deal_dist_class_investors_panel
+  .um_table.deal_dist_table
+  thead
+  th.deal_dist_th_ach,
+.deal_dist_class_investors_panel
+  .um_table.deal_dist_table
+  tbody
+  td.deal_dist_td_ach {
+  width: 8.75rem;
+  min-width: 8.75rem;
+  box-sizing: border-box;
+}
+
+.deal_dist_class_investors_panel
+  .um_table.deal_dist_table
+  thead
+  th.deal_dist_th_actions,
+.deal_dist_class_investors_panel
+  .um_table.deal_dist_table
+  tbody
+  td.deal_dist_td_actions {
+  width: 12rem;
+  min-width: 12rem;
+  max-width: none;
+  padding: 0.55em 1rem 0.55em 0.65rem;
+  box-sizing: border-box;
+  overflow: visible;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.deal_dist_class_investors_panel .deal_dist_details_send_btn {
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-inline: auto;
 }
 
 .deal_dist_th_with_help {
@@ -536,11 +725,11 @@
 }
 
 /*
- * Distributions list: fill the panel width. Column min-widths stay as floors so
- * narrow viewports still scroll horizontally when needed.
+ * Top-level distributions list only. Nested class/investor tables scroll
+ * themselves so Send payment and the header are not clipped.
  */
-.deal_dist_panel.deal_inv_table_panel .um_table_wrap.data_table_shell,
-.deal_dist_panel .um_table_wrap.data_table_shell {
+.deal_dist_panel.deal_inv_table_panel > .um_table_wrap.data_table_shell,
+.deal_dist_panel > .um_table_wrap.data_table_shell {
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
@@ -557,9 +746,10 @@
   min-width: 0;
   max-width: 100%;
   overflow-x: auto !important;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
   scroll-behavior: auto;
 }
 
@@ -574,8 +764,12 @@
 .deal_dist_panel .um_table.deal_dist_table.deal_dist_portal_table {
   table-layout: auto !important;
   width: 100% !important;
-  min-width: 100% !important;
+  min-width: max-content !important;
   max-width: none !important;
+}
+
+.deal_dist_panel .um_table.deal_dist_table thead {
+  background: var(--portal-table-header-bg, #f8fafc);
 }
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_name,
@@ -636,18 +830,15 @@
   flex-shrink: 0;
 }
 
-.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_name_link {
-  display: block;
+.deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_name_toggle {
+  display: inline-flex;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_name,
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_td_name {
   width: auto;
-  min-width: 12rem !important;
+  min-width: 14rem !important;
 }
 
 .deal_dist_panel .um_table.deal_dist_portal_table .deal_dist_th_source,
@@ -776,7 +967,7 @@
 }
 
 .deal_dist_table_row {
-  cursor: pointer;
+  cursor: default;
 }
 
 .deal_dist_row_link {

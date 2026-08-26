@@ -139,9 +139,9 @@
 
 .data_table_scroll_region.data_table_scroll_region--overflow-x {
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  scrollbar-gutter: stable;
 }
 
 /* Horizontal scroll + sticky first column (members / portal tables). */
@@ -517,8 +517,8 @@
   .um_table.deal_inv_table,
 .um_table_wrap.data_table_shell .data_table_scroll_region .um_table.deal_inv_table {
   table-layout: auto;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: max-content;
   max-width: none;
 }
 
@@ -649,4 +649,33 @@
   tr.data_table_row_even
   td.data_table_col_sticky {
   background-color: var(--portal-table-row-even, #f8fafc);
+}
+
+.data_table_expanded_row > .data_table_expanded_cell,
+.um_table tbody tr.data_table_expanded_row > td.data_table_expanded_cell {
+  padding: 0;
+  vertical-align: top;
+  background: var(--portal-surface, #fff);
+  border-bottom: 1px solid var(--portal-border, #e2e8f0);
+  overflow: visible;
+}
+
+/*
+ * Keep nested table chrome in the visible scrollport. Expanded cells are as
+ * wide as the parent table; without this the nested header only covers the
+ * left slice of a horizontally scrolled page.
+ */
+.data_table_expanded_cell > * {
+  position: sticky;
+  left: 0;
+  width: var(--data-table-scroll-port-width, 100%);
+  max-width: var(--data-table-scroll-port-width, 100%);
+  box-sizing: border-box;
+}
+
+.data_table_sticky_first tbody tr.data_table_expanded_row > td.data_table_expanded_cell {
+  position: static;
+  left: auto;
+  z-index: auto;
+  box-shadow: none;
 }

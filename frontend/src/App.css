@@ -147,7 +147,7 @@ button {
     [type="color"]
   ):not(.um_search_input):not(.sponsor_dash_search_input):not(.deals_export_modal_search_input):not(
     .deal_assets_search
-  ),
+  ):not(.deal_inv_comm_recip_search_input),
 .app_shell textarea {
   box-sizing: border-box;
   /* width: 100%; */

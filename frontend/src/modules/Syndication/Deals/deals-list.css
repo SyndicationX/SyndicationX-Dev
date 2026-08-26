@@ -140,8 +140,24 @@ a.deals_list_add_link.um_btn_primary {
   padding-top: 1rem;
 }
 
-.deals_detail_page > header.deals_list_head {
+.deals_detail_page > header.deals_list_head,
+.deals_detail_page > .deals_detail_sticky_chrome > header.deals_list_head {
   padding-top: 1rem;
+}
+
+/* Deal name + tabs stay pinned while tab content scrolls in `.app_main_content`. */
+.deals_detail_page > .deals_detail_sticky_chrome {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--portal-page-bg, #fcf8fa);
+  box-shadow: 0 8px 14px -12px rgba(16, 20, 19, 0.35);
+}
+
+.app_main_content:has(.deals_detail_sticky_chrome) {
+  scroll-padding-top: 8.5rem;
 }
 
 /* Dist / class setup sticky headers already pad themselves — avoid stacked gap above title */

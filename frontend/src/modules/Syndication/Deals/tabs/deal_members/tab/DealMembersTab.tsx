@@ -67,7 +67,7 @@ import {
   exportAuditLinesForDealInvestorRows,
 } from "../../../utils/dealInvestorExportCsv"
 import { buildTableExportFilename } from "../../../../../../common/utils/tableExportFilename"
-import { dealInvestorStatusDisplayLabel, investorRowIsFundApproved } from "../../../utils/dealInvestorTableDisplay"
+import { dealInvestorStatusDisplayLabel } from "../../../utils/dealInvestorTableDisplay"
 import { applyInvitationMailSentMarks, rowInvitationMailMarkedSent } from "../../../utils/dealInvitationMailStatus"
 import {
   displayAddedInvestorsCommittedAmount,
@@ -187,22 +187,22 @@ function GpVerifiedAccBadge({ label }: { label: string }) {
   )
 }
 
-function GpFundedBadge({ row }: { row: DealInvestorRow }) {
-  const approved = investorRowIsFundApproved(row)
-  const label = approved ? "Approved" : "Not Approved"
-  return (
-    <span
-      className={`deal_inv_funded_badge${
-        approved
-          ? " deal_inv_funded_badge--approved"
-          : " deal_inv_funded_badge--not_approved"
-      }`}
-      title={label}
-    >
-      {label}
-    </span>
-  )
-}
+// function GpFundedBadge({ row }: { row: DealInvestorRow }) {
+//   const approved = investorRowIsFundApproved(row)
+//   const label = approved ? "Approved" : "Not Approved"
+//   return (
+//     <span
+//       className={`deal_inv_funded_badge${
+//         approved
+//           ? " deal_inv_funded_badge--approved"
+//           : " deal_inv_funded_badge--not_approved"
+//       }`}
+//       title={label}
+//     >
+//       {label}
+//     </span>
+//   )
+// }
 
 function GpEllipsisText({
   text,
@@ -777,35 +777,35 @@ export function DealMembersTab({
             <GpEllipsisText text={dealInvestorStatusDisplayLabel(row)} />
           ),
         },
-        {
-          id: "added_by",
-          header: "Sponsor name",
-          sortValue: (row) => String(row.addedByDisplayName ?? "").toLowerCase(),
-          tdClassName: "deal_inv_td_ellipsis",
-          cell: (row) => {
-            const s = String(row.addedByDisplayName ?? "").trim()
-            const display = s && s !== "—" ? s : "—"
-            const email = String(row.addedByEmail ?? "").trim()
-            if (display === "—" || !email)
-              return <GpEllipsisText text={display} />
-            return (
-              <FormTooltip
-                triggerMode="inline"
-                placement="top"
-                panelAlign="start"
-                openOnHover
-                label={`Sponsor email for ${display}`}
-                content={
-                  <p className="deal_inv_sponsor_email_tooltip">{email}</p>
-                }
-              >
-                <span className="deal_inv_ellipsis_text deal_inv_sponsor_name_hover">
-                  {display}
-                </span>
-              </FormTooltip>
-            )
-          },
-        },
+        // {
+        //   id: "added_by",
+        //   header: "Sponsor name",
+        //   sortValue: (row) => String(row.addedByDisplayName ?? "").toLowerCase(),
+        //   tdClassName: "deal_inv_td_ellipsis",
+        //   cell: (row) => {
+        //     const s = String(row.addedByDisplayName ?? "").trim()
+        //     const display = s && s !== "—" ? s : "—"
+        //     const email = String(row.addedByEmail ?? "").trim()
+        //     if (display === "—" || !email)
+        //       return <GpEllipsisText text={display} />
+        //     return (
+        //       <FormTooltip
+        //         triggerMode="inline"
+        //         placement="top"
+        //         panelAlign="start"
+        //         openOnHover
+        //         label={`Sponsor email for ${display}`}
+        //         content={
+        //           <p className="deal_inv_sponsor_email_tooltip">{email}</p>
+        //         }
+        //       >
+        //         <span className="deal_inv_ellipsis_text deal_inv_sponsor_name_hover">
+        //           {display}
+        //         </span>
+        //       </FormTooltip>
+        //     )
+        //   },
+        // },
         {
           id: "committed",
           header: "Committed",
@@ -829,22 +829,22 @@ export function DealMembersTab({
           tdClassName: "deal_inv_td_ellipsis",
           cell: (row) => <DealInvestorSignedCell row={row} />,
         },
-        {
-          id: "funded",
-          header: "Funded",
-          sortValue: (row) => (investorRowIsFundApproved(row) ? "1" : "0"),
-          tdClassName: "deal_inv_td_funded",
-          cell: (row) => <GpFundedBadge row={row} />,
-        },
-        {
-          id: "selfAcc",
-          header: "Self Acc",
-          sortValue: (row) => row.selfAccredited ?? "",
-          tdClassName: "deal_inv_td_ellipsis",
-          cell: (row) => (
-            <GpEllipsisText text={row.selfAccredited ?? "—"} />
-          ),
-        },
+        // {
+        //   id: "funded",
+        //   header: "Funded",
+        //   sortValue: (row) => (investorRowIsFundApproved(row) ? "1" : "0"),
+        //   tdClassName: "deal_inv_td_funded",
+        //   cell: (row) => <GpFundedBadge row={row} />,
+        // },
+        // {
+        //   id: "selfAcc",
+        //   header: "Self Acc",
+        //   sortValue: (row) => row.selfAccredited ?? "",
+        //   tdClassName: "deal_inv_td_ellipsis",
+        //   cell: (row) => (
+        //     <GpEllipsisText text={row.selfAccredited ?? "—"} />
+        //   ),
+        // },
         {
           id: "verifiedAcc",
           header: "Verified Acc",
@@ -1400,7 +1400,6 @@ export function DealMembersTab({
               visualVariant="members"
               membersTableClassName="um_table_members deal_inv_table"
               stickyColumnCount={2}
-              forceHorizontalScroll
               columns={columns}
               rows={filteredRows}
               getRowKey={(r, i) => r.id || `dm-${dealId}-${i}`}

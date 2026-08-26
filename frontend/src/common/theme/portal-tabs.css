@@ -42,7 +42,7 @@
 a.um_members_tab,
 button.um_members_tab {
   text-decoration: none;
-  color: inherit;
+  color: var(--font-color-title, #1b1b1d);
 }
 
 /* —— Tab control (inactive + active) —— */
@@ -68,7 +68,7 @@ button.um_segmented_tab.um_members_tab {
   font-weight: 500;
   font-size: 0.9em;
   line-height: 1.2;
-  color: var(--portal-text-muted);
+  color: var(--font-color-title, #1b1b1d);
   cursor: pointer;
   flex: 0 0 auto;
   justify-content: center;
@@ -80,7 +80,7 @@ button.um_segmented_tab.um_members_tab {
 
 .um_members_tab:hover:not(.um_members_tab_active),
 .um_segmented_tabs_row .um_segmented_tab.um_members_tab:hover:not(.um_members_tab_active) {
-  color: var(--portal-text);
+  color: var(--font-color-title, #1b1b1d);
   background: transparent;
 }
 
@@ -92,7 +92,7 @@ button.um_segmented_tab.um_members_tab {
 
 .um_members_tab_active,
 .um_segmented_tabs_row .um_segmented_tab.um_members_tab.um_members_tab_active {
-  color: var(--portal-tab-active-text, #131b2e);
+  color: var(--font-color-title, #1b1b1d);
   border-bottom-color: var(--portal-gold-accent, #d4af37);
   background: var(--portal-tab-active-bg);
   border-radius: 0 !important;
@@ -104,7 +104,7 @@ button.um_segmented_tab.um_members_tab {
 :root[data-theme="dark"]
   .um_segmented_tabs_row
   .um_segmented_tab.um_members_tab.um_members_tab_active {
-  color: var(--portal-tab-active-text, #d4af37);
+  color: var(--font-color-title, rgba(255, 255, 255, 0.95));
   background: var(--portal-tab-active-bg);
 }
 
@@ -114,12 +114,13 @@ button.um_segmented_tab.um_members_tab {
 .deals_tabs_icon,
 .um_segmented_tab_icon {
   flex-shrink: 0;
-  color: currentColor;
-  opacity: 0.9;
+  color: var(--icon-color, #1b1b1d);
+  opacity: 1;
 }
 
 .um_members_tab_active svg[aria-hidden],
 .um_segmented_tabs_row .um_segmented_tab.um_members_tab_active svg[aria-hidden] {
+  color: var(--icon-color, #1b1b1d);
   opacity: 1;
 }
 
@@ -160,7 +161,7 @@ button.um_segmented_tab.um_members_tab {
   font-style: normal;
   font-size: 0.9em;
   font-weight: 500;
-  color: var(--portal-text-muted);
+  color: var(--font-color-title, #1b1b1d);
   cursor: pointer;
   border-radius: 0 !important;
   border-bottom: 3px solid transparent;
@@ -171,19 +172,19 @@ button.um_segmented_tab.um_members_tab {
 }
 
 .um_tab:hover {
-  color: var(--portal-text);
+  color: var(--font-color-title, #1b1b1d);
   background: transparent;
 }
 
 .um_tab_active {
-  color: var(--portal-tab-active-text, #131b2e);
+  color: var(--font-color-title, #1b1b1d);
   border-bottom-color: var(--portal-gold-accent, #d4af37);
   background: var(--portal-tab-active-bg);
   font-weight: 600;
 }
 
 :root[data-theme="dark"] .um_tab_active {
-  color: var(--portal-tab-active-text, #d4af37);
+  color: var(--font-color-title, rgba(255, 255, 255, 0.95));
   background: var(--portal-tab-active-bg);
 }
 

@@ -485,7 +485,8 @@
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  scrollbar-gutter: stable;
+  overflow-y: hidden;
+  scrollbar-gutter: auto;
 }
 
 .deal_dist_details_page .deal_dist_panel .data_table_scroll_region.data_table_scroll_region--overflow-x {

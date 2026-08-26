@@ -117,7 +117,11 @@ html.light {
     var(--portal-gold-accent, #d4af37) 10%,
     transparent
   );
-  --portal-tab-strip-border: color-mix(in srgb, var(--portal-border) 85%, transparent);
+  --portal-tab-strip-border: color-mix(
+    in srgb,
+    var(--portal-gold-accent, #d4af37) 38%,
+    transparent
+  );
 
   /* Tables, panels, pagination */
   --portal-panel-bg: #f8f8f8;
@@ -267,7 +271,11 @@ html.dark {
     var(--portal-gold-accent, #d4af37) 15%,
     transparent
   );
-  --portal-tab-strip-border: rgba(255, 255, 255, 0.12);
+  --portal-tab-strip-border: color-mix(
+    in srgb,
+    var(--portal-gold-accent, #d4af37) 42%,
+    transparent
+  );
 
   --portal-panel-bg: rgba(255, 255, 255, 0.06);
   --portal-table-border: rgba(255, 255, 255, 0.12);
