@@ -41,6 +41,11 @@ export function getJwtUser(req: Request): JwtUserPayload | null {
 export async function getValidJwtUser(
   req: Request,
 ): Promise<JwtUserPayload | null> {
+  const authenticated = (
+    req as Request & { portalUser?: JwtUserPayload }
+  ).portalUser;
+  if (authenticated?.id) return authenticated;
+
   const token = bearerToken(req);
   if (!token) return null;
 

@@ -100,8 +100,15 @@
 
 :root[data-theme="dark"] .deals_export_modal_select_all_meta,
 :root[data-theme="dark"] .deals_export_modal_row_meta,
-:root[data-theme="dark"] .deals_export_modal_empty {
+:root[data-theme="dark"] .deals_export_modal_empty,
+:root[data-theme="dark"] .deals_export_modal_filter_label {
   color: var(--portal-text-muted);
+}
+
+:root[data-theme="dark"] .deals_export_modal_filter_select {
+  background: var(--portal-surface);
+  border-color: var(--portal-border);
+  color: var(--portal-text);
 }
 
 :root[data-theme="dark"] .deals_export_modal_row_label:hover {
@@ -279,6 +286,16 @@
 
 :root[data-theme="dark"] .um_membership_company {
   color: var(--portal-text);
+}
+
+:root[data-theme="dark"] .um_org_badge {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--portal-text);
+}
+
+:root[data-theme="dark"] .um_org_badge_icon {
+  color: var(--portal-text-muted);
 }
 
 :root[data-theme="dark"] .um_membership_sep {

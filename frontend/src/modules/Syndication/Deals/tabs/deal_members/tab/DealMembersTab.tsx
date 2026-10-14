@@ -20,6 +20,7 @@ import {
   useState,
 } from "react"
 import { toast } from "../../../../../../common/components/Toast"
+import { isPlatformAdmin } from "../../../../../../common/auth/roleUtils"
 import {
   TABLE_PAGE_SIZE_ID,
   usePersistedTablePageSize,
@@ -51,6 +52,8 @@ import {
   dealInvestorProfileDisplayName,
   investorRoleLabel,
   isDealMembersTabRole,
+  isGeneralPartnerRole,
+  isLeadSponsorRole,
   type DealRosterKind,
 } from "../../../constants/investor-profile"
 import type { DealInvestorClass } from "../../../types/deal-investor-class.types"
@@ -61,12 +64,11 @@ import {
 } from "../../../utils/investorClassOverviewFields"
 import type { DealInvestorRow } from "../../../types/deal-investors.types"
 import {
-  buildDealInvestorsExportCsv,
-  buildDealMembersTableExportCsv,
-  downloadDealExportCsv,
+  buildDealInvestorsExportMatrix,
+  buildDealMembersTableExportMatrix,
+  downloadDealRosterExportXlsx,
   exportAuditLinesForDealInvestorRows,
 } from "../../../utils/dealInvestorExportCsv"
-import { buildTableExportFilename } from "../../../../../../common/utils/tableExportFilename"
 import { dealInvestorStatusDisplayLabel } from "../../../utils/dealInvestorTableDisplay"
 import { applyInvitationMailSentMarks, rowInvitationMailMarkedSent } from "../../../utils/dealInvitationMailStatus"
 import {
@@ -95,12 +97,57 @@ import {
   parseEmailInput,
 } from "../../../../../../common/features/send-mail"
 import { useNavigate } from "react-router-dom"
+import { formatCount } from "@/common/utils/formatCount"
 import "../../../deal-investors-tab.css"
 import "../../../deals-list.css"
 import "../../../../usermanagement/user_management.css"
 import "../../../../contacts/contacts.css"
 import "./deal-members.css"
 import "../../../../../../common/components/data-table/data-table.css"
+
+function rosterRoleRank(role: string | undefined): number {
+  const s = String(role ?? "").trim().toLowerCase()
+  if (s === "lead sponsor") return 50
+  if (s === "admin sponsor") return 40
+  if (s === "co-sponsor" || s === "co sponsor") return 30
+  if (s === "deal member") return 20
+  if (isGeneralPartnerRole(role)) return 10
+  return 0
+}
+
+/** Same email (portal user + CRM contact) is one person. Keep the stronger role. */
+function dedupeRosterRowsByPerson(rows: DealInvestorRow[]): DealInvestorRow[] {
+  const best = new Map<string, DealInvestorRow>()
+  const order: string[] = []
+  const leftovers: DealInvestorRow[] = []
+  for (const row of rows) {
+    if (row.id === ADD_MEMBER_DRAFT_ROW_ID) {
+      leftovers.push(row)
+      continue
+    }
+    const email = String(row.userEmail ?? "").trim().toLowerCase()
+    const contactId = String(row.contactId ?? "").trim().toLowerCase()
+    const key = email.includes("@")
+      ? `em:${email}`
+      : contactId
+        ? `id:${contactId}`
+        : ""
+    if (!key) {
+      leftovers.push(row)
+      continue
+    }
+    const prev = best.get(key)
+    if (!prev) {
+      best.set(key, row)
+      order.push(key)
+      continue
+    }
+    if (rosterRoleRank(row.investorRole) > rosterRoleRank(prev.investorRole)) {
+      best.set(key, row)
+    }
+  }
+  return [...order.map((key) => best.get(key)!), ...leftovers]
+}
 
 function includeInDealRosterTable(
   r: DealInvestorRow,
@@ -139,38 +186,39 @@ const ROSTER_COPY: Record<
   }
 > = {
   deal_members: {
-    searchPlaceholder: "Search deal members…",
-    searchAriaLabel: "Search deal members",
-    addButton: "Add Member",
-    empty:
-      "No deal members yet. Add a member with a Deal Member, Lead Sponsor, Admin sponsor, or Co-sponsor role.",
-    loading: "Loading deal members…",
-    loadingAria: "Loading deal members",
-    exportTitle: "Export deal members",
-    exportHint: "Search and select members, then export to Excel (CSV format).",
-    exportSearchPlaceholder: "Search deal members…",
-    exportSearchAria: "Search deal members in export list",
-    exportListAria: "Deal members to export",
-    paginationAria: "Deal members pagination",
-    noEmailTitle: "No email recipients",
-    noEmailBody: "Selected deal members have no valid email.",
-  },
-  general_partners: {
     searchPlaceholder: "Search general partners…",
     searchAriaLabel: "Search general partners",
     addButton: "Add General Partner",
-    empty: "No general partners yet. Add a general partner to this deal.",
+    empty:
+      "No general partners yet. Add a member with a Lead Sponsor, Admin sponsor, or Co-sponsor role.",
     loading: "Loading general partners…",
     loadingAria: "Loading general partners",
     exportTitle: "Export general partners",
     exportHint:
-      "Search and select general partners, then export to Excel (CSV format).",
+      "Search and select general partners, then export to Excel. The sheet is named General Partners.",
     exportSearchPlaceholder: "Search general partners…",
     exportSearchAria: "Search general partners in export list",
     exportListAria: "General partners to export",
     paginationAria: "General partners pagination",
     noEmailTitle: "No email recipients",
     noEmailBody: "Selected general partners have no valid email.",
+  },
+  general_partners: {
+    searchPlaceholder: "Search team members…",
+    searchAriaLabel: "Search team members",
+    addButton: "Add Team Member",
+    empty: "No team members yet. Add a team member to this deal.",
+    loading: "Loading team members…",
+    loadingAria: "Loading team members",
+    exportTitle: "Export team members",
+    exportHint:
+      "Search and select team members, then export to Excel. The sheet is named Team Members.",
+    exportSearchPlaceholder: "Search team members…",
+    exportSearchAria: "Search team members in export list",
+    exportListAria: "Team members to export",
+    paginationAria: "Team members pagination",
+    noEmailTitle: "No email recipients",
+    noEmailBody: "Selected team members have no valid email.",
   },
 }
 
@@ -204,6 +252,14 @@ function GpVerifiedAccBadge({ label }: { label: string }) {
 //   )
 // }
 
+function GpEmptyDash() {
+  return (
+    <span className="deal_gp_empty_dash" aria-hidden>
+      <span>-</span>
+    </span>
+  )
+}
+
 function GpEllipsisText({
   text,
   alignEnd = false,
@@ -212,10 +268,11 @@ function GpEllipsisText({
   alignEnd?: boolean
 }) {
   const display = String(text ?? "").trim() || "—"
+  if (display === "—") return <GpEmptyDash />
   return (
     <span
       className={`deal_inv_ellipsis_text${alignEnd ? " deal_inv_ellipsis_text_end" : ""}`}
-      title={display !== "—" ? display : undefined}
+      title={display}
     >
       {display}
     </span>
@@ -250,6 +307,13 @@ interface DealMembersTabProps {
   invitationMailStatusByRowId?: Record<string, true>
   /** Rows currently sending invitation email — Email status shows a loader. */
   invitationMailSendingByRowId?: Record<string, true>
+  /**
+   * Deal is in draft or required deal details are incomplete — disables “Send invitation
+   * email” row actions, matching the add/edit modal’s notify-the-member rule.
+   */
+  invitationMailBlocked?: boolean
+  /** Another organization's deal: roster is readable, management is hidden. */
+  viewOnly?: boolean
 }
 
 export function DealMembersTab({
@@ -268,6 +332,8 @@ export function DealMembersTab({
   investorsRefreshKey = 0,
   invitationMailStatusByRowId,
   invitationMailSendingByRowId,
+  invitationMailBlocked = false,
+  viewOnly = false,
 }: DealMembersTabProps) {
   const navigate = useNavigate()
   const [rows, setRows] = useState<DealInvestorRow[]>([])
@@ -385,7 +451,7 @@ export function DealMembersTab({
   }, [dealId, investorClasses, addMemberDraftTick])
 
   const displayRows = useMemo(() => {
-    const filtered = rows.filter((r) =>
+    const filtered = dedupeRosterRowsByPerson(rows).filter((r) =>
       includeInDealRosterTable(r, rosterKind, investorClasses),
     )
     const draft =
@@ -465,6 +531,29 @@ export function DealMembersTab({
       return hay.includes(q)
     })
   }, [displayRowsWithMail, query, investorClasses])
+
+  const gpMoneyTotals = useMemo(() => {
+    if (rosterKind !== "deal_members") return null
+    const source = filteredRows.filter((r) => r.id !== ADD_MEMBER_DRAFT_ROW_ID)
+    if (source.length === 0) return null
+    let commitment = 0
+    let added = 0
+    for (const r of source) {
+      const c = parseMoneyDigits(displayInvestorCommittedAmount(r))
+      if (Number.isFinite(c)) commitment += c
+      const a = parseMoneyDigits(displayAddedInvestorsCommittedAmount(r))
+      if (Number.isFinite(a)) added += a
+    }
+    const commitmentRounded = Math.round(commitment * 100) / 100
+    const addedRounded = Math.round(added * 100) / 100
+    return {
+      commitment: commitmentRounded,
+      added: addedRounded,
+      total: Math.round((commitmentRounded + addedRounded) * 100) / 100,
+      count: source.length,
+      filtered: Boolean(query.trim()),
+    }
+  }, [rosterKind, filteredRows, query])
 
   const allFilteredMembersSelected = useMemo(
     () =>
@@ -625,8 +714,8 @@ export function DealMembersTab({
           disabled={filteredRows.length === 0}
           aria-label={
             rosterKind === "general_partners"
-              ? "Select all general partners in this list"
-              : "Select all deal members in this list"
+              ? "Select all team members in this list"
+              : "Select all general partners in this list"
           }
         />
       ),
@@ -642,8 +731,8 @@ export function DealMembersTab({
           onClick={(e) => e.stopPropagation()}
           aria-label={
             rosterKind === "general_partners"
-              ? `Select general partner ${r.displayName || r.userEmail || r.id}`
-              : `Select deal member ${r.displayName || r.userEmail || r.id}`
+              ? `Select team member ${r.displayName || r.userEmail || r.id}`
+              : `Select general partner ${r.displayName || r.userEmail || r.id}`
           }
         />
       ),
@@ -660,11 +749,18 @@ export function DealMembersTab({
           <DealMemberRowActions
             row={r}
             draftRow={r.id === ADD_MEMBER_DRAFT_ROW_ID}
+            editDisabled={
+              !isPlatformAdmin() &&
+              r.id !== ADD_MEMBER_DRAFT_ROW_ID &&
+              isLeadSponsorRole(r.investorRole)
+            }
+            editDisabledTitle="Only platform admins can edit the Lead Sponsor."
             invitationMailSent={r.invitationMailSent === true}
             invitationMailSending={rowInvitationMailMarkedSent(
               r,
               invitationMailSendingByRowId,
             )}
+            invitationMailBlocked={invitationMailBlocked}
             offeringLinkAvailable={offeringLinkAvailable}
             offeringLinkBlockedBecauseDraft={offeringLinkBlockedBecauseDraft}
             onView={handleViewMember}
@@ -672,6 +768,7 @@ export function DealMembersTab({
             onCopyLink={onCopyMemberOfferingLink}
             onSendInvite={onSendMemberInvitationMail}
             onDelete={onDeleteMember}
+            viewOnly={viewOnly}
           />
         </div>
       ),
@@ -701,14 +798,13 @@ export function DealMembersTab({
         {
           id: "profile",
           header: "Profile",
-          colWidth: "14rem",
-          thClassName: "deal_inv_th_profile",
-          tdClassName: "deal_inv_td_profile",
+          colWidth: "7.5rem",
+          thClassName: "deal_inv_th_profile deal_gp_th_profile",
+          tdClassName: "deal_inv_td_profile deal_gp_td_profile",
           sortValue: (row) => dealInvestorProfileDisplayName(row).toLowerCase(),
           cell: (row) => {
             const text = dealInvestorProfileDisplayName(row)
-            if (!text || text === "—")
-              return <span className="um_status_muted">—</span>
+            if (!text || text === "—") return <GpEmptyDash />
             return <span className="deal_inv_profile_full_text">{text}</span>
           },
         },
@@ -771,8 +867,10 @@ export function DealMembersTab({
         {
           id: "status",
           header: "Status",
+          colWidth: "6.5rem",
+          thClassName: "deal_gp_th_status",
           sortValue: (row) => dealInvestorStatusDisplayLabel(row).toLowerCase(),
-          tdClassName: "deal_inv_td_ellipsis",
+          tdClassName: "deal_inv_td_ellipsis deal_gp_td_status",
           cell: (row) => (
             <GpEllipsisText text={dealInvestorStatusDisplayLabel(row)} />
           ),
@@ -808,13 +906,42 @@ export function DealMembersTab({
         // },
         {
           id: "committed",
-          header: "Committed",
+          header: (
+            <span className="deal_inv_th_investor_class_head deal_inv_th_commitment_head">
+              <span>Committed</span>
+              <FormTooltip
+                label="What this amount means"
+                content={
+                  <p className="deal_inv_class_tooltip_p">
+                    Same as General Partners → Investors committed: the sum of
+                    Investors-tab Committed amounts on this deal for investors
+                    whose Sponsor name is this team member. Their own
+                    subscription is not included. Shown in USD.
+                  </p>
+                }
+                placement="bottom"
+                panelAlign="end"
+                openOnHover
+                nativeButtonTrigger={false}
+              />
+            </span>
+          ),
           align: "right",
           thClassName: "deals_th_align_right",
           sortValue: (row) =>
-            parseMoneyDigits(displayInvestorCommittedAmount(row)),
+            parseMoneyDigits(displayAddedInvestorsCommittedAmount(row)),
           tdClassName: "deal_inv_td_ellipsis deal_inv_td_committed um_td_numeric",
-          cell: (row) => <DealInvestorCommittedAmountCell row={row} />,
+          cell: (row) => {
+            if (row.id === ADD_MEMBER_DRAFT_ROW_ID) return "—"
+            const text = displayAddedInvestorsCommittedAmount(row)
+            const display = String(text ?? "").trim()
+            if (!display || display === "—") return "—"
+            return (
+              <span className="deal_inv_ellipsis_text deal_inv_ellipsis_text_end">
+                <TableCompactAmountCell amount={display} />
+              </span>
+            )
+          },
         },
         {
           id: "signed",
@@ -893,23 +1020,25 @@ export function DealMembersTab({
       {
         id: "profile",
         header: "Profile",
-        colWidth: "14rem",
-        thClassName: "deal_inv_th_profile",
-        tdClassName: "deal_inv_td_profile",
+        colWidth: "7.5rem",
+        thClassName: "deal_inv_th_profile deal_gp_th_profile",
+        tdClassName: "deal_inv_td_profile deal_gp_td_profile",
         sortValue: (r) => dealInvestorProfileDisplayName(r).toLowerCase(),
         cell: (r) => {
           const text = dealInvestorProfileDisplayName(r)
-          if (!text || text === "—")
-            return <span className="um_status_muted">—</span>
+          if (!text || text === "—") return <GpEmptyDash />
           return <span className="deal_inv_profile_full_text">{text}</span>
         },
       },
       {
         id: "role",
         header: "Deal role",
+        colWidth: "11.5rem",
+        thClassName: "deal_inv_th_role deal_gp_th_role",
         sortValue: (r) =>
           String(investorRoleLabel(r.investorRole ?? "")).toLowerCase(),
-        tdClassName: "deal_inv_td_role deal_inv_td_role_badge_cell",
+        tdClassName:
+          "deal_inv_td_role deal_inv_td_role_badge_cell deal_gp_td_role",
         cell: (r) => <DealInvestorRoleCell row={r} />,
       },
       {
@@ -917,7 +1046,7 @@ export function DealMembersTab({
         align: "right",
         header: (
           <span className="deal_inv_th_investor_class_head deal_inv_th_commitment_head">
-            <span>Commitment</span>
+            <span>Sponsor committed</span>
             <FormTooltip
               label="What this amount means"
               content={
@@ -947,7 +1076,7 @@ export function DealMembersTab({
         align: "right",
         header: (
           <span className="deal_inv_th_investor_class_head deal_inv_th_commitment_head">
-            <span>Investors added</span>
+            <span>Investors committed</span>
             <FormTooltip
               label="Commitment from investors they added"
               content={
@@ -985,10 +1114,14 @@ export function DealMembersTab({
       {
         id: "status",
         header: "Status",
+        colWidth: "6.5rem",
+        thClassName: "deal_gp_th_status",
         sortValue: (r) =>
           dealInvestorStatusDisplayLabel(r).toLowerCase(),
-        tdClassName: "deal_inv_td_ellipsis",
-        cell: (r) => dealInvestorStatusDisplayLabel(r),
+        tdClassName: "deal_inv_td_ellipsis deal_gp_td_status",
+        cell: (r) => (
+          <GpEllipsisText text={dealInvestorStatusDisplayLabel(r)} />
+        ),
       },
       {
         id: "mailStatus",
@@ -1029,37 +1162,42 @@ export function DealMembersTab({
     onDeleteMember,
     handleViewMember,
     invitationMailSendingByRowId,
+    invitationMailBlocked,
   ])
 
   function handleExportDealMembers(selected: DealInvestorRow[]) {
-    const csv =
-      rosterKind === "general_partners"
-        ? buildDealInvestorsExportCsv(
-            selected.map((row) => ({
-              ...row,
-              investorClass:
-                formatInvestorClassTableLabel(
-                  row.investorClass,
-                  investorClasses,
-                ) || row.investorClass,
-            })),
-            gpClassNamesLine,
-          )
-        : buildDealMembersTableExportCsv(selected)
-    const filename = buildTableExportFilename({
+    const isTeamMembers = rosterKind === "general_partners"
+    const sheetName = isTeamMembers ? "Team Members" : "General Partners"
+    const matrix = isTeamMembers
+      ? buildDealInvestorsExportMatrix(
+          selected.map((row) => ({
+            ...row,
+            investorClass:
+              formatInvestorClassTableLabel(
+                row.investorClass,
+                investorClasses,
+              ) || row.investorClass,
+            committed: displayAddedInvestorsCommittedAmount(row),
+            commitmentAmountRaw: "",
+            extraContributionAmounts: [],
+            fundApprovedCommitmentSnapshot: undefined,
+          })),
+          gpClassNamesLine,
+        )
+      : buildDealMembersTableExportMatrix(selected)
+    const filename = downloadDealRosterExportXlsx({
+      sheetName,
+      matrix,
       dealName,
-      tableSlug:
-        rosterKind === "general_partners" ? "general-partner" : "deal-member",
+      tableSlug: isTeamMembers ? "team-members" : "general-partners",
     })
-    downloadDealExportCsv(csv, filename)
     void notifyDealMembersExportAudit(dealId, {
       rowCount: selected.length,
       exportedLines: exportAuditLinesForDealInvestorRows(selected),
+      rosterLabel: sheetName,
     })
     toast.success(
-      rosterKind === "general_partners"
-        ? "General partners exported"
-        : "Deal members exported",
+      isTeamMembers ? "Team members exported" : "General partners exported",
       `Saved as ${filename}`,
     )
   }
@@ -1086,6 +1224,7 @@ export function DealMembersTab({
       ccRaw: sendMailCc,
       templateSubject: template.subject,
       templateBodyHtml: template.body,
+      templateAttachment: template.attachment,
       senderEmail,
     })
     if (!result.ok) {
@@ -1130,7 +1269,7 @@ export function DealMembersTab({
                 aria-hidden
               />
               <span className="deals_tabs_label um_segmented_tab_label">
-                Deal Members
+                General Partners
               </span>
             </button>
             <button
@@ -1150,7 +1289,7 @@ export function DealMembersTab({
                 aria-hidden
               />
               <span className="deals_tabs_label um_segmented_tab_label">
-                General Partners
+                Team Members
               </span>
             </button>
           </div>
@@ -1355,6 +1494,8 @@ export function DealMembersTab({
           <>
             <div className="um_toolbar deal_inv_table_um_toolbar um_toolbar_export_then_search deal_members_table_toolbar">
               <div className="um_toolbar_actions deal_inv_table_toolbar_actions deal_members_toolbar_actions_leading">
+                {viewOnly ? null : (
+                  <>
                 <button
                   type="button"
                   className="um_btn_toolbar"
@@ -1372,6 +1513,8 @@ export function DealMembersTab({
                   <Download size={18} strokeWidth={2} aria-hidden />
                   <span>Export All</span>
                 </button>
+                  </>
+                )}
               </div>
               <div className="um_toolbar_actions deal_inv_table_toolbar_actions deal_members_toolbar_actions_trailing">
                 <div className="um_search_wrap">
@@ -1385,7 +1528,8 @@ export function DealMembersTab({
                     aria-label={copy.searchAriaLabel}
                   />
                 </div>
-                <button
+                {viewOnly ? null : (
+                  <button
                   type="button"
                   className="um_btn_primary deal_members_add_member_btn"
                   onClick={() => onAddMember(rosterKind)}
@@ -1393,6 +1537,7 @@ export function DealMembersTab({
                   <Plus size={18} strokeWidth={2} aria-hidden />
                   {copy.addButton}
                 </button>
+                )}
               </div>
             </div>
 
@@ -1407,6 +1552,66 @@ export function DealMembersTab({
                 investorRowShowsDraftBadge(r) ? "deal_inv_row_draft" : undefined
               }
               emptyLabel={copy.empty}
+              tableFooter={
+                gpMoneyTotals ? (
+                  <div
+                    className="deal_gp_totals_bar"
+                    role="status"
+                    aria-label="General partner commitment totals"
+                  >
+                    <div className="deal_gp_totals_bar_intro">
+                      <span className="deal_gp_totals_bar_kicker">Total</span>
+                      <span className="deal_gp_totals_bar_meta">
+                        {gpMoneyTotals.filtered
+                          ? `${formatCount(gpMoneyTotals.count)} matching`
+                          : `${formatCount(gpMoneyTotals.count)} general partner${
+                              gpMoneyTotals.count === 1 ? "" : "s"
+                            }`}
+                      </span>
+                    </div>
+                    <div className="deal_gp_totals_bar_metrics">
+                      <div className="deal_gp_totals_metric">
+                        <span className="deal_gp_totals_metric_label">
+                          Sponsor committed
+                        </span>
+                        <span className="deal_gp_totals_metric_value">
+                          <TableCompactAmountCell
+                            amount={gpMoneyTotals.commitment}
+                          />
+                        </span>
+                      </div>
+                      <div
+                        className="deal_gp_totals_metric_divider"
+                        aria-hidden
+                      />
+                      <div className="deal_gp_totals_metric">
+                        <span className="deal_gp_totals_metric_label">
+                          Investors committed
+                        </span>
+                        <span className="deal_gp_totals_metric_value">
+                          <TableCompactAmountCell
+                            amount={gpMoneyTotals.added}
+                          />
+                        </span>
+                      </div>
+                      <div
+                        className="deal_gp_totals_metric_divider"
+                        aria-hidden
+                      />
+                      <div className="deal_gp_totals_metric">
+                        <span className="deal_gp_totals_metric_label">
+                          Total
+                        </span>
+                        <span className="deal_gp_totals_metric_value">
+                          <TableCompactAmountCell
+                            amount={gpMoneyTotals.total}
+                          />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : undefined
+              }
               pagination={{
                 page,
                 pageSize,

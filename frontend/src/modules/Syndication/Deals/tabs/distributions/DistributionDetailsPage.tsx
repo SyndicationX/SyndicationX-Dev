@@ -52,7 +52,9 @@ import {
   allocateInvestorDistributionLines,
   applyPaymentEdit,
   applyPercentOfClassEdit,
+  applyPercentOfDealEdit,
   parseStoredClassPercent,
+  resolvePercentOfDeal,
   type InvestorDistributionLine,
 } from "./utils/investorDistributionAllocation"
 import {
@@ -162,6 +164,7 @@ function linesFromStoredPayments(
   distribution: PriorDistributionRecord,
   investors: DealInvestorRow[] = [],
 ): InvestorDistributionLine[] | null {
+  if (distribution.investorPaymentsHiddenForViewer) return []
   const stored = distribution.investorPayments
   if (!stored?.length) return null
 
@@ -169,18 +172,30 @@ function linesFromStoredPayments(
   // (`percentOfClassDistributions`). Payment stays as stored on the run.
   const pctByInvestorId = new Map<string, number>()
   const pctByContact = new Map<string, number>()
+  const entityByInvestorId = new Map<string, string>()
+  const entityByContact = new Map<string, string>()
   for (const inv of investors) {
     const storedPct = parseStoredClassPercent(inv.percentOfClassDistributions)
-    if (storedPct == null) continue
     const id = String(inv.id ?? "")
       .trim()
       .toLowerCase()
-    if (id) pctByInvestorId.set(id, storedPct)
     const contact = String(inv.contactId ?? "")
       .trim()
       .toLowerCase()
-    if (contact) pctByContact.set(contact, storedPct)
+    if (storedPct != null) {
+      if (id) pctByInvestorId.set(id, storedPct)
+      if (contact) pctByContact.set(contact, storedPct)
+    }
+    const entity = String(inv.entityOwnershipPercent ?? "").trim()
+    if (entity) {
+      if (id) entityByInvestorId.set(id, entity)
+      if (contact) entityByContact.set(contact, entity)
+    }
   }
+  const dealCapital = stored.reduce(
+    (s, p) => s + Math.max(0, parseMoneyDigits(p.capital) || 0),
+    0,
+  )
 
   return stored.map((p) => {
     const investorId = String(p.investorId ?? "")
@@ -196,6 +211,7 @@ function linesFromStoredPayments(
     const fromStored = rawPct
       ? Number(rawPct.replace(/[^0-9.-]/g, ""))
       : NaN
+    const capital = parseMoneyDigits(p.capital) || 0
     return {
       investorId: p.investorId,
       ...(p.contactId?.trim() ? { contactId: p.contactId.trim() } : {}),
@@ -205,8 +221,16 @@ function linesFromStoredPayments(
       investorName: p.investorName || "—",
       classId: p.classId,
       className: p.className || "—",
-      capital: parseMoneyDigits(p.capital) || 0,
+      capital,
       percentOfClass: fromInvestment ?? (Number.isFinite(fromStored) ? fromStored : 0),
+      percentOfDeal: resolvePercentOfDeal({
+        storedDealPercent: p.percentOfDeal,
+        entityOwnershipPercent:
+          (investorId ? entityByInvestorId.get(investorId) : undefined) ??
+          (contactId ? entityByContact.get(contactId) : undefined),
+        capital,
+        dealCapital,
+      }),
       payment: parseMoneyDigits(p.payment) || 0,
     }
   })
@@ -236,6 +260,9 @@ export function DistributionDetailsPage() {
     useState<PriorDistributionRecord | null>(null)
   const [lines, setLines] = useState<InvestorPreferredLine[]>([])
   const [pctDrafts, setPctDrafts] = useState<Record<string, string>>({})
+  const [dealPctDrafts, setDealPctDrafts] = useState<Record<string, string>>(
+    {},
+  )
   const [paymentDrafts, setPaymentDrafts] = useState<Record<string, string>>(
     {},
   )
@@ -485,16 +512,21 @@ export function DistributionDetailsPage() {
   useEffect(() => {
     setLines(computedLines)
     const pctNext: Record<string, string> = {}
+    const dealPctNext: Record<string, string> = {}
     const payNext: Record<string, string> = {}
     for (const row of computedLines) {
       pctNext[row.investorId] = Number.isFinite(row.percentOfClass)
         ? `${(Math.round(row.percentOfClass * 100) / 100).toFixed(2)}`
+        : ""
+      dealPctNext[row.investorId] = Number.isFinite(row.percentOfDeal)
+        ? `${(Math.round(row.percentOfDeal * 100) / 100).toFixed(2)}`
         : ""
       payNext[row.investorId] = Number.isFinite(row.payment)
         ? moneyAmountOnBlur(String(Math.round(row.payment * 100) / 100))
         : ""
     }
     setPctDrafts(pctNext)
+    setDealPctDrafts(dealPctNext)
     setPaymentDrafts(payNext)
   }, [computedLines])
 
@@ -538,6 +570,7 @@ export function DistributionDetailsPage() {
         row.classId,
         String(row.capital),
         String(row.percentOfClass),
+        String(row.percentOfDeal),
         String(row.payment),
         row.userEmail ?? "",
       ]
@@ -762,7 +795,11 @@ export function DistributionDetailsPage() {
   const persistShare = useCallback(
     async (
       investorId: string,
-      payload: { percentOfClass?: number; payment?: number },
+      payload: {
+        percentOfClass?: number
+        percentOfDeal?: number
+        payment?: number
+      },
       localLines: InvestorDistributionLine[],
     ) => {
       if (!dealId || !distributionId) return
@@ -782,13 +819,38 @@ export function DistributionDetailsPage() {
         const updated = localLines.find((l) => l.investorId === investorId)
         if (updated && payload.percentOfClass != null)
           syncInvestorPct(investorId, updated.percentOfClass)
+        if (updated && payload.percentOfDeal != null) {
+          setInvestors((prev) =>
+            prev.map((inv) => {
+              const line = localLines.find((l) => l.investorId === investorId)
+              const match =
+                inv.id === investorId ||
+                (line?.contactId &&
+                  inv.contactId?.trim().toLowerCase() ===
+                    line.contactId.trim().toLowerCase())
+              if (!match) return inv
+              return {
+                ...inv,
+                entityOwnershipPercent: `${(Math.round(updated.percentOfDeal * 100) / 100).toFixed(2)}%`,
+              }
+            }),
+          )
+        }
         toast.success(
           "Saved",
-          payload.payment != null && payload.percentOfClass == null
-            ? "Payment saved as entered. Change is logged."
-            : payload.percentOfClass != null && payload.payment == null
-              ? "Percent of class saved as entered. Change is logged."
-              : "Payment and percent of class saved. Change is logged.",
+          payload.percentOfDeal != null &&
+            payload.payment == null &&
+            payload.percentOfClass == null
+            ? "Percent of deal saved as entered. Change is logged."
+            : payload.payment != null &&
+                payload.percentOfClass == null &&
+                payload.percentOfDeal == null
+              ? "Payment saved as entered. Change is logged."
+              : payload.percentOfClass != null &&
+                  payload.payment == null &&
+                  payload.percentOfDeal == null
+                ? "Percent of class saved as entered. Change is logged."
+                : "Distribution share saved. Change is logged.",
         )
       } catch (err) {
         toast.error(
@@ -832,6 +894,39 @@ export function DistributionDetailsPage() {
         [investorId]: `${(Math.round(nextPct * 100) / 100).toFixed(2)}`,
       }))
       await persistShare(investorId, { percentOfClass: nextPct }, nextLines)
+    },
+    [lines, persistShare],
+  )
+
+  const saveDealPercent = useCallback(
+    async (investorId: string, raw: string) => {
+      const t = sanitizePercentTypingInput(raw)
+      const n = t ? parseFloat(t) : NaN
+      if (!Number.isFinite(n)) {
+        toast.error("Invalid percent", "Enter a number between 0 and 100.")
+        return
+      }
+      const nextPct = Math.max(0, Math.min(100, n))
+      const nextLines = applyPercentOfDealEdit({
+        lines,
+        investorId,
+        nextPercent: nextPct,
+      }).map((l) => {
+        const prev = lines.find((x) => x.investorId === l.investorId)
+        return {
+          ...l,
+          required: prev?.required ?? l.payment,
+          unpaid: Math.max(0, (prev?.required ?? l.payment) - l.payment),
+          annualRatePct: prev?.annualRatePct ?? 0,
+          days: prev?.days ?? 0,
+        }
+      })
+      setLines(nextLines)
+      setDealPctDrafts((prev) => ({
+        ...prev,
+        [investorId]: `${(Math.round(nextPct * 100) / 100).toFixed(2)}`,
+      }))
+      await persistShare(investorId, { percentOfDeal: nextPct }, nextLines)
     },
     [lines, persistShare],
   )
@@ -1072,6 +1167,90 @@ export function DistributionDetailsPage() {
         ),
       },
       {
+        id: "pctDeal",
+        header: showFormulaTips ? (
+          <span className="deal_dist_th_with_help deal_dist_th_pct_head">
+            <span className="deal_dist_pct_head_label">
+              <span>% of</span>
+              <span>deal</span>
+            </span>
+            <FormTooltip
+              label="How percent of deal is used"
+              content={
+                <div className="deal_dist_formula_tooltip">
+                  <p>
+                    This investor’s share of the whole deal. Starts from Entity
+                    Ownership or capital ÷ deal capital.
+                  </p>
+                  <p>
+                    Manual edits are saved as entered and do not auto-change
+                    Payment or % of class.
+                  </p>
+                </div>
+              }
+              placement="bottom"
+              panelAlign="end"
+              openOnHover
+              nativeButtonTrigger={false}
+            />
+          </span>
+        ) : (
+          <span className="deal_dist_pct_head_label">
+            <span>% of</span>
+            <span>deal</span>
+          </span>
+        ),
+        align: "right",
+        colWidth: "7.25rem",
+        thClassName: "deals_th_align_right deal_dist_th_pct",
+        tdClassName: "um_td_numeric deals_td_align_right deal_dist_td_pct",
+        sortValue: (row) => row.percentOfDeal,
+        cell: (row) => (
+          <div className="deal_dist_pct_input_wrap">
+            <input
+              type="text"
+              className="deal_dist_details_pct_input"
+              inputMode="decimal"
+              aria-label={`Percent of deal for ${row.investorName}`}
+              value={dealPctDrafts[row.investorId] ?? ""}
+              disabled={
+                savingInvestorId === row.investorId ||
+                isInvestorPayoutLocked(row.investorId)
+              }
+              placeholder="0.00"
+              onChange={(e) => {
+                const next = formatPercentTypeInputBare(e.target.value, 100)
+                setDealPctDrafts((prev) => ({
+                  ...prev,
+                  [row.investorId]: next,
+                }))
+              }}
+              onBlur={(e) => {
+                const formatted = blurFormatPercentClamped(e.target.value)
+                setDealPctDrafts((prev) => ({
+                  ...prev,
+                  [row.investorId]: formatted,
+                }))
+                const prevN = row.percentOfDeal
+                const nextN = formatted
+                  ? parseFloat(sanitizePercentTypingInput(formatted))
+                  : NaN
+                if (
+                  !Number.isFinite(nextN) ||
+                  Math.abs(nextN - prevN) < 0.0005
+                ) {
+                  return
+                }
+                void saveDealPercent(row.investorId, formatted)
+              }}
+            />
+            <span className="deal_dist_pct_suffix" aria-hidden>
+              %
+            </span>
+          </div>
+        ),
+      },
+      {
         id: "payment",
         header: showFormulaTips ? (
           <span className="deal_dist_th_with_help deal_dist_th_payment_head">
@@ -1234,6 +1413,7 @@ export function DistributionDetailsPage() {
     [
       showFormulaTips,
       pctDrafts,
+      dealPctDrafts,
       paymentDrafts,
       savingInvestorId,
       sendingInvestorId,
@@ -1244,6 +1424,7 @@ export function DistributionDetailsPage() {
       isInvestorPayoutLocked,
       requestSendInvestorAchPayout,
       savePercent,
+      saveDealPercent,
       savePayment,
       investors,
       openInvestorView,

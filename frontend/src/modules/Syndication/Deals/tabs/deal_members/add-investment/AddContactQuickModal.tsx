@@ -1,4 +1,4 @@
-import { Loader2, Save, X } from "lucide-react"
+import { Loader2, Mail, Save, X } from "lucide-react"
 import { UsPhoneInput } from "../../../../../../common/components/UsPhoneInput"
 import {
   isValidUsNanp10,
@@ -12,8 +12,11 @@ import {
   type FormEvent,
 } from "react"
 import { getSessionUserDisplayName } from "../../../../../../common/auth/sessionUserDisplayName"
+import { YesNoCardRadioGroup } from "../../../../../../common/components/YesNoCardRadioGroup/YesNoCardRadioGroup"
+import type { YesNoValue } from "../../../../../../common/components/YesNoCardRadioGroup/YesNoCardRadioGroup"
 import { createContact } from "../../../../contacts/api/contactsApi"
 import type { ContactRow } from "../../../../contacts/types/contact.types"
+import "../../../../usermanagement/user_management.css"
 import "./add_contact_quick_modal.css"
 
 export interface AddContactQuickModalProps {
@@ -42,6 +45,8 @@ export function AddContactQuickModal({
   const [phoneNationalDigits, setPhoneNationalDigits] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [sendInvitationMail, setSendInvitationMail] =
+    useState<YesNoValue>("yes")
 
   const reset = useCallback(() => {
     setFirstName("")
@@ -50,6 +55,7 @@ export function AddContactQuickModal({
     setPhoneNationalDigits("")
     setFormError(null)
     setSubmitting(false)
+    setSendInvitationMail("yes")
   }, [])
 
   const handleClose = useCallback(() => {
@@ -110,6 +116,7 @@ export function AddContactQuickModal({
         lists: [],
         owners: ownerName ? [ownerName] : ["User"],
         status: "active",
+        sendInvitationMail: sendInvitationMail === "no" ? "no" : "yes",
       })
       onCreated(created)
       reset()
@@ -201,6 +208,32 @@ export function AddContactQuickModal({
                   className="add_contact_quick_input deals_add_inv_field_pill"
                 />
               </label>
+            </div>
+            <div className="add_contact_quick_invite">
+              <div
+                className="um_field_label_row"
+                id="add-contact-quick-send-invite-label"
+              >
+                <Mail
+                  className="um_field_label_icon"
+                  size={17}
+                  aria-hidden
+                />
+                <span className="mail_text_label">
+                  Would you like to send an invitation email?
+                </span>
+              </div>
+              <div className="portal_yesno_field_block">
+                <YesNoCardRadioGroup
+                  name="add-contact-quick-send-invitation"
+                  value={sendInvitationMail === "no" ? "no" : "yes"}
+                  onChange={setSendInvitationMail}
+                  yesIsCommon
+                  variant="mail"
+                  disabled={submitting}
+                  ariaLabelledBy="add-contact-quick-send-invite-label"
+                />
+              </div>
             </div>
           </div>
           <div className="add_contact_quick_actions um_modal_actions add_contact_modal_actions">

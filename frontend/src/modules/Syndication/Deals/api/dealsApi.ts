@@ -6,6 +6,7 @@ import {
   PORTAL_OMIT_ACTIVE_ORG_HEADER,
 } from "../../../../common/auth/portalAuthHeaders"
 import { getApiV1Base } from "../../../../common/utils/apiBaseUrl"
+import { PORTAL_TIMEOUT_HEADER } from "../../../../common/utils/requestTimeout"
 import {
   MAX_DEAL_IMAGE_FILE_BYTES,
   materializeImageFilesForUpload,
@@ -40,6 +41,7 @@ import {
   DEFAULT_ASSET_COUNTRY,
   type AssetStepDraft,
   type DealListRow,
+  type DealStageOption,
   type DealStepDraft,
 } from "../types/deals.types"
 import {
@@ -56,6 +58,10 @@ import {
   DealSaasPaymentRequiredError,
   parseDealSaasPaymentRequiredBody,
 } from "../utils/dealSaasAccess"
+import {
+  parseExtraCompanyUserPaymentBody,
+  type ExtraCompanyUserPaymentRequired,
+} from "../utils/extraCompanyUserBilling"
 
 export { DEAL_INVESTMENT_AUTOSAVE_CONTACT_PLACEHOLDER } from "../constants/investor-profile"
 
@@ -105,6 +111,14 @@ export interface DealDetailApi {
   offeringGalleryPaths?: string[]
   /** Encrypted `preview` query value; persisted on `add_deal_form` for share links. */
   offeringPreviewToken?: string | null
+  /** False when the signed-in viewer is a co-sponsor (or LP) on this deal. */
+  viewerCanEditDeal?: boolean
+  /** False when another organization's deal is visible here for viewing only. */
+  viewerCanManageDeal?: boolean
+  viewerIsLeadSponsor?: boolean
+  suggestedPlanId?: string | null
+  needsPlanUpgrade?: boolean
+  billingPlanId?: string | null
   /**
    * JSON string `{ v, visibility, sections }` for offering preview (documents + investor toggles).
    * Synced to the server for the shared preview link.
@@ -134,7 +148,7 @@ export async function fetchUsersForMemberSelect(): Promise<
   const base = getApiV1Base()
   if (!base) return []
   try {
-    const res = await fetch(`${base}/users`, {
+    const res = await fetch(`${base}/users?sort=name`, {
       headers: { ...authHeaders() },
       credentials: "include",
     })
@@ -376,11 +390,27 @@ function normalizeDealListRow(
         nextRaw != null && String(nextRaw).trim() !== ""
           ? str(nextRaw)
           : null
+      const startRaw = firstDefined(r, [
+        "saasBillingStartsAt",
+        "saas_billing_starts_at",
+      ])
+      const saasBillingStartsAt =
+        startRaw != null && String(startRaw).trim() !== ""
+          ? str(startRaw)
+          : null
       const statusRaw = firstDefined(r, [
         "billingSubscriptionStatus",
         "billing_subscription_status",
       ])
       const planRaw = firstDefined(r, ["billingPlanId", "billing_plan_id"])
+      const suggestedRaw = firstDefined(r, [
+        "suggestedPlanId",
+        "suggested_plan_id",
+      ])
+      const upgradeRaw = firstDefined(r, [
+        "needsPlanUpgrade",
+        "needs_plan_upgrade",
+      ])
       const lockedRaw = firstDefined(r, [
         "billingAccessLocked",
         "billing_access_locked",
@@ -391,17 +421,31 @@ function normalizeDealListRow(
       ])
       const hasBilling =
         nextBillingDate != null ||
+        saasBillingStartsAt != null ||
         statusRaw != null ||
         planRaw != null ||
+        suggestedRaw != null ||
+        upgradeRaw != null ||
         lockedRaw != null
       if (!isLead && !hasBilling) return {}
       const lockReason = String(lockReasonRaw ?? "").trim().toLowerCase()
       return {
         ...(isLead ? { viewerIsLeadSponsor: true as const } : {}),
         nextBillingDate,
+        saasBillingStartsAt,
         billingSubscriptionStatus:
           statusRaw != null ? str(statusRaw) : undefined,
         billingPlanId: planRaw != null ? str(planRaw) : null,
+        suggestedPlanId:
+          suggestedRaw != null && String(suggestedRaw).trim() !== ""
+            ? str(suggestedRaw)
+            : null,
+        ...(upgradeRaw === true ||
+        upgradeRaw === "true" ||
+        upgradeRaw === 1 ||
+        upgradeRaw === "1"
+          ? { needsPlanUpgrade: true as const }
+          : {}),
         ...(lockedRaw === true ||
         lockedRaw === "true" ||
         lockedRaw === 1 ||
@@ -420,7 +464,40 @@ function normalizeDealListRow(
           : {}),
       }
     })(),
+    ...(() => {
+      const raw = firstDefined(r, [
+        "viewerCanEditDeal",
+        "viewer_can_edit_deal",
+      ])
+      if (raw === true || raw === "true" || raw === 1 || raw === "1") {
+        return { viewerCanEditDeal: true as const }
+      }
+      if (raw === false || raw === "false" || raw === 0 || raw === "0") {
+        return { viewerCanEditDeal: false as const }
+      }
+      return {}
+    })(),
+    ...(() => {
+      const raw = firstDefined(r, [
+        "viewerCanManageDeal",
+        "viewer_can_manage_deal",
+      ])
+      if (raw === true || raw === "true" || raw === 1 || raw === "1") {
+        return { viewerCanManageDeal: true as const }
+      }
+      if (raw === false || raw === "false" || raw === 0 || raw === "0") {
+        return { viewerCanManageDeal: false as const }
+      }
+      return {}
+    })(),
   }
+}
+
+const DEALS_LIST_TTL_MS = 20_000
+const dealsListCache = new Map<string, { at: number; rows: DealListRow[] }>()
+
+export function invalidateDealsListCache(): void {
+  dealsListCache.clear()
 }
 
 /** Returns normalized rows, or [] if the API is unreachable, unauthorized, or has no deals. */
@@ -432,6 +509,7 @@ export async function fetchDealsList(options?: {
    * so platform admins receive the full deal roster.
    */
   organizationId?: string
+  force?: boolean
 }): Promise<DealListRow[]> {
   const base = getApiV1Base()
   if (!base) return []
@@ -450,6 +528,15 @@ export async function fetchDealsList(options?: {
       }
     }
   }
+  const cacheKey = `${includeParticipantDeals ? "1" : "0"}|${params.toString()}`
+  const cached = dealsListCache.get(cacheKey)
+  if (
+    !options?.force &&
+    cached &&
+    Date.now() - cached.at < DEALS_LIST_TTL_MS
+  ) {
+    return cached.rows
+  }
   const q = params.toString() ? `?${params.toString()}` : ""
   try {
     const res = await fetch(`${base}/deals${q}`, {
@@ -465,7 +552,7 @@ export async function fetchDealsList(options?: {
     }
     if (!res.ok) return []
     if (!Array.isArray(data.deals)) return []
-    return data.deals.map((item, i) =>
+    const rows = data.deals.map((item, i) =>
       normalizeDealListRow(
         (item != null && typeof item === "object"
           ? item
@@ -473,6 +560,8 @@ export async function fetchDealsList(options?: {
         i,
       ),
     )
+    dealsListCache.set(cacheKey, { at: Date.now(), rows })
+    return rows
   } catch {
     return []
   }
@@ -734,6 +823,32 @@ export function normalizeDealDetailApi(
     offeringPreviewToken,
     offeringInvestorPreviewJson,
     archived,
+    ...(() => {
+      const raw = firstDefined(d, [
+        "viewerCanEditDeal",
+        "viewer_can_edit_deal",
+      ])
+      if (raw === true || raw === "true" || raw === 1 || raw === "1") {
+        return { viewerCanEditDeal: true as const }
+      }
+      if (raw === false || raw === "false" || raw === 0 || raw === "0") {
+        return { viewerCanEditDeal: false as const }
+      }
+      return {}
+    })(),
+    ...(() => {
+      const raw = firstDefined(d, [
+        "viewerCanManageDeal",
+        "viewer_can_manage_deal",
+      ])
+      if (raw === true || raw === "true" || raw === 1 || raw === "1") {
+        return { viewerCanManageDeal: true as const }
+      }
+      if (raw === false || raw === "false" || raw === 0 || raw === "0") {
+        return { viewerCanManageDeal: false as const }
+      }
+      return {}
+    })(),
   }
 }
 
@@ -816,6 +931,37 @@ export async function fetchOfferingPreviewToken(
         ? data.sponsorRef.trim()
         : null,
   }
+}
+
+/** Unique investor signup/signin link for this deal, attributed to the current sponsor. */
+export async function fetchDealInvestorInviteLink(
+  dealId: string,
+): Promise<string> {
+  const id = dealId.trim()
+  if (!id) throw new Error("Missing deal id.")
+  const base = getApiV1Base()
+  if (!base) throw new Error("VITE_BASE_URL is not configured.")
+  const res = await fetch(
+    `${base}/deals/${encodeURIComponent(id)}/investor-invite-link`,
+    {
+      headers: { ...authHeaders() },
+      credentials: "include",
+    },
+  )
+  const data = (await res.json().catch(() => ({}))) as {
+    inviteUrl?: unknown
+    message?: unknown
+  }
+  if (!res.ok) {
+    throw new Error(
+      data?.message != null
+        ? String(data.message)
+        : `Could not get invite link (${res.status})`,
+    )
+  }
+  const url = String(data.inviteUrl ?? "").trim()
+  if (!url) throw new Error("Invalid invite link response.")
+  return url
 }
 
 export type OfferingPreviewShareEmailFailure = {
@@ -973,6 +1119,15 @@ export async function fetchPublicOfferingPreview(
   )
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) {
+    if (res.status === 402) {
+      throw new DealSaasPaymentRequiredError(
+        parseDealSaasPaymentRequiredBody(data) ?? {
+          id: "",
+          dealName: "",
+        },
+        typeof data.message === "string" ? data.message : undefined,
+      )
+    }
     throw new Error(
       typeof data.message === "string"
         ? data.message
@@ -1687,6 +1842,11 @@ export const DEAL_OFFERING_DOCUMENT_ACCEPT = [
 export const DEAL_OFFERING_DOCUMENT_TYPES_LABEL =
   "PDF, Word, PowerPoint, or Excel"
 
+/** Documents tab: max files and size per upload request. */
+export const MAX_DEAL_OFFERING_DOCUMENT_FILES = 50
+export const MAX_DEAL_OFFERING_DOCUMENT_FILE_BYTES = 100 * 1024 * 1024
+export const DEAL_OFFERING_DOCUMENT_LIMITS_HINT = "Up to 50 files, 100 MB each"
+
 function offeringDocumentExt(fileName: string): string {
   const name = fileName.trim().toLowerCase()
   const dot = name.lastIndexOf(".")
@@ -1724,6 +1884,19 @@ export function dealOfferingDocumentRejectMessage(
   return `Only ${DEAL_OFFERING_DOCUMENT_TYPES_LABEL} files can be uploaded. Skipped: ${rejectedNames.join(", ")}.`
 }
 
+export function dealOfferingDocumentTooLargeMessage(
+  fileName?: string,
+): string {
+  if (fileName?.trim()) {
+    return `"${fileName.trim()}" is larger than 100 MB. Each file must be 100 MB or smaller.`
+  }
+  return "Each file must be 100 MB or smaller."
+}
+
+export function dealOfferingDocumentCountLimitMessage(): string {
+  return `You can upload up to ${MAX_DEAL_OFFERING_DOCUMENT_FILES} files at a time.`
+}
+
 /** Upload offering documents (Documents tab) so preview / investors get stable `/uploads/...` links. */
 export async function postDealOfferingDocumentUploads(
   dealId: string,
@@ -1737,6 +1910,12 @@ export async function postDealOfferingDocumentUploads(
     return { ok: false, message: "VITE_BASE_URL is not configured." }
   if (files.length === 0)
     return { ok: false, message: "No documents to upload." }
+  if (files.length > MAX_DEAL_OFFERING_DOCUMENT_FILES) {
+    return {
+      ok: false,
+      message: dealOfferingDocumentCountLimitMessage(),
+    }
+  }
   const nonAllowed = files.filter((f) => !isDealOfferingDocumentFile(f))
   if (nonAllowed.length > 0) {
     return {
@@ -1744,6 +1923,17 @@ export async function postDealOfferingDocumentUploads(
       message: dealOfferingDocumentRejectMessage(
         nonAllowed.map((f) => f.name),
       ),
+    }
+  }
+  const tooLarge = files.find(
+    (f) =>
+      typeof f.size === "number" &&
+      f.size > MAX_DEAL_OFFERING_DOCUMENT_FILE_BYTES,
+  )
+  if (tooLarge) {
+    return {
+      ok: false,
+      message: dealOfferingDocumentTooLargeMessage(tooLarge.name),
     }
   }
   const fd = new FormData()
@@ -2067,7 +2257,8 @@ export function dealDetailFieldForCreateWizard(
 /**
  * True when required deal fields still hold autosave placeholders (see
  * {@link buildCreateDealFormDataForAutosave}). Ignores lifecycle stage — sponsors may
- * invite investors while the deal is still in Draft.
+ * invite investors while the deal is still in Draft. City is excluded: the wizard never
+ * requires it to save, so its autosave placeholder can outlive a completed deal.
  */
 export function areRequiredDealDetailFieldsIncomplete(
   d: DealDetailApi,
@@ -2075,7 +2266,6 @@ export function areRequiredDealDetailFieldsIncomplete(
   if (isAutosavePlaceholderStored(String(d.secType ?? ""))) return true
   if (isAutosavePlaceholderStored(String(d.owningEntityName ?? ""))) return true
   if (isAutosavePlaceholderStored(String(d.propertyName ?? ""))) return true
-  if (isAutosavePlaceholderStored(String(d.city ?? ""))) return true
   return false
 }
 
@@ -2091,17 +2281,20 @@ export function isDealDetailFormIncomplete(d: DealDetailApi): boolean {
 }
 
 /**
- * Same rules as {@link isDealDetailFormIncomplete} for list rows (requires
- * `secType`, `owningEntityName`, `propertyName`, `city` on the row when the API sends them).
+ * Same rules as {@link isDealDetailFormIncomplete} for list rows (checks
+ * `secType`, `owningEntityName`, `propertyName` on the row when the API sends them).
  */
-export function isDealListRowIncomplete(row: DealListRow): boolean {
-  const stage = String(row.dealStage ?? "").trim().toLowerCase()
-  if (stage === "draft") return true
+export function areRequiredDealListRowFieldsIncomplete(row: DealListRow): boolean {
   if (isAutosavePlaceholderStored(String(row.secType ?? ""))) return true
   if (isAutosavePlaceholderStored(String(row.owningEntityName ?? ""))) return true
   if (isAutosavePlaceholderStored(String(row.propertyName ?? ""))) return true
-  if (isAutosavePlaceholderStored(String(row.city ?? ""))) return true
   return false
+}
+
+export function isDealListRowIncomplete(row: DealListRow): boolean {
+  const stage = String(row.dealStage ?? "").trim().toLowerCase()
+  if (stage === "draft") return true
+  return areRequiredDealListRowFieldsIncomplete(row)
 }
 
 /** Optional image fields for {@link buildCreateDealFormData} / autosave (edit deal PUT). */
@@ -2222,6 +2415,7 @@ export async function createDealMultipart(
   const base = getApiV1Base()
   if (!base)
     return { ok: false, message: "VITE_BASE_URL is not configured." }
+  invalidateDealsListCache()
   const res = await fetch(`${base}/deals`, {
     method: "POST",
     headers: { ...authHeaders() },
@@ -2262,6 +2456,7 @@ export async function updateDealMultipart(
   const base = getApiV1Base()
   if (!base)
     return { ok: false, message: "VITE_BASE_URL is not configured." }
+  invalidateDealsListCache()
   const res = await fetch(`${base}/deals/${encodeURIComponent(dealId)}`, {
     method: "PUT",
     headers: { ...authHeaders() },
@@ -2293,6 +2488,7 @@ export async function deleteDeal(
   const base = getApiV1Base()
   if (!base)
     return { ok: false, message: "VITE_BASE_URL is not configured." }
+  invalidateDealsListCache()
   const res = await fetch(`${base}/deals/${encodeURIComponent(dealId)}`, {
     method: "DELETE",
     headers: { ...authHeaders() },
@@ -2316,6 +2512,7 @@ export async function patchDealArchived(
   const base = getApiV1Base()
   if (!base)
     return { ok: false, message: "VITE_BASE_URL is not configured." }
+  invalidateDealsListCache()
   const res = await fetch(
     `${base}/deals/${encodeURIComponent(dealId)}/archived`,
     {
@@ -2348,6 +2545,51 @@ export async function patchDealArchived(
       raw as Partial<DealListRow> & Record<string, unknown>,
       0,
     ),
+  }
+}
+
+/**
+ * Manage deal stage: changes lifecycle stage only (no other deal field is sent).
+ * `pendingDealStage` is set when SaaS payment is still required, in which case the deal
+ * stays in Draft until Stripe payment succeeds.
+ */
+export async function patchDealStage(
+  dealId: string,
+  dealStage: DealStageOption,
+): Promise<
+  | { ok: true; deal: DealDetailApi; pendingDealStage: string | null }
+  | { ok: false; message: string }
+> {
+  const base = getApiV1Base()
+  if (!base)
+    return { ok: false, message: "VITE_BASE_URL is not configured." }
+  const res = await fetch(
+    `${base}/deals/${encodeURIComponent(dealId)}/deal-stage`,
+    {
+      method: "PATCH",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({ deal_stage: dealStage }),
+    },
+  )
+  const data = (await res.json().catch(() => ({}))) as {
+    message?: string
+    pendingDealStage?: string | null
+    deal?: DealDetailApi & Record<string, unknown>
+  }
+  if (!res.ok || !data.deal) {
+    return {
+      ok: false,
+      message: data.message || `Could not update deal stage (${res.status})`,
+    }
+  }
+  return {
+    ok: true,
+    deal: data.deal,
+    pendingDealStage: data.pendingDealStage ?? null,
   }
 }
 
@@ -2588,6 +2830,12 @@ function normalizeInvestorRowApi(
       ]),
       "—",
     ),
+    addedByCompanyName: str(
+      firstDefined(raw, [
+        "addedByCompanyName",
+        "added_by_company_name",
+      ]),
+    ),
     ...(() => {
       const email = firstDefined(raw, ["addedByEmail", "added_by_email"])
       if (email == null || !String(email).trim()) return {}
@@ -2611,6 +2859,33 @@ function normalizeInvestorRowApi(
       }
       return {}
     })(),
+    ...(() => {
+      const v = firstDefined(raw, [
+        "addedByCoSponsorEmailIntercept",
+        "added_by_co_sponsor_email_intercept",
+      ])
+      const t = String(v ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[_-]+/g, " ")
+      if (
+        t === "no" ||
+        t === "no intercept" ||
+        t === "false" ||
+        t === "0"
+      ) {
+        return { addedByCoSponsorEmailIntercept: "no" as const }
+      }
+      if (
+        t === "yes" ||
+        t === "yes intercept" ||
+        t === "true" ||
+        t === "1"
+      ) {
+        return { addedByCoSponsorEmailIntercept: "yes" as const }
+      }
+      return {}
+    })(),
     addedInvestorsCommitted: str(
       firstDefined(raw, [
         "addedInvestorsCommitted",
@@ -2620,7 +2895,8 @@ function normalizeInvestorRowApi(
     ),
     investorKind: (() => {
       const ik = firstDefined(raw, ["investorKind", "investor_kind"])
-      if (ik === "lp_roster" || ik === "investment") return ik
+      if (ik === "lp_roster" || ik === "member_roster" || ik === "investment")
+        return ik
       if (ik === "lp_investor") return "lp_roster"
       return undefined
     })(),
@@ -2800,12 +3076,35 @@ function normalizeDealMembersResponse(data: unknown): DealMembersPayload {
   const referringSponsorRef = str(
     firstDefined(d, ["referringSponsorRef", "referring_sponsor_ref"]),
   )
+  const inviteSponsorCompanyName = str(
+    firstDefined(d, [
+      "inviteSponsorCompanyName",
+      "invite_sponsor_company_name",
+    ]),
+  )
+  const sameOrganizationSponsorDisplayName = str(
+    firstDefined(d, [
+      "sameOrganizationSponsorDisplayName",
+      "same_organization_sponsor_display_name",
+    ]),
+  )
+  const onboardingSponsorDisplayName = str(
+    firstDefined(d, [
+      "onboardingSponsorDisplayName",
+      "onboarding_sponsor_display_name",
+    ]),
+  )
   return {
     members,
     ...(viewerDealMemberRole !== undefined ? { viewerDealMemberRole } : {}),
     ...(leadSponsorDisplayName ? { leadSponsorDisplayName } : {}),
     ...(referringSponsorDisplayName ? { referringSponsorDisplayName } : {}),
     ...(referringSponsorRef ? { referringSponsorRef } : {}),
+    ...(inviteSponsorCompanyName ? { inviteSponsorCompanyName } : {}),
+    ...(sameOrganizationSponsorDisplayName
+      ? { sameOrganizationSponsorDisplayName }
+      : {}),
+    ...(onboardingSponsorDisplayName ? { onboardingSponsorDisplayName } : {}),
   }
 }
 
@@ -2816,7 +3115,7 @@ function normalizeDealMembersResponse(data: unknown): DealMembersPayload {
  */
 export async function fetchDealInvestors(
   dealId: string,
-  options?: { lpInvestorsOnly?: boolean },
+  options?: { lpInvestorsOnly?: boolean; timeoutMs?: number },
 ): Promise<DealInvestorsPayload> {
   const base = getApiV1Base()
   if (!base) {
@@ -2831,7 +3130,13 @@ export async function fetchDealInvestors(
     const res = await fetch(
       `${base}/deals/${encodeURIComponent(dealId)}/investors${q}`,
       {
-        headers: { ...authHeaders({ omitActiveOrganization: true }) },
+        headers: {
+          ...authHeaders({ omitActiveOrganization: true }),
+          /** Reads have no budget by default; callers can still impose one. */
+          ...(options?.timeoutMs != null
+            ? { [PORTAL_TIMEOUT_HEADER]: String(options.timeoutMs) }
+            : {}),
+        },
         credentials: "include",
       },
     )
@@ -2931,6 +3236,8 @@ export async function fetchDealMembers(
     const params = new URLSearchParams()
     const ref = options?.referringSponsorRef?.trim()
     if (ref) params.set("referring_sponsor_ref", ref)
+    const sponsorCompanyId = organizationIdQueryParam()
+    if (sponsorCompanyId) params.set("sponsorCompanyId", sponsorCompanyId)
     const q = params.toString()
     const res = await fetch(
       `${base}/deals/${encodeURIComponent(dealId)}/members${q ? `?${q}` : ""}`,
@@ -2944,6 +3251,75 @@ export async function fetchDealMembers(
     return normalizeDealMembersResponse(data)
   } catch {
     return emptyDealMembersPayload()
+  }
+}
+
+export type CoSponsorEmailIntercept = "yes" | "no"
+
+export async function fetchCoSponsorEmailIntercept(
+  dealId: string,
+): Promise<{ applicable: boolean; intercept: CoSponsorEmailIntercept | null }> {
+  const base = getApiV1Base()
+  const did = dealId.trim()
+  if (!base || !did) return { applicable: false, intercept: null }
+  try {
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(did)}/co-sponsor-email-intercept`,
+      {
+        headers: { ...authHeaders({ omitActiveOrganization: true }) },
+        credentials: "include",
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) return { applicable: false, intercept: null }
+    const applicable = data.applicable === true
+    const raw = String(data.intercept ?? "").trim().toLowerCase()
+    const intercept: CoSponsorEmailIntercept | null =
+      raw === "no" ? "no" : raw === "yes" ? "yes" : null
+    return { applicable, intercept: applicable ? intercept ?? "yes" : null }
+  } catch {
+    return { applicable: false, intercept: null }
+  }
+}
+
+export async function patchCoSponsorEmailIntercept(
+  dealId: string,
+  intercept: CoSponsorEmailIntercept,
+): Promise<
+  | { ok: true; intercept: CoSponsorEmailIntercept }
+  | { ok: false; message: string }
+> {
+  const base = getApiV1Base()
+  const did = dealId.trim()
+  if (!base || !did)
+    return { ok: false, message: "VITE_BASE_URL is not configured." }
+  try {
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(did)}/co-sponsor-email-intercept`,
+      {
+        method: "PATCH",
+        headers: {
+          ...authHeaders({ omitActiveOrganization: true }),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ intercept }),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as {
+      intercept?: unknown
+      message?: string
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: data.message?.trim() || "Could not save interrupt setting.",
+      }
+    }
+    const raw = String(data.intercept ?? intercept).trim().toLowerCase()
+    return { ok: true, intercept: raw === "no" ? "no" : "yes" }
+  } catch {
+    return { ok: false, message: "Could not save interrupt setting." }
   }
 }
 
@@ -3294,6 +3670,7 @@ export async function postDealEsignAddInvestorDataField(
   fileId: string,
   fieldKey: string,
   profileIds?: string[],
+  page?: number,
 ): Promise<PostDealEsignAddInvestorDataFieldResult> {
   const base = getApiV1Base()
   if (!base) {
@@ -3312,6 +3689,9 @@ export async function postDealEsignAddInvestorDataField(
         body: JSON.stringify({
           fieldKey,
           profileIds: profileIds ?? [],
+          ...(Number.isFinite(page) && page && page >= 1
+            ? { page: Math.floor(page) }
+            : {}),
         }),
       },
     )
@@ -4410,7 +4790,13 @@ export type PostDealDocumentSharedNotificationResult =
 export async function postDealDocumentSharedNotification(
   dealId: string,
   input: {
-    recipients: { to_email: string; member_display_name?: string }[]
+    recipients?: { to_email: string; member_display_name?: string }[]
+    audience?: {
+      all_investors?: boolean
+      investor_ids?: string[]
+      sponsor_user_ids?: string[]
+      class_ids?: string[]
+    }
     document_names: string[]
   },
 ): Promise<PostDealDocumentSharedNotificationResult> {
@@ -4429,10 +4815,13 @@ export async function postDealDocumentSharedNotification(
         },
         credentials: "include",
         body: JSON.stringify({
-          recipients: input.recipients.map((r) => ({
-            to_email: r.to_email.trim(),
-            member_display_name: r.member_display_name?.trim() ?? "",
-          })),
+          recipients: (input.recipients ?? [])
+            .map((r) => ({
+              to_email: r.to_email.trim(),
+              member_display_name: r.member_display_name?.trim() ?? "",
+            }))
+            .filter((r) => r.to_email.includes("@")),
+          audience: input.audience ?? {},
           document_names: input.document_names,
         }),
       },
@@ -4483,6 +4872,50 @@ export async function deleteDealMemberRoster(
       return { ok: false, message: msg || "Could not remove member" }
     }
     return { ok: true }
+  } catch {
+    return { ok: false, message: "Network error" }
+  }
+}
+
+/**
+ * PUT `/deals/:dealId/members/:rowId` — updates a roster-only `deal_member` row.
+ */
+export async function putDealMemberRoster(
+  dealId: string,
+  rowId: string,
+  values: AddInvestmentFormValues,
+): Promise<PostDealInvestmentResult> {
+  const base = getApiV1Base()
+  if (!base) return { ok: true, mode: "client" }
+  const body: Record<string, unknown> = {
+    contact_id: values.contactId,
+    contact_display_name: values.contactDisplayName?.trim() ?? "",
+    contact_email: values.contactEmail?.trim() ?? "",
+    investor_role: values.investorRole?.trim() ?? "",
+    send_invitation_mail: values.sendInvitationMail ?? "no",
+    replacement_lead_sponsor_contact_id:
+      values.replacementLeadSponsorContactId?.trim() ?? "",
+  }
+  try {
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(dealId)}/members/${encodeURIComponent(rowId)}`,
+      {
+        method: "PUT",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify(body),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { message?: unknown }
+    if (!res.ok) {
+      const msg =
+        data.message != null ? String(data.message) : res.statusText
+      return { ok: false, message: msg || "Could not update member" }
+    }
+    return { ok: true, mode: "api" }
   } catch {
     return { ok: false, message: "Network error" }
   }
@@ -4549,7 +4982,11 @@ export async function patchMyLpDealCommitment(
 export type PostDealLpInvestorResult =
   | { ok: true; mode: "api"; lpInvestorId?: string }
   | { ok: true; mode: "client" }
-  | { ok: false; message: string }
+  | {
+      ok: false
+      message: string
+      extraCompanyUserPayment?: ExtraCompanyUserPaymentRequired
+    }
 
 /** JSON POST `/deals/:dealId/lp-investors` — roster row in `deal_lp_investor` (no `deal_investment`). */
 export async function postDealLpInvestor(
@@ -4597,9 +5034,17 @@ export async function postDealLpInvestor(
       investor?: { id?: string }
     }
     if (!res.ok) {
+      const extraCompanyUserPayment = parseExtraCompanyUserPaymentBody(
+        data,
+        dealId,
+      )
       const msg =
         data?.message != null ? String(data.message) : res.statusText
-      return { ok: false, message: msg || "Could not save LP investor" }
+      return {
+        ok: false,
+        message: msg || "Could not save LP investor",
+        ...(extraCompanyUserPayment ? { extraCompanyUserPayment } : {}),
+      }
     }
     const rawId = data.investor?.id
     const lpInvestorId =
@@ -4693,9 +5138,17 @@ export async function putDealLpInvestor(
       message?: unknown
     }
     if (!res.ok) {
+      const extraCompanyUserPayment = parseExtraCompanyUserPaymentBody(
+        data,
+        dealId,
+      )
       const msg =
         data?.message != null ? String(data.message) : res.statusText
-      return { ok: false, message: msg || "Could not update LP investor" }
+      return {
+        ok: false,
+        message: msg || "Could not update LP investor",
+        ...(extraCompanyUserPayment ? { extraCompanyUserPayment } : {}),
+      }
     }
     return { ok: true, mode: "api" }
   } catch {
@@ -4706,7 +5159,11 @@ export async function putDealLpInvestor(
 export type PostDealInvestmentResult =
   | { ok: true; mode: "api"; investmentId?: string }
   | { ok: true; mode: "client" }
-  | { ok: false; message: string }
+  | {
+      ok: false
+      message: string
+      extraCompanyUserPayment?: ExtraCompanyUserPaymentRequired
+    }
 
 function appendDealInvestmentMultipartFields(
   fd: FormData,
@@ -4739,6 +5196,14 @@ function appendDealInvestmentMultipartFields(
     "fund_approved",
     values.fundApproved === true ? "true" : "false",
   )
+  const replacementLeadSponsorContactId =
+    values.replacementLeadSponsorContactId?.trim()
+  if (replacementLeadSponsorContactId) {
+    fd.append(
+      "replacement_lead_sponsor_contact_id",
+      replacementLeadSponsorContactId,
+    )
+  }
   if (options?.autosave) fd.append("autosave", "true")
 }
 
@@ -4773,9 +5238,17 @@ export async function postDealInvestment(
       investor?: { id?: string }
     }
     if (!res.ok) {
+      const extraCompanyUserPayment = parseExtraCompanyUserPaymentBody(
+        data,
+        dealId,
+      )
       const msg =
         data?.message != null ? String(data.message) : res.statusText
-      return { ok: false, message: msg || "Could not save investment" }
+      return {
+        ok: false,
+        message: msg || "Could not save investment",
+        ...(extraCompanyUserPayment ? { extraCompanyUserPayment } : {}),
+      }
     }
     const rawId = data.investor?.id
     const investmentId =
@@ -4848,9 +5321,17 @@ export async function putDealInvestment(
       message?: unknown
     }
     if (!res.ok) {
+      const extraCompanyUserPayment = parseExtraCompanyUserPaymentBody(
+        data,
+        dealId,
+      )
       const msg =
         data?.message != null ? String(data.message) : res.statusText
-      return { ok: false, message: msg || "Could not update investment" }
+      return {
+        ok: false,
+        message: msg || "Could not update investment",
+        ...(extraCompanyUserPayment ? { extraCompanyUserPayment } : {}),
+      }
     }
     if (import.meta.env.DEV) {
       console.info("[Edit investment] Stored in DB (PUT)", {

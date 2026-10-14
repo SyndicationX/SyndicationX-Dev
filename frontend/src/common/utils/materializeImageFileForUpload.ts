@@ -1,5 +1,21 @@
 /** Deal gallery / property images (matches backend multer limit). */
-export const MAX_DEAL_IMAGE_FILE_BYTES = 20 * 1024 * 1024
+export const MAX_DEAL_IMAGE_FILE_MB = 20
+export const MAX_DEAL_IMAGE_FILE_BYTES = MAX_DEAL_IMAGE_FILE_MB * 1024 * 1024
+
+/** Formats accepted for deal / asset property photos. */
+export const DEAL_ASSET_IMAGE_FORMAT_LABEL = "JPG, PNG, WebP, or GIF"
+export const DEAL_ASSET_IMAGE_ACCEPT =
+  "image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
+
+const DEAL_ASSET_IMAGE_MIME = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+])
+
+const DEAL_ASSET_IMAGE_EXT = /\.(jpe?g|png|webp|gif)$/i
 
 const MAX_MULTIPART_IMAGE_NAME_LEN = 180
 
@@ -91,6 +107,21 @@ export type MaterializeImageFileOptions = {
 export function isLikelyImageFile(f: File): boolean {
   if (f.type && f.type.startsWith("image/")) return true
   return /\.(png|jpe?g|gif|webp|svg|ico|avif|bmp|heic|heif)$/i.test(f.name || "")
+}
+
+/** Property / gallery photos: JPG, PNG, WebP, or GIF only (not HEIC, BMP, SVG, …). */
+export function isAllowedDealAssetImageFile(f: File): boolean {
+  const type = String(f.type ?? "").trim().toLowerCase()
+  if (type) return DEAL_ASSET_IMAGE_MIME.has(type)
+  return DEAL_ASSET_IMAGE_EXT.test(f.name || "")
+}
+
+export function dealAssetImageLimitHint(maxCount?: number): string {
+  const count =
+    typeof maxCount === "number" && maxCount > 0
+      ? `Up to ${maxCount} images · `
+      : ""
+  return `${count}${DEAL_ASSET_IMAGE_FORMAT_LABEL} · max ${MAX_DEAL_IMAGE_FILE_MB} MB each`
 }
 
 async function readFileBytes(file: File): Promise<ArrayBuffer> {

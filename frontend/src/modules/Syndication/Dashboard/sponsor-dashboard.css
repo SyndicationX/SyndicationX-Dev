@@ -593,6 +593,13 @@ a.sponsor_dash_add_link.um_btn_secondary {
   }
 }
 
+/* Same 1280 CSS px laptop width as the KPI grid: three deal cards overflow their metrics. */
+@media (min-width: 1024px) and (max-width: 1280px) {
+  .sponsor_dash_deals_grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .investing_dash_panel {
   padding: 1.5em;
   background: var(--portal-surface);

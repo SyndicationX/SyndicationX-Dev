@@ -33,9 +33,11 @@ export interface OfferingStatusMeta {
 }
 
 export const OFFERING_STATUS_CATALOG: Record<DealStatus, OfferingStatusMeta> = {
+  // Hidden from Offering Details → Deal Status picker (kept for existing deals).
   draft_hidden: {
     value: "draft_hidden",
-    label: "Draft (hidden to investors)",
+    label: "Draft",
+    // label: "Draft (hidden to investors)",
     tone: "slate",
     icon: EyeOff,
     description:
@@ -66,6 +68,7 @@ export const OFFERING_STATUS_CATALOG: Record<DealStatus, OfferingStatusMeta> = {
     sponsorGuide:
       "Use to gauge demand before requiring reservations or full investment.",
   },
+  // Hidden from Offering Details → Deal Status picker (kept for existing deals).
   open_hard_commitment: {
     value: "open_hard_commitment",
     label: "Open to Hard Commitment",

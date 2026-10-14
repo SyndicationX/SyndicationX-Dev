@@ -81,6 +81,12 @@ function readStoredRows(): StoredRow[] {
         dealCloseDate: String(row.dealCloseDate ?? "").trim() || "—",
         status: String(row.status ?? "").trim() || "—",
         actionRequired: String(row.actionRequired ?? "").trim() || "None",
+        onboardingBucket:
+          row.onboardingBucket === "pending" || row.onboardingBucket === "in_progress"
+            ? row.onboardingBucket
+            : undefined,
+        hasInvestNowDraft: row.hasInvestNowDraft === true,
+        latestInvestedAtIso: String(row.latestInvestedAtIso ?? "").trim() || undefined,
         archived: Boolean(row.archived),
         updatedAtIso: String(row.updatedAtIso ?? "").trim() || "",
       })
@@ -119,6 +125,8 @@ export function upsertRuntimeInvestmentRow(input: {
   dealCloseDate?: string
   status?: string
   actionRequired?: string
+  onboardingBucket?: InvestmentListRow["onboardingBucket"]
+  hasInvestNowDraft?: boolean
 }): void {
   const dealId = input.dealId.trim()
   if (!dealId) return
@@ -143,6 +151,9 @@ export function upsertRuntimeInvestmentRow(input: {
     dealCloseDate: input.dealCloseDate?.trim() || "—",
     status: input.status?.trim() || "—",
     actionRequired: input.actionRequired?.trim() || "None",
+    onboardingBucket: input.onboardingBucket,
+    hasInvestNowDraft: input.hasInvestNowDraft === true,
+    latestInvestedAtIso: new Date().toISOString(),
     archived: false,
     updatedAtIso: new Date().toISOString(),
   }

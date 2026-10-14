@@ -1,6 +1,7 @@
 import {
   boolean,
   date,
+  integer,
   pgTable,
   text,
   timestamp,
@@ -47,7 +48,7 @@ export const addDealForm = pgTable("add_deal_form", {
   dealAnnouncementTitle: text("deal_announcement_title"),
   dealAnnouncementMessage: text("deal_announcement_message"),
   /** Investor-facing offering workflow status (Offering details → Overview). */
-  offeringStatus: text("offering_status").notNull().default("draft_hidden"),
+  offeringStatus: text("offering_status").notNull().default("coming_soon"),
   offeringVisibility: text("offering_visibility")
     .notNull()
     .default("show_on_dashboard"),
@@ -121,9 +122,11 @@ export const addDealForm = pgTable("add_deal_form", {
     { withTimezone: true },
   ),
   /**
-   * Per-deal SaaS subscription (company still owns the Stripe Customer).
+   * Per-deal SaaS subscription. Checkout uses `stripePayerCustomerId`
+   * (the lead sponsor). The company customer stays for saved company cards.
    * Draft / archived / liquidated deals are not billed.
    */
+  stripePayerCustomerId: varchar("stripe_payer_customer_id", { length: 255 }),
   stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
   stripePlanId: varchar("stripe_plan_id", { length: 64 }),
   stripeBillingCycle: varchar("stripe_billing_cycle", { length: 32 }),
@@ -137,12 +140,30 @@ export const addDealForm = pgTable("add_deal_form", {
     withTimezone: true,
   }),
   /**
-   * First charge / paywall date. Set once to 00:00 UTC on the 1st of next
-   * month so the current calendar month stays fully accessible.
+   * First charge / paywall date (00:00 UTC). Defaults to the platform SaaS
+   * start date; a platform admin can set another date per deal.
    */
   saasBillingStartsAt: timestamp("saas_billing_starts_at", {
     withTimezone: true,
   }),
+  /**
+   * Extra company users (team members) already paid at $10 each, beyond the
+   * plan included count (Starter 1 / Running 2 / Growth 3).
+   */
+  extraCompanyUsersPaid: integer("extra_company_users_paid")
+    .notNull()
+    .default(0),
+  /** Promotion code already redeemed for this deal. One coupon per deal. */
+  saasCouponCode: varchar("saas_coupon_code", { length: 64 }),
+  extraCompanyUsersLastPaymentRef: varchar(
+    "extra_company_users_last_payment_ref",
+    { length: 255 },
+  ),
+  /**
+   * Intended Capital Raising / Asset Managing stage while SaaS payment is
+   * pending. `deal_stage` stays Draft until payment completes.
+   */
+  pendingDealStage: varchar("pending_deal_stage", { length: 64 }),
 });
 
 export type AddDealFormRow = typeof addDealForm.$inferSelect;

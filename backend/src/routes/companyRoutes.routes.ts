@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   getCompanies,
   patchCompany,
+  patchCompanyDisplayName,
   postCompany,
 } from "../controllers/company/company.controller.js";
 import { postCompaniesExportNotify } from "../controllers/exportNotify.controller.js";
@@ -25,6 +26,7 @@ router.get("/companies", getCompanies);
 router.post("/companies", postCompany);
 router.post("/companies/export-notify", postCompaniesExportNotify);
 router.patch("/companies/:companyId", patchCompany);
+router.patch("/companies/:companyId/name", patchCompanyDisplayName);
 router.get(
   "/companies/:companyId/workspace-settings/:tabKey",
   getWorkspaceTabSettings,

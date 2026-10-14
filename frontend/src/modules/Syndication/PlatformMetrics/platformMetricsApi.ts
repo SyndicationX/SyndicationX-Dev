@@ -137,8 +137,12 @@ export type UserActivityPageCount = {
 
 export type UserActivityRow = {
   userId: string
+  sessionId?: string | null
   userName: string
   email: string
+  role: string
+  userStatus: string
+  companyName: string | null
   loginAt: string
   logoutAt: string | null
   isActive: boolean
@@ -178,7 +182,18 @@ export async function fetchPlatformUserActivity(): Promise<
     if (!Array.isArray(data.userActivity)) {
       return { ok: false, message: "Invalid user activity response." }
     }
-    return { ok: true, userActivity: data.userActivity }
+    return {
+      ok: true,
+      userActivity: data.userActivity.map((row) => ({
+        ...row,
+        role: row.role ?? "",
+        userStatus: row.userStatus ?? "",
+        companyName: row.companyName ?? null,
+        pageNavigations: Array.isArray(row.pageNavigations)
+          ? row.pageNavigations
+          : [],
+      })),
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Network error"
     return { ok: false, message: msg }

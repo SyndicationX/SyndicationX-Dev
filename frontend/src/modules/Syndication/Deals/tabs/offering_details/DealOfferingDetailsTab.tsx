@@ -3,6 +3,8 @@ import { FormTooltip } from "../../../../../common/components/form-tooltip/FormT
 import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import type { DealDetailApi } from "../../api/dealsApi"
+import type { ViewerDealMemberRole } from "../../utils/dealDetailTabVisibility"
+import { CoSponsorEmailInterceptCard } from "./CoSponsorEmailInterceptCard"
 import {
   OFFERING_DETAILS_ACCORDION_SECTION_ORDER,
   offeringSectionHasInvestorPreviewTarget,
@@ -42,11 +44,16 @@ import "../deal_members/add-investment/add_deal_modal.css"
 interface DealOfferingDetailsTabProps {
   detail: DealDetailApi
   onDealUpdated?: (deal: DealDetailApi) => void
+  viewerDealMemberRole?: ViewerDealMemberRole
+  /** Peer deal from another organization: read the offering, do not change it. */
+  viewOnly?: boolean
 }
 
 export function DealOfferingDetailsTab({
   detail,
   onDealUpdated,
+  viewerDealMemberRole = null,
+  viewOnly = false,
 }: DealOfferingDetailsTabProps) {
   const onDealUpdatedRef = useRef(onDealUpdated)
   onDealUpdatedRef.current = onDealUpdated
@@ -83,14 +90,15 @@ export function DealOfferingDetailsTab({
   }, [detail.id, detail.offeringInvestorPreviewJson])
 
   useEffect(() => {
-    if (!previewHydrated || !detail.id.trim()) return
+    if (viewOnly || !previewHydrated || !detail.id.trim()) return
     writeOfferingPreviewInvestorVisibility(detail.id, investorPreviewVisibility)
     scheduleOfferingInvestorPreviewServerSync(detail.id, {
       onSuccess: (d) => onDealUpdatedRef.current?.(d),
     })
-  }, [detail.id, investorPreviewVisibility, previewHydrated])
+  }, [detail.id, investorPreviewVisibility, previewHydrated, viewOnly])
 
   useEffect(() => {
+    if (viewOnly) return
     const nowVisible = investorPreviewVisibility.assets
     const wasVisible = prevAssetsInvestorVisibleRef.current
     prevAssetsInvestorVisibleRef.current = nowVisible
@@ -98,7 +106,7 @@ export function DealOfferingDetailsTab({
     clearOverviewExcludedAssetIds(detail.id)
     markOverviewAssetsMergePending(detail.id)
     dispatchOverviewAssetsMergeEvent(detail.id)
-  }, [detail.id, investorPreviewVisibility.assets])
+  }, [detail.id, investorPreviewVisibility.assets, viewOnly])
 
   useEffect(() => {
     const fromUrl = searchParams.get(OFFERING_SECTION_QUERY_PARAM)
@@ -237,6 +245,9 @@ export function DealOfferingDetailsTab({
             <span>Preview offering</span>
           </button>
         </div>
+        {viewerDealMemberRole === "co_sponsor" ? (
+          <CoSponsorEmailInterceptCard dealId={detail.id} />
+        ) : null}
         {/* <dl
           className="deal_offering_metrics"
           aria-label="Key offering figures"
@@ -334,7 +345,7 @@ export function DealOfferingDetailsTab({
                     ) : null}
                   </span>
                 </button>
-                {investorToggle}
+                {viewOnly ? null : investorToggle}
                 <button
                   type="button"
                   className="deal_offering_trigger_chevron_btn"
@@ -360,7 +371,14 @@ export function DealOfferingDetailsTab({
                 hidden={!expanded}
                 className="deal_offering_panel"
               >
-                {expanded ? sectionBody(id) : null}
+                {expanded ? (
+                  <fieldset
+                    disabled={viewOnly}
+                    className="deal_offering_view_only_fields"
+                  >
+                    {sectionBody(id)}
+                  </fieldset>
+                ) : null}
               </div>
             </div>
           )

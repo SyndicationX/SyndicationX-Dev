@@ -3,6 +3,7 @@ import {
   Activity,
   BadgeCheck,
   Briefcase,
+  Building2,
   Calendar,
   CalendarCheck,
   CircleDollarSign,
@@ -29,9 +30,11 @@ import {
   type DataTableColumn,
 } from "../../../../../common/components/data-table/DataTable"
 import { TabsScrollStrip } from "../../../../../common/components/tabs-scroll-strip/TabsScrollStrip"
+import { isPlatformAdmin } from "@/common/auth/roleUtils"
 import { ViewReadonlyField } from "../../../../../common/components/ViewReadonlyField"
 import { formatDateDdMmmYyyy } from "../../../../../common/utils/formatDateDisplay"
 import { displayEmail } from "../../../../../common/utils/displayEmail"
+import { fetchDistributionPayouts } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
 import { fetchDealInvestors } from "../../api/dealsApi"
 import { fetchDistributionSetup } from "../../distribution-setup/api/distributionSetupApi"
 import {
@@ -49,6 +52,8 @@ import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
   buildInvestorDistributionHistory,
+  buildInvestorPaymentMatchKeys,
+  payoutMatchesInvestor,
   type InvestorDistHistoryRow,
 } from "./investorDistributionHistory"
 import "../../../usermanagement/user_management.css"
@@ -114,6 +119,40 @@ const DISTRIBUTION_VIEW_SECTION_TAB: {
   label: string
   Icon: LucideIcon
 } = { id: "distribution", label: "Distributions", Icon: CircleDollarSign }
+
+function achStatusSlug(status: string): string {
+  const raw = status.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")
+  return raw || "not-sent"
+}
+
+function achStatusLabel(status: string): string {
+  const slug = achStatusSlug(status)
+  const labels: Record<string, string> = {
+    "not-sent": "Not sent",
+    pending: "Pending",
+    processing: "Processing",
+    paid: "Paid",
+    transferred: "Transferred",
+    failed: "Failed",
+    canceled: "Canceled",
+    cancelled: "Canceled",
+    reversed: "Reversed",
+  }
+  if (labels[slug]) return labels[slug]
+  return status
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function achStatusTone(status: string): string {
+  const slug = achStatusSlug(status)
+  if (slug === "paid" || slug === "transferred") return "success"
+  if (slug === "processing" || slug === "pending") return "info"
+  if (slug === "failed" || slug === "canceled" || slug === "cancelled" || slug === "reversed")
+    return "danger"
+  return "neutral"
+}
 
 function displayOrDash(v: string | null | undefined): string {
   const t = String(v ?? "").trim()
@@ -248,7 +287,7 @@ export function DealInvestorViewModal({
       fetchDistributionSetup(dealIdTrimmed),
       fetchDealInvestors(dealIdTrimmed, { lpInvestorsOnly: false }),
     ])
-      .then(([bundle, invPack]) => {
+      .then(async ([bundle, invPack]) => {
         if (cancelled) return
         const dealInvestors = invPack.investors ?? []
         // Prefer the investment row for this person when the clicked row is LP roster.
@@ -262,13 +301,46 @@ export function DealInvestorViewModal({
                 (normEmail(r.userEmail) &&
                   normEmail(r.userEmail) === normEmail(row.userEmail))),
           ) ?? row
-        setHistoryRows(
-          buildInvestorDistributionHistory({
-            investor: matchInvestor,
-            priorDistributions: bundle.priorDistributions ?? [],
-            dealInvestors,
-            classes: bundle.classes ?? [],
+        const history = buildInvestorDistributionHistory({
+          investor: matchInvestor,
+          priorDistributions: bundle.priorDistributions ?? [],
+          dealInvestors,
+          classes: bundle.classes ?? [],
+        })
+        const matchKeys = buildInvestorPaymentMatchKeys({
+          investor: matchInvestor,
+          dealInvestors,
+        })
+        const distIds = [
+          ...new Set(
+            history
+              .map((h) => h.distributionId.trim())
+              .filter((id) => id.length > 0),
+          ),
+        ]
+        const payoutByDist = new Map<string, string>()
+        await Promise.all(
+          distIds.map(async (distId) => {
+            try {
+              const list = await fetchDistributionPayouts(
+                dealIdTrimmed,
+                distId,
+              )
+              const hit = list.find((p) =>
+                payoutMatchesInvestor(matchKeys, p.investmentId),
+              )
+              payoutByDist.set(distId, hit?.status?.trim() || "not sent")
+            } catch {
+              payoutByDist.set(distId, "not sent")
+            }
           }),
+        )
+        if (cancelled) return
+        setHistoryRows(
+          history.map((h) => ({
+            ...h,
+            achStatus: payoutByDist.get(h.distributionId) ?? h.achStatus,
+          })),
         )
       })
       .catch(() => {
@@ -333,10 +405,10 @@ export function DealInvestorViewModal({
   const historyColumns: DataTableColumn<InvestorDistHistoryRow>[] = useMemo(
     () => [
       {
-        id: "memo",
-        header: "Memo",
-        colWidth: "8rem",
-        sortValue: (r) => r.dateSort,
+        id: "distributionName",
+        header: "Distribution name",
+        colWidth: "11rem",
+        sortValue: (r) => r.distributionName.toLowerCase(),
         cell: (r) =>
           dealIdTrimmed && r.distributionId ? (
             <Link
@@ -344,11 +416,36 @@ export function DealInvestorViewModal({
               className="deals_table_name_link deal_dist_row_link"
               onClick={(e) => e.stopPropagation()}
             >
-              {r.memo}
+              {r.distributionName}
             </Link>
           ) : (
-            r.memo
+            r.distributionName
           ),
+      },
+      {
+        id: "date",
+        header: "Date",
+        colWidth: "7.5rem",
+        sortValue: (r) => r.dateSort,
+        cell: (r) => r.date,
+      },
+      {
+        id: "achStatus",
+        header: "ACH status",
+        colWidth: "8rem",
+        sortValue: (r) => r.achStatus.toLowerCase(),
+        cell: (r) => {
+          const status = r.achStatus || "not sent"
+          const slug = achStatusSlug(status)
+          const tone = achStatusTone(status)
+          return (
+            <span
+              className={`deal_dist_ach_badge deal_dist_ach_badge--${tone} is-${slug}`}
+            >
+              {achStatusLabel(status)}
+            </span>
+          )
+        },
       },
       {
         id: "type",
@@ -356,13 +453,6 @@ export function DealInvestorViewModal({
         colWidth: "8.5rem",
         sortValue: (r) => r.type.toLowerCase(),
         cell: (r) => r.type,
-      },
-      {
-        id: "paymentDate",
-        header: "Payment date",
-        colWidth: "7.5rem",
-        sortValue: (r) => r.dateSort,
-        cell: (r) => r.paymentDate,
       },
       {
         id: "payment",
@@ -566,10 +656,23 @@ export function DealInvestorViewModal({
                   value={invClass}
                 />
                 <ViewReadonlyField
-                  Icon={User}
+                  Icon={Building2}
                   label="Sponsor name"
-                  value={displayOrDash(investorRow.addedByDisplayName)}
+                  value={displayOrDash(
+                    String(investorRow.addedByCompanyName ?? "")
+                      .split("||")
+                      .map((part) => part.trim())
+                      .filter((part) => part && part !== "—")
+                      .join(", "),
+                  )}
                 />
+                {isPlatformAdmin() ? (
+                  <ViewReadonlyField
+                    Icon={User}
+                    label="Sponsor"
+                    value={displayOrDash(investorRow.addedByDisplayName)}
+                  />
+                ) : null}
                 <ViewReadonlyField
                   Icon={BadgeCheck}
                   label="Fund approval"
@@ -732,7 +835,7 @@ export function DealInvestorViewModal({
                         ? "Loading distributions…"
                         : "No distributions for this investor on this deal yet."
                     }
-                    initialSort={{ columnId: "memo", direction: "desc" }}
+                    initialSort={{ columnId: "date", direction: "desc" }}
                   />
                 </div>
               </section>

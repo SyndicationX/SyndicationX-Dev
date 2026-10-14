@@ -24,14 +24,16 @@ import {
 } from "@/modules/Syndication/Deals/utils/investorEsignStatus"
 import { investorRowCommittedAmountNumeric } from "@/modules/Syndication/Deals/utils/offeringMoneyFormat"
 
-/** Draft / incomplete create-deal wizard rows are sponsor-only — hide from investors.
- * Also drop deals the API marked unreadable (e.g. contact offering visibility). */
+/** Hide unfinished autosave rows from investors. A Draft deal stays visible. */
 export function filterDealListRowsVisibleToInvestors(
   rows: DealListRow[],
 ): DealListRow[] {
-  return rows.filter(
-    (row) => !isDealListRowIncomplete(row) && row.rosterReadable !== false,
-  )
+  return rows.filter((row) => {
+    if (row.rosterReadable === false) return false
+    const stage = String(row.dealStage ?? "").trim().toLowerCase()
+    if (stage === "draft") return true
+    return !isDealListRowIncomplete(row)
+  })
 }
 
 /**
@@ -272,6 +274,27 @@ function investingViewerEmailNorm(): string {
   return getSessionUserEmail().trim().toLowerCase()
 }
 
+/** Sponsor 506(c) offerings stay on the investing deals list for every contact. */
+function dealListRowIsSponsor506c(secType: string | null | undefined): boolean {
+  const raw = String(secType ?? "").trim()
+  if (!raw) return false
+  const s = raw
+    .toLowerCase()
+    .replace(/[()]/g, "")
+    .replace(/[\s-]+/g, "_")
+  if (
+    s === "506_c" ||
+    s === "506c" ||
+    s === "regulation_506_c" ||
+    s === "reg_506_c" ||
+    s === "reg_d_506_c" ||
+    s === "regulation_d_506_c"
+  ) {
+    return true
+  }
+  return /(?:^|_)506_?c(?:_|$)/.test(s) || /506\s*\(?\s*c\s*\)?/i.test(raw)
+}
+
 /** Skip `/investors` and `/members` prefetch for opportunity-only deals (404 on server). */
 export function dealRowSupportsRosterApiPrefetch(row: DealListRow): boolean {
   return row.rosterReadable !== false
@@ -398,7 +421,7 @@ export type InvestingDealsPageScopeEntry = {
   leadSponsorDisplayName?: string
 }
 
-/** Deals visible on `/investing/deals` (invested, invited LP, sponsor roster, or assignee). */
+/** Deals the viewer is invested in, invited to, or sponsoring. */
 export async function mapInvestingDealsPageScope(
   rows: DealListRow[],
 ): Promise<InvestingDealsPageScopeEntry[]> {
@@ -412,7 +435,8 @@ export async function mapInvestingDealsPageScope(
       return { row, payload, members, leadSponsorDisplayName }
     }),
   )
-  return withPayload.filter(({ payload, members }) =>
+  return withPayload.filter(({ row, payload, members }) =>
+    dealListRowIsSponsor506c(row.secType) ||
     dealIsInViewerInvestingDealsPageScope(payload, members),
   )
 }
@@ -439,9 +463,13 @@ export async function mapInvestingInvestmentsPageScope(
   )
 }
 
+/**
+ * `/investing/deals` list. The deals API already applied each organization's
+ * offering visibility, so a 506(c) offering stays even when this investor has
+ * no personal roster, investment, or sponsor row on that deal.
+ */
 export async function filterDealListToInvestingDealsPage(
   rows: DealListRow[],
 ): Promise<DealListRow[]> {
-  const scoped = await mapInvestingDealsPageScope(rows)
-  return scoped.map(({ row }) => row)
+  return filterDealListRowsVisibleToInvestors(rows)
 }

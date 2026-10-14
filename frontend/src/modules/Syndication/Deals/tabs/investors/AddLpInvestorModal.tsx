@@ -36,8 +36,15 @@ import {
   presentFormValidationError,
 } from "../../../../../common/utils/formValidationFocus"
 import { AddContactPanel } from "../../../contacts/components/AddContactPanel"
-import { createContact, fetchContacts } from "../../../contacts/api/contactsApi"
-import type { ContactRow } from "../../../contacts/types/contact.types"
+import {
+  createContact,
+  fetchDealContactPickerLists,
+} from "../../../contacts/api/contactsApi"
+import {
+  PLATFORM_CONTACTS_PICKER_HINT,
+  type AddContactSavePayload,
+  type ContactRow,
+} from "../../../contacts/types/contact.types"
 import {
   fetchDealInvestorClasses,
   fetchDealLpInvestorForEdit,
@@ -172,11 +179,8 @@ function percentValuesEqual(a: string, b: string): boolean {
 
 function validateLpInvestorForm(input: {
   contactId: string
-  profileId: string
   investorClassId: string
-  sendInvitationMail: "yes" | "no"
   dealClasses: DealInvestorClass[]
-  dealBlocksInvitationEmails: boolean
   selectedContactAlreadyOnDeal: boolean
 }): LpInvestorFieldErrors {
   const errors: LpInvestorFieldErrors = {}
@@ -195,14 +199,6 @@ function validateLpInvestorForm(input: {
     } else if (!input.dealClasses.some((c) => c.id === classId)) {
       errors.investorClass = "Select a valid investor class from this deal."
     }
-  }
-  if (
-    !input.dealBlocksInvitationEmails &&
-    input.sendInvitationMail === "yes" &&
-    !input.profileId.trim()
-  ) {
-    errors.profileId =
-      "Select an investor profile before choosing to send the invitation email."
   }
   return errors
 }
@@ -351,6 +347,9 @@ export function AddLpInvestorModal({
   const [fieldErrors, setFieldErrors] = useState<LpInvestorFieldErrors>({})
   const [memberRows, setMemberRows] = useState<Record<string, unknown>[]>([])
   const [contactRows, setContactRows] = useState<ContactRow[]>([])
+  const [platformContactRows, setPlatformContactRows] = useState<ContactRow[]>(
+    [],
+  )
   const [membersLoading, setMembersLoading] = useState(false)
   const [addContactModalOpen, setAddContactModalOpen] = useState(false)
   const [dealClasses, setDealClasses] = useState<DealInvestorClass[]>([])
@@ -400,9 +399,6 @@ export function AddLpInvestorModal({
   const lpPostInFlightRef = useRef(false)
   const lpAutosaveInFlightRef = useRef(false)
 
-  const profileRequiredForInvite =
-    !dealBlocksInvitationEmails && sendInvitationMail === "yes"
-
   const clearFieldError = useCallback(
     (key: keyof LpInvestorFieldErrors) => {
       setFieldErrors((prev) => {
@@ -420,14 +416,15 @@ export function AddLpInvestorModal({
     let cancelled = false
     setMembersLoading(true)
     void (async () => {
-      const [users, contacts, classes] = await Promise.all([
+      const [users, picker, classes] = await Promise.all([
         fetchUsersForMemberSelect(),
-        fetchContacts(),
+        fetchDealContactPickerLists({ sort: "name" }),
         fetchDealInvestorClasses(dealId),
       ])
       if (cancelled) return
       setMemberRows(users)
-      setContactRows(contacts)
+      setContactRows(picker.contacts)
+      setPlatformContactRows(picker.platformContacts)
       setDealClasses(classes.filter((c) => !isGpInvestorClass(c)))
       setMembersLoading(false)
     })()
@@ -698,7 +695,9 @@ export function AddLpInvestorModal({
       }
       if (raw.startsWith(PREFIX_CONTACT)) {
         const id = raw.slice(PREFIX_CONTACT.length)
-        const c = contactRows.find((x) => x.id === id)
+        const c =
+          contactRows.find((x) => x.id === id) ??
+          platformContactRows.find((x) => x.id === id)
         if (c) {
           const email = c.email.trim()
           if (
@@ -785,6 +784,7 @@ export function AddLpInvestorModal({
     },
     [
       contactRows,
+      platformContactRows,
       memberRows,
       isEditMode,
       investorRosterForGate,
@@ -793,17 +793,22 @@ export function AddLpInvestorModal({
     ],
   )
 
+  const allDealPickerContacts = useMemo(
+    () => [...contactRows, ...platformContactRows],
+    [contactRows, platformContactRows],
+  )
+
   const memberSelectValue = useMemo(
     () =>
       resolveInvestorMemberSelectValue({
         contactId,
         contactEmail,
-        contactRows,
+        contactRows: allDealPickerContacts,
         memberRows,
         prefixContact: PREFIX_CONTACT,
         prefixUser: PREFIX_USER,
       }),
-    [contactId, contactEmail, contactRows, memberRows],
+    [contactId, contactEmail, allDealPickerContacts, memberRows],
   )
 
   const memberDropdownSections = useMemo((): DropdownSelectSection[] => {
@@ -824,6 +829,24 @@ export function AddLpInvestorModal({
       sections.push({
         heading: "Contacts",
         options: contactRows.map((c) => {
+          const value = `${PREFIX_CONTACT}${c.id}`
+          const baseLabel = contactOptionLabel(c)
+          const onDeal = isAlreadyOnInvestorsList(c.id, c.email ?? "")
+          const meta = buildContactRosterDropdownOption(baseLabel, c, onDeal)
+          return {
+            value,
+            label: baseLabel,
+            disabled: meta.disabled,
+            labelContent: meta.labelContent,
+          }
+        }),
+      })
+    }
+    if (platformContactRows.length > 0) {
+      sections.push({
+        heading: "Platform Contacts",
+        headingHint: PLATFORM_CONTACTS_PICKER_HINT,
+        options: platformContactRows.map((c) => {
           const value = `${PREFIX_CONTACT}${c.id}`
           const baseLabel = contactOptionLabel(c)
           const onDeal = isAlreadyOnInvestorsList(c.id, c.email ?? "")
@@ -872,6 +895,7 @@ export function AddLpInvestorModal({
     })
   }, [
     contactRows,
+    platformContactRows,
     memberRows,
     investorRosterForGate,
     excludeRowIdForDuplicateGate,
@@ -883,11 +907,11 @@ export function AddLpInvestorModal({
   /** When lists load after edit open, resolve id by email and fill email on the trigger. */
   useEffect(() => {
     if (!contactId.trim()) return
-    if (contactRows.length === 0 && memberRows.length === 0) return
+    if (contactRows.length === 0 && platformContactRows.length === 0 && memberRows.length === 0) return
     const resolved = resolveInvestorMemberSelectValue({
       contactId,
       contactEmail,
-      contactRows,
+      contactRows: allDealPickerContacts,
       memberRows,
       prefixContact: PREFIX_CONTACT,
       prefixUser: PREFIX_USER,
@@ -899,7 +923,7 @@ export function AddLpInvestorModal({
     let nextName = contactDisplayName.trim()
     if (resolved.startsWith(PREFIX_CONTACT)) {
       nextId = resolved.slice(PREFIX_CONTACT.length).trim()
-      const c = contactRows.find(
+      const c = allDealPickerContacts.find(
         (row) =>
           String(row.id).trim().toLowerCase() === nextId.toLowerCase(),
       )
@@ -937,14 +961,20 @@ export function AddLpInvestorModal({
     contactId,
     contactEmail,
     contactDisplayName,
-    contactRows,
+    allDealPickerContacts,
     memberRows,
   ])
 
   const handleContactCreated = useCallback((contact: ContactRow) => {
     setContactRows((prev) => {
       if (prev.some((c) => c.id === contact.id)) return prev
-      return [...prev, contact]
+      return [...prev, contact].sort((a, b) =>
+        `${a.firstName} ${a.lastName} ${a.email}`.localeCompare(
+          `${b.firstName} ${b.lastName} ${b.email}`,
+          undefined,
+          { sensitivity: "base" },
+        ),
+      )
     })
     const display = contactOptionLabel(contact)
     const namePart = display.split(" — ")[0]?.trim() || display
@@ -959,8 +989,13 @@ export function AddLpInvestorModal({
   }, [clearFieldError])
 
   const handleAddContactSave = useCallback(
-    async (contact: Omit<ContactRow, "id" | "createdByDisplayName">) => {
-      const created = await createContact(contact)
+    async (contact: AddContactSavePayload) => {
+      const { sendInvitationMail, ...rest } = contact
+      const created = await createContact({
+        ...rest,
+        sendInvitationMail: "no",
+      })
+      setSendInvitationMail(sendInvitationMail === "no" ? "no" : "yes")
       handleContactCreated(created)
     },
     [handleContactCreated],
@@ -1092,11 +1127,8 @@ export function AddLpInvestorModal({
     setError(null)
     const validationErrors = validateLpInvestorForm({
       contactId,
-      profileId,
       investorClassId,
-      sendInvitationMail,
       dealClasses,
-      dealBlocksInvitationEmails,
       selectedContactAlreadyOnDeal,
     })
     if (Object.keys(validationErrors).length > 0) {
@@ -1193,7 +1225,7 @@ export function AddLpInvestorModal({
       role="presentation"
     >
       <div
-        className="um_modal um_modal_view deals_add_inv_modal_panel add_contact_panel deal_inv_investor_view_modal"
+        className="um_modal um_modal_view deals_add_inv_modal_panel add_contact_panel deal_inv_investor_view_modal deals_add_lp_inv_panel"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -1293,6 +1325,10 @@ export function AddLpInvestorModal({
                   disabled={membersLoading}
                   invalid={Boolean(fieldErrors.contactId)}
                   onChange={(v) => patchMemberById(v)}
+                  searchable
+                  searchShowOptionCountHint
+                  searchPlaceholder="Search investors or contacts…"
+                  searchAriaLabel="Search investors or contacts"
                   placeholder={
                     membersLoading
                       ? "Loading contacts and members…"
@@ -1302,10 +1338,14 @@ export function AddLpInvestorModal({
                   ariaDescribedBy={
                     fieldErrors.contactId ? "lp-inv-member-err" : undefined
                   }
-                  header={{
-                    label: "+ Add Contact",
-                    onClick: () => setAddContactModalOpen(true),
-                  }}
+                  header={
+                    isEditMode
+                      ? undefined
+                      : {
+                          label: "+ Add Contact",
+                          onClick: () => setAddContactModalOpen(true),
+                        }
+                  }
                   triggerClassName={DROPDOWN_TRIGGER_PILL}
                 />
                 {fieldErrors.contactId ? (
@@ -1333,10 +1373,7 @@ export function AddLpInvestorModal({
               <div className="um_field">
                 <label htmlFor="lp-inv-profile" className="um_field_label_row">
                   <IdCard className="um_field_label_icon" size={17} aria-hidden />
-                  <span>
-                    Profile
-                    {profileRequiredForInvite ? <RequiredMark /> : null}
-                  </span>
+                  <span>Profile</span>
                 </label>
                 <DropdownSelect
                   {...MODAL_DROPDOWN_SELECT_PROPS}
@@ -1747,7 +1784,7 @@ export function AddLpInvestorModal({
       onClose={() => setAddContactModalOpen(false)}
       onSave={handleAddContactSave}
       contactToEdit={null}
-      existingContacts={contactRows}
+      existingContacts={[...contactRows, ...platformContactRows]}
     />
     </>
   )

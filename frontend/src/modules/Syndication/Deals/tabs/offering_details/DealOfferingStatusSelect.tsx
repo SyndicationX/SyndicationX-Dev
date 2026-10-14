@@ -39,7 +39,7 @@ function StatusOptionRow({ meta }: { meta: OfferingStatusMeta }) {
       <StatusIcon meta={meta} size={18} />
       <div className="deal_status_option_body">
         <span className="deal_status_option_title">{meta.label}</span>
-        <span className="deal_status_option_desc">({meta.description})</span>
+        {/* <span className="deal_status_option_desc">({meta.description})</span> */}
         {/* <span className="deal_status_option_access">{meta.investorAccess}</span> */}
       </div>
     </div>

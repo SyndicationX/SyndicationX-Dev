@@ -67,6 +67,82 @@
   line-height: 1.45;
 }
 
+/* Optional filter field above the search box (matches the table filter fields). */
+.deals_export_modal_filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11em, 1fr));
+  gap: 0.65em 0.75em;
+  margin: 0.85em 1.1em 0;
+}
+
+.deals_export_modal_filter_field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  min-width: 0;
+}
+
+.deals_export_modal_filter_label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0;
+  font-size: 0.75em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--portal-text-muted);
+}
+
+.deals_export_modal_filter_label svg {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.deals_export_modal_filter_dropdown {
+  width: 100%;
+  min-width: 0;
+}
+
+.deals_export_modal_filter_select.portal_dropdown_select_trigger {
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 0.65em;
+  border: 1px solid var(--portal-border);
+  border-radius: var(--portal-pill-radius);
+  font-family: inherit;
+  font-style: normal;
+  font-size: 0.9375em;
+  font-weight: 500;
+  color: var(--portal-text);
+  background: var(--portal-surface);
+  box-sizing: border-box;
+}
+
+.deals_export_modal_filter_select.portal_dropdown_select_trigger:hover:not(
+    :disabled
+  ) {
+  border-color: color-mix(
+    in srgb,
+    var(--portal-text) 14%,
+    var(--portal-border)
+  );
+}
+
+.deals_export_modal_filter_select.portal_dropdown_select_trigger:focus-visible {
+  outline: none;
+  border-color: var(--portal-text-muted);
+  box-shadow: var(--portal-field-focus-shadow, 0 0 0 2px rgb(17 24 39 / 8%));
+}
+
+:root[data-theme="dark"]
+  .deals_export_modal_filter_select.portal_dropdown_select_trigger:focus-visible {
+  box-shadow: var(
+    --portal-field-focus-shadow-dark,
+    0 0 0 2px rgb(249 250 251 / 12%)
+  );
+}
+
 .deals_export_modal_search {
   position: relative;
   margin: 0.75em 1.1em 0;

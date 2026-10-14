@@ -43,3 +43,15 @@ export function buildResetPasswordEmailHtml(resetLink: string): string {
 </body>
 </html>`;
 }
+
+export function buildResetPasswordEmailText(resetLink: string): string {
+  return [
+    "Reset your SyndicationX password",
+    "",
+    "We received a request to reset the password for your SyndicationX account.",
+    "Use this link to choose a new password:",
+    resetLink,
+    "",
+    "This link expires in 1 hour. If you did not ask for this, you can ignore this email.",
+  ].join("\n");
+}

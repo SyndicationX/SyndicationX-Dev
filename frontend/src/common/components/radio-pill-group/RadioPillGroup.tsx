@@ -47,6 +47,9 @@ export function RadioPillGroup<T extends string>({
             value={opt.value}
             checked={value === opt.value}
             onChange={() => onChange(opt.value)}
+            onClick={() => {
+              if (value === opt.value) onChange(opt.value)
+            }}
           />
           <span className="radio-btn">{opt.label}</span>
         </label>

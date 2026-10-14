@@ -15,6 +15,7 @@ export type InvestorPaymentLineInput = {
   className: string;
   capital: number;
   percentOfClass: number;
+  percentOfDeal?: number;
   payment: number;
 };
 
@@ -27,6 +28,7 @@ export type InvestorPaymentLine = {
   className: string;
   capital: string;
   percentOfClass: string;
+  percentOfDeal?: string;
   payment: string;
 };
 
@@ -50,17 +52,42 @@ function pct(n: number): string {
   return String(Math.round(v * 1000) / 1000);
 }
 
+function hasPercentField(raw: unknown): boolean {
+  if (raw === undefined || raw === null) return false;
+  return String(raw).trim() !== "";
+}
+
+function withDealPercents(
+  lines: Array<Omit<InvestorPaymentLine, "percentOfDeal"> & { percentOfDeal?: string }>,
+): InvestorPaymentLine[] {
+  const dealCap = lines.reduce((s, l) => s + num(l.capital), 0);
+  return lines.map((l) => {
+    const stored = hasPercentField(l.percentOfDeal)
+      ? pct(num(l.percentOfDeal))
+      : "";
+    return {
+      ...l,
+      percentOfDeal:
+        stored ||
+        pct(dealCap > 0 ? (num(l.capital) / dealCap) * 100 : 0),
+    };
+  });
+}
+
 export function normalizeInvestorPaymentLines(
   raw: unknown,
 ): InvestorPaymentLine[] {
   if (!Array.isArray(raw)) return [];
-  const out: InvestorPaymentLine[] = [];
+  const out: Array<
+    Omit<InvestorPaymentLine, "percentOfDeal"> & { percentOfDeal?: string }
+  > = [];
   for (const item of raw) {
     if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
     const o = item as Record<string, unknown>;
     const payment = num(o.payment);
     const investorId = str(o.investorId ?? o.investor_id);
     if (!investorId || !(payment >= 0)) continue;
+    const dealRaw = o.percentOfDeal ?? o.percent_of_deal;
     out.push({
       investorId,
       contactId: str(o.contactId ?? o.contact_id),
@@ -70,10 +97,13 @@ export function normalizeInvestorPaymentLines(
       className: str(o.className ?? o.class_name) || "—",
       capital: money(num(o.capital)),
       percentOfClass: pct(num(o.percentOfClass ?? o.percent_of_class)),
+      ...(hasPercentField(dealRaw)
+        ? { percentOfDeal: pct(num(dealRaw)) }
+        : {}),
       payment: money(payment),
     });
   }
-  return out;
+  return withDealPercents(out);
 }
 
 export function serializeInvestorPaymentLines(
@@ -89,22 +119,32 @@ export function serializeInvestorPaymentLines(
         className: string;
         capital: string | number;
         percentOfClass: string | number;
+        percentOfDeal?: string | number;
         payment: string | number;
       }>
     | undefined,
 ): InvestorPaymentLine[] {
   if (!lines?.length) return [];
-  return lines.map((l) => ({
-    investorId: str(l.investorId),
-    contactId: str(l.contactId),
-    userEmail: str(l.userEmail).toLowerCase(),
-    investorName: str(l.investorName) || "—",
-    classId: str(l.classId),
-    className: str(l.className) || "—",
-    capital: money(num(l.capital)),
-    percentOfClass: pct(num(l.percentOfClass)),
-    payment: money(num(l.payment)),
-  }));
+  return withDealPercents(
+    lines.map((l) => {
+      const dealRaw =
+        "percentOfDeal" in l ? (l as { percentOfDeal?: unknown }).percentOfDeal : undefined;
+      return {
+        investorId: str(l.investorId),
+        contactId: str(l.contactId),
+        userEmail: str(l.userEmail).toLowerCase(),
+        investorName: str(l.investorName) || "—",
+        classId: str(l.classId),
+        className: str(l.className) || "—",
+        capital: money(num(l.capital)),
+        percentOfClass: pct(num(l.percentOfClass)),
+        ...(hasPercentField(dealRaw)
+          ? { percentOfDeal: pct(num(dealRaw)) }
+          : {}),
+        payment: money(num(l.payment)),
+      };
+    }),
+  );
 }
 
 /**
@@ -170,19 +210,21 @@ export function allocateByCapitalFallback(params: {
       0,
     );
     if (!(total > 0)) return [];
-    return params.investors
-      .filter((i) => i.capital > 0)
-      .map((i) => ({
-        investorId: i.id,
-        contactId: str(i.contactId),
-        userEmail: str(i.userEmail).toLowerCase(),
-        investorName: i.displayName || "—",
-        classId: "",
-        className: str(i.investorClass) || "—",
-        capital: money(i.capital),
-        percentOfClass: pct((i.capital / total) * 100),
-        payment: money(amount * (i.capital / total)),
-      }));
+    return withDealPercents(
+      params.investors
+        .filter((i) => i.capital > 0)
+        .map((i) => ({
+          investorId: i.id,
+          contactId: str(i.contactId),
+          userEmail: str(i.userEmail).toLowerCase(),
+          investorName: i.displayName || "—",
+          classId: "",
+          className: str(i.investorClass) || "—",
+          capital: money(i.capital),
+          percentOfClass: pct((i.capital / total) * 100),
+          payment: money(amount * (i.capital / total)),
+        })),
+    );
   }
 
   const byClass = new Map<string, Acc[]>();
@@ -233,7 +275,7 @@ export function allocateByCapitalFallback(params: {
         });
       }
     }
-    return out;
+    return withDealPercents(out);
   }
 
   const out: InvestorPaymentLine[] = [];
@@ -266,7 +308,7 @@ export function allocateByCapitalFallback(params: {
       });
     });
   }
-  return out;
+  return withDealPercents(out);
 }
 
 export type FeeClassSplitInput = {
@@ -391,7 +433,10 @@ export function allocateFeeByClassSplits(params: {
     });
   }
 
-  return { lines: blockedClassNames.length > 0 ? [] : out, blockedClassNames };
+  return {
+    lines: blockedClassNames.length > 0 ? [] : withDealPercents(out),
+    blockedClassNames,
+  };
 }
 
 export type ViewerPaymentMatchKeys = {

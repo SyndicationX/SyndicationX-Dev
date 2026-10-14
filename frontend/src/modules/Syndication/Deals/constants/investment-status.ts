@@ -24,7 +24,7 @@ export const INVESTMENT_STATUS_SELECT_OPTIONS = [
     label: "Closed (no new investments allowed)",
   },
   { value: "Past (hidden)", label: "Past (hidden)" },
-  { value: "Soft committed", label: "Soft committed" },
+  { value: "Soft committed", label: "Soft commitment" },
   { value: "Investment started", label: "Investment started" },
   {
     value: "Document signing started",

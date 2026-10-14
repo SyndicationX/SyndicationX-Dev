@@ -7,15 +7,18 @@ import {
   getSignFlowDocument,
   normalizeSignFlowFieldRecipientIds,
   patchSignFlowDocument,
+  resolveSignFlowFieldTemplateAnchor,
   resolveSignFlowInvestorRecipientId,
   resolveSignFlowSponsorRecipientId,
   type SignFlowField,
 } from "../esign/signflow.service.js";
 import {
+  alignSignFlowRadioFieldSizeToChoiceBox,
   esignDocumentAlignedTextFieldSize,
   getInvestorQuestionnaireSignatureSignFlowFields,
   isQuestionnaireSignatureFieldLabel,
   loadInvestorQuestionnaireSignaturePagePdf,
+  normalizeSignFlowChoiceFieldOptionNumbers,
 } from "./esignPdfMerge.service.js";
 import { inferSigningWorkflowFromSignFlowDocument, resolveSigningWorkflowFromTemplateFile } from "./dealEsignSigningWorkflow.service.js";
 import {
@@ -87,14 +90,12 @@ async function captureSignFlowTemplateFieldsForStorage(
   ) as SignFlowField[];
 
   return normalized.map((field) => {
-    const templatePage = Math.max(
-      1,
-      Math.floor(Number(field.templatePage ?? field.page) || 1),
-    );
+    const { templatePage } = resolveSignFlowFieldTemplateAnchor(field);
     return {
       ...field,
+      page: templatePage,
       templatePage,
-      pageHash: field.pageHash?.trim() || hashes[templatePage - 1],
+      pageHash: hashes[templatePage - 1],
     };
   });
 }
@@ -481,6 +482,23 @@ export async function startDealEsignSignflowTemplateDraft(params: {
   };
 }
 
+/** Choice fields placed in the embed can come back oversized; store + send compact boxes. */
+async function normalizeSignFlowChoiceFieldSizes(
+  documentId: string,
+  doc: Awaited<ReturnType<typeof getSignFlowDocument>>,
+): Promise<Awaited<ReturnType<typeof getSignFlowDocument>>> {
+  const existing = (doc.fields ?? []) as SignFlowField[];
+  const normalized = normalizeSignFlowChoiceFieldOptionNumbers(
+    alignSignFlowRadioFieldSizeToChoiceBox(existing),
+  );
+  if (!signFlowFieldsPlacementChanged(existing, normalized)) return doc;
+
+  await patchSignFlowDocument(documentId, {
+    fields: normalizeSignFlowFieldRecipientIds(doc, normalized),
+  });
+  return { ...doc, fields: normalized };
+}
+
 export async function completeDealEsignSignflowTemplate(params: {
   dealId: string;
   fileId: string;
@@ -494,13 +512,15 @@ export async function completeDealEsignSignflowTemplate(params: {
   const documentId = params.signflowDocumentId.trim();
   if (!documentId) throw new Error("signflowDocumentId is required");
 
-  const doc = await getSignFlowDocument(documentId);
+  let doc = await getSignFlowDocument(documentId);
   const hasFields = (doc.fields?.length ?? 0) > 0;
   if (!hasFields) {
     throw new Error(
       "Add at least one signature field in the SignFlow editor before saving this template.",
     );
   }
+
+  doc = await normalizeSignFlowChoiceFieldSizes(documentId, doc);
 
   file.signflowDocumentId = documentId;
   file.signflowStatus = "ready";
@@ -524,7 +544,7 @@ export async function completeDealEsignSignflowTemplate(params: {
       profileTypes: (field.profileTypes?.length
         ? field.profileTypes
         : ALL_SIGNFLOW_PROFILE_TYPES) as string[],
-      page: Math.max(1, Math.floor(Number(field.templatePage ?? field.page) || 1)),
+      page: resolveSignFlowFieldTemplateAnchor(field).templatePage,
       x: Number(field.x) || 0,
       y: Number(field.y) || 0,
     }));
@@ -635,6 +655,8 @@ export async function addDealEsignSignflowInvestorDataField(params: {
   fieldKey: string;
   /** Portal profile ids (individual, joint_tenancy, …). Empty = all profiles. */
   profileIds?: string[];
+  /** 1-based SignFlow builder page where the field should be appended. */
+  page?: number;
 }): Promise<{
   field: SignFlowField;
   fieldCount: number;
@@ -671,12 +693,18 @@ export async function addDealEsignSignflowInvestorDataField(params: {
   const doc = await getSignFlowDocument(documentId);
   const existing = (doc.fields ?? []) as SignFlowField[];
   const investorRecipientId = resolveSignFlowInvestorRecipientId(doc);
-  const sponsorRecipientId = resolveSignFlowSponsorRecipientId(doc);
+  const targetPage = Math.max(
+    1,
+    Math.min(
+      Math.floor(Number(params.page) || 1),
+      Math.max(1, Math.floor(Number(doc.pages) || 1)),
+    ),
+  );
 
   let maxY = 18;
   for (const field of existing) {
     const page = Math.max(1, Math.floor(Number(field.page) || 1));
-    if (page !== 1) continue;
+    if (page !== targetPage) continue;
     const y = Number(field.y) || 0;
     const h = Number(field.height) || 0;
     maxY = Math.max(maxY, y + h);
@@ -692,7 +720,7 @@ export async function addDealEsignSignflowInvestorDataField(params: {
     y: Math.min(88, maxY + 3),
     width: textSize.width,
     height: textSize.height,
-    page: 1,
+    page: targetPage,
     recipientId: investorRecipientId,
     // Required so SignFlow includes the field in the investor's remaining-field count.
     required: true,
@@ -701,25 +729,6 @@ export async function addDealEsignSignflowInvestorDataField(params: {
   };
 
   const toAppend: SignFlowField[] = [nextField];
-
-  /** SignFlow embed keeps Save disabled until both parties have at least one field. */
-  const hasSponsorField = existing.some((field) => {
-    const rid = String(field.recipientId ?? "").trim();
-    return rid === sponsorRecipientId || rid === "rec_sponsor" || rid === "rec_2";
-  });
-  if (!hasSponsorField) {
-    toAppend.push({
-      type: "signature",
-      label: "Sponsor Signature",
-      x: 55,
-      y: Math.min(90, maxY + 10),
-      width: 36,
-      height: 8,
-      page: 1,
-      recipientId: sponsorRecipientId,
-      required: true,
-    });
-  }
 
   const merged = normalizeSignFlowFieldRecipientIds(doc, [
     ...existing,
@@ -745,10 +754,7 @@ export async function addDealEsignSignflowInvestorDataField(params: {
   file.signflowTemplateFields = applySignflowInvestorDataFieldBindings(
     merged.map((field) => ({
       ...field,
-      templatePage: Math.max(
-        1,
-        Math.floor(Number(field.templatePage ?? field.page) || 1),
-      ),
+      ...resolveSignFlowFieldTemplateAnchor(field),
     })),
     file.signflowInvestorDataFieldBindings,
   );

@@ -49,20 +49,25 @@ export async function reconcileAssigningDealUsersForDeal(
   dealId: string,
   actorUserId: string,
 ): Promise<void> {
+  /* Autosaved draft rows are not roster members yet — they must not grant deal access. */
   const invRows = await db
     .select({ contactId: dealInvestment.contactId })
     .from(dealInvestment)
-    .where(eq(dealInvestment.dealId, dealId));
+    .where(
+      and(eq(dealInvestment.dealId, dealId), eq(dealInvestment.isDraft, false)),
+    );
 
   const memberRows = await db
     .select({ contactMemberId: dealMember.contactMemberId })
     .from(dealMember)
-    .where(eq(dealMember.dealId, dealId));
+    .where(and(eq(dealMember.dealId, dealId), eq(dealMember.isDraft, false)));
 
   const lpRows = await db
     .select({ contactMemberId: dealLpInvestor.contactMemberId })
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId));
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    );
 
   const uuidCandidates = [
     ...new Set(
@@ -218,7 +223,7 @@ export async function countAssignedDealsByUserIdsForViewer(params: {
        FROM deal_investment di
        INNER JOIN org_deals od ON od.deal_id = di.deal_id
        INNER JOIN users u ON u.id::text = trim(both from di.contact_id)
-       WHERE u.id = ANY($1::uuid[])
+       WHERE u.id = ANY($1::uuid[]) AND di.is_draft = false
      ),
      inv_contact AS (
        SELECT u.id AS user_id, di.deal_id
@@ -226,7 +231,7 @@ export async function countAssignedDealsByUserIdsForViewer(params: {
        INNER JOIN org_deals od ON od.deal_id = di.deal_id
        INNER JOIN contact c ON c.id::text = trim(both from di.contact_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE u.id = ANY($1::uuid[])
+       WHERE u.id = ANY($1::uuid[]) AND di.is_draft = false
      ),
      all_links AS (
        SELECT user_id, deal_id FROM assigning
@@ -268,43 +273,43 @@ export async function listDealIdsAssignedToUser(
        SELECT di.deal_id
        FROM deal_investment di
        INNER JOIN users u ON u.id::text = trim(both from di.contact_id)
-       WHERE u.id = $1::uuid
+       WHERE u.id = $1::uuid AND di.is_draft = false
        UNION ALL
        SELECT di.deal_id
        FROM deal_investment di
        INNER JOIN contact c ON c.id::text = trim(both from di.contact_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE u.id = $1::uuid
+       WHERE u.id = $1::uuid AND di.is_draft = false
        UNION ALL
        SELECT dm.deal_id
        FROM deal_member dm
        INNER JOIN users u ON u.id::text = trim(both from dm.contact_member_id)
-       WHERE u.id = $1::uuid
+       WHERE u.id = $1::uuid AND dm.is_draft = false
        UNION ALL
        SELECT dm.deal_id
        FROM deal_member dm
        INNER JOIN contact c ON c.id::text = trim(both from dm.contact_member_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE u.id = $1::uuid
+       WHERE u.id = $1::uuid AND dm.is_draft = false
        UNION ALL
        SELECT lp.deal_id
        FROM deal_lp_investor lp
        INNER JOIN users u ON u.id::text = trim(both from lp.contact_member_id)
-       WHERE u.id = $1::uuid
+       WHERE u.id = $1::uuid AND lp.is_draft = false
        UNION ALL
        SELECT lp.deal_id
        FROM deal_lp_investor lp
        INNER JOIN contact c ON c.id::text = trim(both from lp.contact_member_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE u.id = $1::uuid
+       WHERE u.id = $1::uuid AND lp.is_draft = false
        UNION ALL
        SELECT dm.deal_id
        FROM deal_member dm
-       WHERE dm.added_by = $1::uuid
+       WHERE dm.added_by = $1::uuid AND dm.is_draft = false
        UNION ALL
        SELECT lp.deal_id
        FROM deal_lp_investor lp
-       WHERE lp.added_by = $1::uuid
+       WHERE lp.added_by = $1::uuid AND lp.is_draft = false
        UNION ALL
        SELECT adu.deal_id
        FROM assigning_deal_user adu
@@ -329,36 +334,36 @@ export async function isUserAssignedToDeal(
        UNION ALL
        SELECT 1 FROM deal_investment di
        INNER JOIN users u ON u.id::text = trim(both from di.contact_id)
-       WHERE di.deal_id = $2::uuid AND u.id = $1::uuid
+       WHERE di.deal_id = $2::uuid AND u.id = $1::uuid AND di.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_investment di
        INNER JOIN contact c ON c.id::text = trim(both from di.contact_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE di.deal_id = $2::uuid AND u.id = $1::uuid
+       WHERE di.deal_id = $2::uuid AND u.id = $1::uuid AND di.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_member dm
        INNER JOIN users u ON u.id::text = trim(both from dm.contact_member_id)
-       WHERE dm.deal_id = $2::uuid AND u.id = $1::uuid
+       WHERE dm.deal_id = $2::uuid AND u.id = $1::uuid AND dm.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_member dm
        INNER JOIN contact c ON c.id::text = trim(both from dm.contact_member_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE dm.deal_id = $2::uuid AND u.id = $1::uuid
+       WHERE dm.deal_id = $2::uuid AND u.id = $1::uuid AND dm.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_lp_investor lp
        INNER JOIN users u ON u.id::text = trim(both from lp.contact_member_id)
-       WHERE lp.deal_id = $2::uuid AND u.id = $1::uuid
+       WHERE lp.deal_id = $2::uuid AND u.id = $1::uuid AND lp.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_lp_investor lp
        INNER JOIN contact c ON c.id::text = trim(both from lp.contact_member_id)
        INNER JOIN users u ON lower(trim(u.email)) = lower(trim(c.email))
-       WHERE lp.deal_id = $2::uuid AND u.id = $1::uuid
+       WHERE lp.deal_id = $2::uuid AND u.id = $1::uuid AND lp.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_member dm
-       WHERE dm.deal_id = $2::uuid AND dm.added_by = $1::uuid
+       WHERE dm.deal_id = $2::uuid AND dm.added_by = $1::uuid AND dm.is_draft = false
        UNION ALL
        SELECT 1 FROM deal_lp_investor lp
-       WHERE lp.deal_id = $2::uuid AND lp.added_by = $1::uuid
+       WHERE lp.deal_id = $2::uuid AND lp.added_by = $1::uuid AND lp.is_draft = false
        UNION ALL
        SELECT 1 FROM assigning_deal_user adu
        WHERE adu.deal_id = $2::uuid AND adu.user_added_deal = $1::uuid

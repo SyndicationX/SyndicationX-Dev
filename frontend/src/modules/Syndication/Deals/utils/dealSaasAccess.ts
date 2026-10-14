@@ -1,6 +1,7 @@
 import { isPlatformAdmin } from "../../../../common/auth/roleUtils"
 import { CREATE_DEAL_DRAFT_ROW_ID } from "../createDealDraftListRow"
 import type { DealListRow } from "../types/deals.types"
+import { dealSaasBillingHasStarted } from "./saasBillingStartDate"
 
 export const DEAL_SAAS_PAYMENT_REQUIRED = "DEAL_SAAS_PAYMENT_REQUIRED"
 
@@ -14,13 +15,23 @@ export type DealSaasPaywallDeal = {
   nextBillingDate?: string | null
   billingSubscriptionStatus?: string
   viewerIsLeadSponsor?: boolean
+  suggestedPlanId?: string | null
+  needsPlanUpgrade?: boolean
   message?: string
 }
 
-export function dealSaasBillingSettingsPath(dealId: string): string {
+export function dealSaasBillingSettingsPath(
+  dealId: string,
+  dealName?: string,
+  options?: { billing?: "pay" | "upgrade" },
+): string {
   const id = dealId.trim()
-  const params = new URLSearchParams({ billing: "pay" })
+  const params = new URLSearchParams({
+    billing: options?.billing === "upgrade" ? "upgrade" : "pay",
+  })
   if (id) params.set("dealId", id)
+  const name = String(dealName ?? "").trim()
+  if (name) params.set("dealName", name)
   return `/settings?${params.toString()}`
 }
 
@@ -50,21 +61,35 @@ function periodEndHasPassed(iso: string | null | undefined): boolean {
 
 /** True when the syndicating workspace must pay MRR before view/edit. */
 export function isDealListRowSaasLocked(row: DealListRow): boolean {
+  if (!dealSaasBillingHasStarted(row.saasBillingStartsAt)) return false
   if (!row?.id || row.id === CREATE_DEAL_DRAFT_ROW_ID) return false
-  if (isPlatformAdmin()) return false
-  // This month is fully open. Billing / paywall start on nextBillingDate
-  // (1st of next month). A missing date is treated as “not started yet”.
-  if (!periodEndHasPassed(row.nextBillingDate)) return false
+  if (isPlatformAdmin() && row.viewerIsLeadSponsor !== true) return false
+  const status = String(row.billingSubscriptionStatus ?? "").trim().toLowerCase()
+  if (status === "active" || status === "trialing") return false
+  // Server evaluation is the source of truth (past due can still have a
+  // future period end; complimentary month is unlocked there too).
   if (row.billingAccessLocked === true) return true
   if (row.billingAccessLocked === false) return false
   if (!stageIsBillable(row)) return false
-  const status = String(row.billingSubscriptionStatus ?? "").trim().toLowerCase()
-  if (status === "active" || status === "trialing") return false
+  // Fallback when list payload has no lock flags: complimentary until nextBillingDate.
+  if (!periodEndHasPassed(row.nextBillingDate)) return false
   if (status === "past_due" || status === "unpaid") return true
   if (status === "none" || status === "canceled" || status === "incomplete") {
     return true
   }
   return false
+}
+
+export function billingPlanDisplayName(planId: string | null | undefined): string {
+  const id = String(planId ?? "").trim().toLowerCase()
+  if (id === "running") return "Running"
+  if (id === "growth") return "Growth"
+  if (id === "starter") return "Starter"
+  return id ? id.charAt(0).toUpperCase() + id.slice(1) : "the required plan"
+}
+
+export function isDealListRowPlanUpgradeNeeded(row: DealListRow): boolean {
+  return row.viewerIsLeadSponsor === true && row.needsPlanUpgrade === true
 }
 
 export function dealSaasPaywallFromListRow(row: DealListRow): DealSaasPaywallDeal {
@@ -81,6 +106,8 @@ export function dealSaasPaywallFromListRow(row: DealListRow): DealSaasPaywallDea
     dealName: row.dealName ?? "",
     reason,
     billingPlanId: row.billingPlanId ?? null,
+    suggestedPlanId: row.suggestedPlanId ?? null,
+    needsPlanUpgrade: row.needsPlanUpgrade === true,
     nextBillingDate: row.nextBillingDate ?? null,
     billingSubscriptionStatus: row.billingSubscriptionStatus,
     viewerIsLeadSponsor: row.viewerIsLeadSponsor === true,
@@ -138,6 +165,11 @@ export function parseDealSaasPaymentRequiredBody(
       rec.billing_subscription_status != null
         ? String(rec.billingSubscriptionStatus ?? rec.billing_subscription_status)
         : undefined,
+    viewerIsLeadSponsor:
+      rec.viewerIsLeadSponsor === true ||
+      rec.viewer_is_lead_sponsor === true ||
+      rec.viewerIsLeadSponsor === "true" ||
+      rec.viewer_is_lead_sponsor === "true",
     message,
   }
 }

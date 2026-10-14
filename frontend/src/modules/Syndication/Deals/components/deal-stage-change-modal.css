@@ -291,6 +291,27 @@
   color: var(--portal-text, #f1f5f9);
 }
 
+.deal_stage_modal--complete_deal .deal_stage_modal_icon_wrap {
+  color: var(--um-focus-ring, #1d4ed8);
+  background: color-mix(in srgb, var(--um-focus-ring, #2563eb) 12%, transparent);
+  border-color: color-mix(in srgb, var(--um-focus-ring, #2563eb) 28%, transparent);
+}
+
+.deal_stage_modal--complete_deal .deal_stage_modal_badge {
+  color: var(--um-focus-ring, #1d4ed8);
+  background: color-mix(in srgb, var(--um-focus-ring, #2563eb) 14%, transparent);
+  border-color: color-mix(in srgb, var(--um-focus-ring, #2563eb) 38%, transparent);
+}
+
+.deal_stage_modal--complete_deal .deal_stage_modal_btn--confirm {
+  background: var(--main-auth-button-color, #2563eb);
+  color: #fff;
+}
+
+.deal_stage_modal--complete_deal .deal_stage_modal_btn--confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--main-auth-button-color, #2563eb) 88%, #000);
+}
+
 .deal_stage_modal--saas_paywall .deal_stage_modal_icon_wrap {
   color: #b45309;
   background: color-mix(in srgb, #f59e0b 18%, transparent);
@@ -304,11 +325,11 @@
 }
 
 .deal_stage_modal--saas_paywall .deal_stage_modal_btn--confirm {
-  background: #d97706;
+  background: #16a34a;
 }
 
 .deal_stage_modal--saas_paywall .deal_stage_modal_btn--confirm:hover:not(:disabled) {
-  background: #b45309;
+  background: #15803d;
 }
 
 .deal_saas_paywall_error {

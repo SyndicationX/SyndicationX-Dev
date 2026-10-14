@@ -21,3 +21,18 @@ export function normalizeDealStatus(
   const v = String(raw ?? "").trim();
   return isDealStatus(v) ? v : null;
 }
+
+const STATUSES_REQUIRING_INVESTOR_CLASS = new Set<DealStatus>([
+  "open_soft_commitment",
+  "open_hard_commitment",
+  "open_investment",
+  "waitlist",
+]);
+
+/** Soft/hard commit, open to investment, and waitlist require at least one class. */
+export function offeringStatusRequiresInvestorClass(
+  raw: string | null | undefined,
+): boolean {
+  const status = normalizeDealStatus(raw);
+  return status != null && STATUSES_REQUIRING_INVESTOR_CLASS.has(status);
+}

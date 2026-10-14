@@ -17,6 +17,11 @@ export type InvestNowLocationState = {
   investmentId?: string
   /** Open the wizard on this stepper phase (dashboard progress chips). */
   phaseId?: InvestNowStepperPhase["id"]
+  /**
+   * Start a new commitment for the pre-selected profile instead of updating
+   * the existing one. The new row is listed on the deal Investors tab.
+   */
+  addCommitment?: boolean
   /** Encrypted sponsor ref from the offering preview link (`?ref=`). */
   referringSponsorRef?: string
   /** Resolved sponsor name from the public preview API (optional). */
@@ -41,6 +46,7 @@ export function readInvestNowLocationState(
     profileId: s.profileId?.trim(),
     investmentId: s.investmentId?.trim(),
     phaseId,
+    addCommitment: s.addCommitment === true,
     referringSponsorRef: s.referringSponsorRef?.trim(),
     referringSponsorDisplayName: s.referringSponsorDisplayName?.trim(),
   }

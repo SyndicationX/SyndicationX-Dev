@@ -7,6 +7,7 @@ import {
 import { useEffect, useState } from "react"
 import { ToolStyleCard } from "@/common/components/tool-style-card/ToolStyleCard"
 import { cardCompactAmountOrDash } from "@/common/components/card-compact-amount/CardCompactAmount"
+import { formatCount } from "@/common/utils/formatCount"
 import { InvestingDashboardDealsSection } from "./InvestingDashboardDealsSection"
 import "@/modules/Syndication/usermanagement/user_management.css"
 import "@/modules/Syndication/Deals/deals-list.css"
@@ -96,7 +97,7 @@ export function InvestingDashboardPage() {
           icon={Briefcase}
           title="# of deals"
           loading={loading}
-          description={metrics != null ? String(metrics.dealCount) : "—"}
+          description={metrics != null ? formatCount(metrics.dealCount) : "—"}
           hintTitle="Active deals where you have a positive committed amount."
         />
         <ToolStyleCard

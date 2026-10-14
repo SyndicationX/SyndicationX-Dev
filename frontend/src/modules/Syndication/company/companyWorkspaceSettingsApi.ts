@@ -39,6 +39,57 @@ export type PutWorkspaceResult =
   | { ok: true }
   | { ok: false; message: string; status: number }
 
+export async function patchCompanyDisplayName(
+  companyId: string,
+  name: string,
+): Promise<
+  | { ok: true; name: string }
+  | { ok: false; message: string; status: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return { ok: false, message: "API is not configured (VITE_BASE_URL).", status: 0 }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/name`,
+      {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ name }),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as {
+      message?: string
+      company?: { name?: string }
+    }
+    if (!res.ok) {
+      const fromServer =
+        typeof data.message === "string" && data.message.trim()
+          ? data.message.trim()
+          : ""
+      return {
+        ok: false,
+        status: res.status,
+        message: fromServer || `Could not update company name (HTTP ${res.status}).`,
+      }
+    }
+    const saved =
+      typeof data.company?.name === "string" && data.company.name.trim()
+        ? data.company.name.trim()
+        : name.trim()
+    return { ok: true, name: saved }
+  } catch (e) {
+    const message =
+      e instanceof Error && e.message ? e.message : "Network error while saving."
+    return { ok: false, message, status: 0 }
+  }
+}
+
 export async function putWorkspaceTabSettings(
   companyId: string,
   tabKey: WorkspaceTabKey,

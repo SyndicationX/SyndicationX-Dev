@@ -57,12 +57,14 @@ function computeFixedPosition(args: {
   panelAlign: FormTooltipPanelAlign
   panelWidth: number
   panelHeight: number
-}): { top: number; left: number } {
+}): { top: number; left: number; maxHeight: number } {
   const { triggerRect, placement, panelAlign, panelWidth, panelHeight } = args
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const maxW = Math.min(296, vw - VIEWPORT_PAD * 2)
+  const maxW = Math.min(32 * 16, vw - VIEWPORT_PAD * 2)
   const w = Math.min(Math.max(panelWidth, 1), maxW)
+  const maxHeight = Math.max(48, vh - VIEWPORT_PAD * 2)
+  const h = Math.min(Math.max(panelHeight, 1), maxHeight)
 
   let left = triggerRect.left
   if (panelAlign === "center")
@@ -72,13 +74,20 @@ function computeFixedPosition(args: {
 
   left = Math.max(VIEWPORT_PAD, Math.min(left, vw - VIEWPORT_PAD - w))
 
+  const spaceBelow = vh - triggerRect.bottom - GAP - VIEWPORT_PAD
+  const spaceAbove = triggerRect.top - GAP - VIEWPORT_PAD
+  const preferBottom =
+    placement === "bottom"
+      ? spaceBelow >= Math.min(h, 72) || spaceBelow >= spaceAbove
+      : spaceAbove < Math.min(h, 72) && spaceBelow > spaceAbove
+
   let top: number
-  if (placement === "bottom") top = triggerRect.bottom + GAP
-  else top = triggerRect.top - GAP - panelHeight
+  if (preferBottom) top = triggerRect.bottom + GAP
+  else top = triggerRect.top - GAP - h
 
-  top = Math.max(VIEWPORT_PAD, Math.min(top, vh - VIEWPORT_PAD - panelHeight))
+  top = Math.max(VIEWPORT_PAD, Math.min(top, vh - VIEWPORT_PAD - h))
 
-  return { top, left }
+  return { top, left, maxHeight }
 }
 
 export function MandatoryFieldMark() {
@@ -140,7 +149,7 @@ export function FormTooltip({
       const triggerRect = rEl.getBoundingClientRect()
       const w = pEl.offsetWidth
       const h = pEl.offsetHeight
-      const { top, left } = computeFixedPosition({
+      const { top, left, maxHeight } = computeFixedPosition({
         triggerRect,
         placement,
         panelAlign,
@@ -152,7 +161,9 @@ export function FormTooltip({
         top,
         left,
         zIndex: TOOLTIP_Z,
-        maxWidth: "min(18.5em, calc(100vw - 1.5em))",
+        maxWidth: `min(32rem, calc(100vw - ${VIEWPORT_PAD * 2}px))`,
+        maxHeight,
+        overflowY: h > maxHeight ? "auto" : undefined,
       })
     }
 

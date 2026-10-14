@@ -825,6 +825,20 @@ export function investorEsignIsFullyCompletedForRow(
 }
 
 /**
+ * True when Invest Now is done for this profile (e-sign complete, or ETL
+ * rows that already have a calendar signed date and a commitment).
+ */
+export function investorInvestmentProfileIsComplete(
+  row: DealInvestorRow,
+): boolean {
+  if (investorEsignIsFullyCompletedForRow(row)) return true
+  const doc = String(row.docSignedDateIso ?? row.signedDate ?? "").trim()
+  if (!doc) return false
+  if (ESIGN_WORKFLOW_COLUMN_LABELS.has(doc.toLowerCase())) return false
+  return investorRowCommittedNumeric(row) > 0
+}
+
+/**
  * True when the signed-in LP owns this investor row (email and/or portal `contactId`).
  */
 export function investorRowMatchesViewerEmail(

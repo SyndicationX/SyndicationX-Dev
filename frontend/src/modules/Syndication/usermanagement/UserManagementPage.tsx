@@ -54,6 +54,7 @@ import {
   resolvePlatformAdminMembersListScope,
 } from "../../../common/auth/sessionOrganization";
 import { DataTablePagination } from "../../../common/components/DataTablePagination/DataTablePagination";
+import { TableHScrollShell } from "../../../common/components/data-table/TableHScrollShell";
 import { ViewReadonlyField } from "../../../common/components/ViewReadonlyField";
 import { toast } from "../../../common/components/Toast";
 import { MemberRoleBadge } from "./MemberRoleBadge";
@@ -1165,6 +1166,7 @@ export default function UserManagementPage({
       ccRaw: sendMailCc,
       templateSubject: template.subject,
       templateBodyHtml: template.body,
+      templateAttachment: template.attachment,
       senderEmail,
     });
     if (!result.ok) {
@@ -1704,6 +1706,10 @@ export default function UserManagementPage({
         ) : null}
         {!membersLoadError ? (
           <div className="um_table_wrap">
+            <TableHScrollShell
+              active={!membersLoading && sortedRows.length > 0}
+              ariaLabel="Members columns"
+            >
             <table className="um_table um_table_sortable um_table_members">
               <thead>
                 <tr>
@@ -1924,6 +1930,7 @@ export default function UserManagementPage({
                 )}
               </tbody>
             </table>
+            </TableHScrollShell>
             {!membersLoading && sortedRows.length > 0 ? (
               <DataTablePagination
                 page={membersPageSafe}

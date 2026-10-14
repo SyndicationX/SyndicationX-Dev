@@ -6,6 +6,14 @@ import {
   resolveDealViewerScope,
 } from "../../services/deal/dealAccess.service.js";
 import { requestedOrganizationIdFromRequest } from "../../services/org/orgResolution.service.js";
+import {
+  filterRowsBySearch,
+  paginateInMemory,
+  parsePageQuery,
+  sortRowsBy,
+  type PageEnvelope,
+  type PageQuery,
+} from "../../common/pagination.js";
 import { reconcileAssigningDealUsersForDeal } from "../../services/deal/assigningDealUser.service.js";
 import {
   enrichFullInvestorApiFromLpRoster,
@@ -30,20 +38,33 @@ import {
   updateDealInvestment,
 } from "../../services/deal/dealInvestment.service.js";
 import { sendDealFundApprovedNotification } from "../../services/deal/dealFundApprovedEmail.service.js";
-import { upsertDealMemberForDeal } from "../../services/deal/dealMember.service.js";
+import {
+  assertDealMemberLeadSponsorRoleAllowed,
+  dealMemberContactIsLeadSponsor,
+  DealLeadSponsorValidationError,
+  saveDealMemberRoleForDeal,
+} from "../../services/deal/dealMember.service.js";
 import {
   assertEligibleForNewDealRosterAdd,
   isDealRosterEligibilityError,
 } from "../../services/user/portalUserRosterGuard.service.js";
-import { sendDealMemberInviteForInvestmentIfRequested } from "../../services/deal/dealMemberInvitationEmail.service.js";
-import { isPortalUserLeadOrAdminSponsorOnDeal } from "../../services/deal/dealMemberScope.service.js";
+import {
+  sendDealMemberInviteForInvestmentIfRequested,
+  sendNewLeadSponsorInvitationIfAssigned,
+} from "../../services/deal/dealMemberInvitationEmail.service.js";
+import { viewerCanApproveDealFundOnDeal } from "../../services/deal/dealMemberScope.service.js";
 import { dealInvestmentEsignIsFullyCompleted } from "../../constants/deal-investor-esign-status.js";
 import { logSocDealInvestmentWrite } from "../../audit/index.js";
+import { assertExtraCompanyUserAllowedForAdd } from "../../services/billing/dealExtraCompanyUser.service.js";
+import { EXTRA_COMPANY_USER_PAYMENT_REQUIRED } from "../../config/stripe.config.js";
+import { isPlatformAdminRole } from "../../constants/roles.js";
 
 const FUND_APPROVAL_FORBIDDEN_MESSAGE =
-  "Only the lead sponsor or admin sponsor can approve the fund.";
+  "Only the lead sponsor, admin sponsor, or company admin can approve the fund.";
 const FUND_APPROVAL_REQUIRES_ESIGN_MESSAGE =
   "Complete e-sign before approving the fund.";
+const LEAD_SPONSOR_EDIT_FORBIDDEN_MESSAGE =
+  "Only platform admins can edit the Lead Sponsor.";
 
 function bodyString(v: unknown): string {
   if (typeof v === "string") return v;
@@ -54,6 +75,11 @@ function bodyString(v: unknown): string {
   }
   if (v != null) return String(v);
   return "";
+}
+
+function isLeadSponsorRoleLabel(role: string | null | undefined): boolean {
+  const t = String(role ?? "").trim().toLowerCase().replace(/[_\s]+/g, " ");
+  return t === "lead sponsor";
 }
 
 function parseExtras(raw: unknown): string[] {
@@ -106,6 +132,81 @@ function fundApprovedFromRequestBody(
   return fallback;
 }
 
+async function rejectIfExtraCompanyUserUnpaid(
+  res: Response,
+  params: { dealId: string; contactId: string; investorRole: string },
+): Promise<boolean> {
+  const check = await assertExtraCompanyUserAllowedForAdd(params);
+  if (check.ok) return false;
+  if (check.payload.code === EXTRA_COMPANY_USER_PAYMENT_REQUIRED) {
+    res.status(check.status).json(check.payload);
+    return true;
+  }
+  res.status(check.status).json({ message: check.payload.message });
+  return true;
+}
+
+/**
+ * Sort values for the Deal Investors table columns, keyed by the UI column ids.
+ * Unknown columns return `undefined`, which keeps the roster's own ordering.
+ */
+function investorSortValue(
+  row: Record<string, unknown>,
+  sortId: string,
+): string | number | undefined {
+  const text = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  const esign = (row.esignStatus ?? {}) as Record<string, unknown>;
+  switch (sortId) {
+    case "investor":
+      return [
+        row.displayName,
+        row.entitySubtitle,
+        row.userDisplayName,
+        row.userEmail,
+        row.firstName,
+        row.lastName,
+      ]
+        .map(text)
+        .join(" ");
+    case "role":
+      return text(row.investorRole);
+    case "investorClass":
+      return text(row.investorClass);
+    case "status":
+      return text(row.status);
+    case "added_by":
+      return text(row.addedByDisplayName);
+    case "committed":
+      return Number(row.commitmentAmountRaw ?? row.commitmentAmount ?? 0) || 0;
+    case "signed":
+      return text(esign.completedAt ?? esign.signedAt);
+    case "selfAcc":
+      return text(row.selfAccredited);
+    case "verifiedAcc":
+      return text(row.verifiedAccLabel);
+    case "mailStatus":
+      return text(row.mailStatus);
+    default:
+      return undefined;
+  }
+}
+
+/** Search, sort and slice investor rows the roster pipeline has already built. */
+function pageInvestorRows<T>(
+  investors: T[],
+  pageQuery: PageQuery,
+): { items: T[]; envelope: PageEnvelope } {
+  const matched = filterRowsBySearch(investors, pageQuery.search);
+  const sorted = sortRowsBy(
+    matched,
+    pageQuery.sortId,
+    pageQuery.sortDir,
+    (row, sortId) =>
+      investorSortValue(row as Record<string, unknown>, sortId),
+  );
+  return paginateInMemory(sorted, pageQuery);
+}
+
 export async function getDealInvestors(
   req: Request,
   res: Response,
@@ -137,22 +238,27 @@ export async function getDealInvestors(
       lpRaw === "1" ||
       lpRaw === "true" ||
       String(lpRaw).toLowerCase() === "yes";
+    /**
+     * KPIs summarise the whole roster, so they are always built from every row
+     * and only the `investors` array is narrowed to the requested page.
+     */
+    const pageQuery = parsePageQuery(req);
     if (lpInvestorsOnly) {
       const { kpis, investors } = await getLpInvestorsTabPayload(
         dealId,
         user.id,
       );
-      res.status(200).json({ kpis, investors });
+      const page = pageInvestorRows(investors, pageQuery);
+      res.status(200).json({ kpis, investors: page.items, ...page.envelope });
       return;
     }
-    try {
-      const { syncDealInvestorEsignStatusesForDeal } = await import(
-        "../../services/deal/dealMemberEsignCompletion.service.js"
-      );
-      await syncDealInvestorEsignStatusesForDeal(dealId);
-    } catch (err) {
-      console.warn("syncDealInvestorEsignStatusesForDeal:", err);
-    }
+    void import("../../services/deal/dealMemberEsignCompletion.service.js")
+      .then(({ scheduleDealInvestorEsignSync }) =>
+        scheduleDealInvestorEsignSync(dealId),
+      )
+      .catch((err: unknown) => {
+        console.warn("scheduleDealInvestorEsignSync:", err);
+      });
     let rows = await listDealInvestmentsByDealId(dealId, {
       lpInvestorsOnly: false,
     });
@@ -181,9 +287,11 @@ export async function getDealInvestors(
       withAddedBy,
     );
     const kpis = buildInvestorKpisFromRows(rows);
+    const page = pageInvestorRows(investors, pageQuery);
     res.status(200).json({
       kpis,
-      investors,
+      investors: page.items,
+      ...page.envelope,
     });
   } catch (err) {
     console.error("getDealInvestors:", err);
@@ -287,6 +395,10 @@ export async function putDealInvestment(
     Object.prototype.hasOwnProperty.call(b, "user_investor_profile_id") ||
     Object.prototype.hasOwnProperty.call(b, "userInvestorProfileId");
   const investor_role = bodyString(b.investor_role);
+  const replacementLeadSponsorContactId = bodyString(
+    b.replacement_lead_sponsor_contact_id ??
+      b.replacementLeadSponsorContactId,
+  );
   const status = bodyString(b.status);
   const investorClass = bodyString(b.investor_class);
   const docSignedDate = bodyString(b.doc_signed_date) || null;
@@ -325,6 +437,16 @@ export async function putDealInvestment(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (
+      !isPlatformAdminRole(user.userRole) &&
+      (isLeadSponsorRoleLabel(investor_role) ||
+        Boolean(replacementLeadSponsorContactId.trim()))
+    ) {
+      res
+        .status(403)
+        .json({ message: LEAD_SPONSOR_EDIT_FORBIDDEN_MESSAGE });
+      return;
+    }
 
     const classResolution = await resolveDealInvestmentInvestorClass(
       dealId,
@@ -342,19 +464,59 @@ export async function putDealInvestment(
       return;
     }
 
+    const currentContactIsLeadSponsor = await dealMemberContactIsLeadSponsor(
+      dealId,
+      existing.contactId,
+    );
+    if (
+      !isPlatformAdminRole(user.userRole) &&
+      (currentContactIsLeadSponsor ||
+        isLeadSponsorRoleLabel(existing.investor_role) ||
+        isLeadSponsorRoleLabel(investor_role) ||
+        Boolean(replacementLeadSponsorContactId.trim()))
+    ) {
+      res
+        .status(403)
+        .json({ message: LEAD_SPONSOR_EDIT_FORBIDDEN_MESSAGE });
+      return;
+    }
+
     const contactIsPlaceholder =
       contactId.trim() === DEAL_INVESTMENT_AUTOSAVE_CONTACT_PLACEHOLDER;
     if (!contactIsPlaceholder) {
       const prevContactId = String(existing.contactId ?? "").trim();
       if (prevContactId.toLowerCase() !== contactId.trim().toLowerCase()) {
-        await assertEligibleForNewDealRosterAdd(contactId.trim());
+        await assertEligibleForNewDealRosterAdd(contactId.trim(), user.id);
       }
+    }
+    if (
+      await rejectIfExtraCompanyUserUnpaid(res, {
+        dealId,
+        contactId,
+        investorRole: investor_role,
+      })
+    ) {
+      return;
+    }
+    if (!contactIsPlaceholder && !isLpInvestorRole(investor_role)) {
+      await assertDealMemberLeadSponsorRoleAllowed(dealId, {
+        contactMemberId: contactId,
+        dealMemberRole: investor_role,
+        replacementLeadSponsorContactId,
+        isDraft: autosave,
+      });
     }
 
     const fundApproved = fundApprovedFromRequestBody(b, existing.fundApproved);
     const fundApprovedBecameTrue = fundApproved && !existing.fundApproved;
     if (fundApprovedBecameTrue) {
-      if (!(await isPortalUserLeadOrAdminSponsorOnDeal(dealId, user.id))) {
+      if (
+        !(await viewerCanApproveDealFundOnDeal({
+          dealId,
+          userId: user.id,
+          userRole: user.userRole,
+        }))
+      ) {
         res.status(403).json({ message: FUND_APPROVAL_FORBIDDEN_MESSAGE });
         return;
       }
@@ -418,6 +580,7 @@ export async function putDealInvestment(
             commitmentAmount,
             extraContributionAmounts,
             documentStoragePath,
+            isDraft: autosave,
           },
         })
       : await updateDealInvestment({
@@ -441,23 +604,35 @@ export async function putDealInvestment(
             commitmentAmount,
             extraContributionAmounts,
             documentStoragePath,
+            /* Autosave leaves the stored flag alone; explicit Save promotes the draft row. */
+            ...(autosave ? {} : { isDraft: false }),
           },
         });
     if (!row) {
       res.status(404).json({ message: "Investment not found" });
       return;
     }
+    let newLeadSponsorContactId: string | null = null;
     if (!contactIsPlaceholder && !isLpInvestorRole(investor_role)) {
-      await upsertDealMemberForDeal(dealId, {
+      const savedRole = await saveDealMemberRoleForDeal(dealId, {
         contactMemberId: contactId,
         dealMemberRole: investor_role,
         sendInvitationMail,
         addedByUserId: user.id,
+        isDraft: autosave,
+        replacementLeadSponsorContactId,
       });
+      newLeadSponsorContactId = savedRole.newLeadSponsorContactId;
     }
     await reconcileAssigningDealUsersForDeal(dealId, user.id);
     /* Invitation email only on explicit Save — not on debounced autosave (would spam). */
     if (!autosave && !contactIsPlaceholder) {
+      const editingLeadSponsor =
+        currentContactIsLeadSponsor ||
+        isLeadSponsorRoleLabel(existing.investor_role) ||
+        isLeadSponsorRoleLabel(investor_role) ||
+        Boolean(replacementLeadSponsorContactId.trim());
+      const notifyYes = sendInvitationMail.toLowerCase() === "yes";
       await sendDealMemberInviteForInvestmentIfRequested({
         dealId,
         contactId,
@@ -466,6 +641,16 @@ export async function putDealInvestment(
         dealMemberRole: investor_role,
          contactEmail: contactEmail.trim() || null,
         invitationSource: "deal_member",
+        ccUserId:
+          editingLeadSponsor && !newLeadSponsorContactId ? user.id : null,
+      });
+      await sendNewLeadSponsorInvitationIfAssigned({
+        dealId,
+        newLeadSponsorContactId,
+        alreadyNotifiedContactId: contactId,
+        alreadyNotified: notifyYes,
+        requireNotifyChoice: editingLeadSponsor,
+        ccUserId: editingLeadSponsor ? user.id : null,
       });
     }
     const fundNewlyApproved =
@@ -535,6 +720,10 @@ export async function putDealInvestment(
       res.status(400).json({ message: err.message });
       return;
     }
+    if (err instanceof DealLeadSponsorValidationError) {
+      res.status(400).json({ message: err.message });
+      return;
+    }
     console.error("putDealInvestment:", err);
     res.status(500).json({ message: "Could not update investment" });
   }
@@ -570,6 +759,10 @@ export async function postDealInvestment(
     b.user_investor_profile_id ?? b.userInvestorProfileId,
   ).trim();
   const investor_role = bodyString(b.investor_role);
+  const replacementLeadSponsorContactId = bodyString(
+    b.replacement_lead_sponsor_contact_id ??
+      b.replacementLeadSponsorContactId,
+  );
 
   const status = bodyString(b.status);
   const investorClass = bodyString(b.investor_class);
@@ -619,6 +812,16 @@ export async function postDealInvestment(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    if (
+      !isPlatformAdminRole(user.userRole) &&
+      (isLeadSponsorRoleLabel(investor_role) ||
+        Boolean(replacementLeadSponsorContactId.trim()))
+    ) {
+      res
+        .status(403)
+        .json({ message: LEAD_SPONSOR_EDIT_FORBIDDEN_MESSAGE });
+      return;
+    }
 
     const classResolution = await resolveDealInvestmentInvestorClass(
       dealId,
@@ -633,12 +836,35 @@ export async function postDealInvestment(
     const contactIsPlaceholder =
       contactId.trim() === DEAL_INVESTMENT_AUTOSAVE_CONTACT_PLACEHOLDER;
     if (!contactIsPlaceholder) {
-      await assertEligibleForNewDealRosterAdd(contactId.trim());
+      await assertEligibleForNewDealRosterAdd(contactId.trim(), user.id);
+    }
+    if (
+      await rejectIfExtraCompanyUserUnpaid(res, {
+        dealId,
+        contactId,
+        investorRole: investor_role,
+      })
+    ) {
+      return;
+    }
+    if (!contactIsPlaceholder && !isLpInvestorRole(investor_role)) {
+      await assertDealMemberLeadSponsorRoleAllowed(dealId, {
+        contactMemberId: contactId,
+        dealMemberRole: investor_role,
+        replacementLeadSponsorContactId,
+        isDraft: autosave,
+      });
     }
 
     const fundApproved = fundApprovedFromRequestBody(b, false);
     if (fundApproved && !autosave) {
-      if (!(await isPortalUserLeadOrAdminSponsorOnDeal(dealId, user.id))) {
+      if (
+        !(await viewerCanApproveDealFundOnDeal({
+          dealId,
+          userId: user.id,
+          userRole: user.userRole,
+        }))
+      ) {
         res.status(403).json({ message: FUND_APPROVAL_FORBIDDEN_MESSAGE });
         return;
       }
@@ -687,16 +913,21 @@ export async function postDealInvestment(
         commitmentAmount,
         extraContributionAmounts,
         documentStoragePath,
+        isDraft: autosave,
       },
     });
 
+    let newLeadSponsorContactId: string | null = null;
     if (!contactIsPlaceholder) {
-      await upsertDealMemberForDeal(dealId, {
+      const savedRole = await saveDealMemberRoleForDeal(dealId, {
         contactMemberId: contactId,
         dealMemberRole: investor_role,
         sendInvitationMail,
         addedByUserId: user.id,
+        isDraft: autosave,
+        replacementLeadSponsorContactId,
       });
+      newLeadSponsorContactId = savedRole.newLeadSponsorContactId;
     }
     await reconcileAssigningDealUsersForDeal(dealId, user.id);
     if (!autosave && !contactIsPlaceholder) {
@@ -708,6 +939,12 @@ export async function postDealInvestment(
         dealMemberRole: investor_role,
         contactEmail: contactEmail.trim() || null,
         invitationSource: "deal_member",
+      });
+      await sendNewLeadSponsorInvitationIfAssigned({
+        dealId,
+        newLeadSponsorContactId,
+        alreadyNotifiedContactId: contactId,
+        alreadyNotified: sendInvitationMail.toLowerCase() === "yes",
       });
     }
     if (!autosave && !contactIsPlaceholder && fundApproved) {
@@ -759,6 +996,10 @@ export async function postDealInvestment(
     });
   } catch (err) {
     if (isDealRosterEligibilityError(err)) {
+      res.status(400).json({ message: err.message });
+      return;
+    }
+    if (err instanceof DealLeadSponsorValidationError) {
       res.status(400).json({ message: err.message });
       return;
     }

@@ -10,6 +10,7 @@ import {
   listDealInvestorCommunicationMails,
   sendDealInvestorCommunicationMail,
 } from "../../services/deal/dealInvestorCommunicationMail.service.js";
+import { getViewerCoSponsorEmailIntercept } from "../../services/deal/dealCoSponsorEmailIntercept.service.js";
 
 function paramDealId(req: Request): string {
   const raw = req.params.dealId;
@@ -56,11 +57,20 @@ export async function getDealInvestorCommunicationMails(
   req: Request,
   res: Response,
 ): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
   const dealId = paramDealId(req);
   if (!(await assertDealReadable(req, res, dealId))) return;
   try {
-    const mails = await listDealInvestorCommunicationMails(dealId);
-    res.status(200).json({ mails });
+    const mails = await listDealInvestorCommunicationMails(dealId, user.id);
+    const intercept = await getViewerCoSponsorEmailIntercept(dealId, user.id);
+    res.status(200).json({
+      mails,
+      viewerCoSponsorEmailIntercept: intercept,
+    });
   } catch (err) {
     console.error("getDealInvestorCommunicationMails:", err);
     res.status(500).json({ message: "Could not load investor communication email log" });

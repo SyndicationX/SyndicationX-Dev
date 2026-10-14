@@ -1,4 +1,4 @@
-import { LayoutGrid, ShieldCheck } from "lucide-react"
+import { LayoutGrid, Shield, ShieldCheck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { primaryRoleLabelFromRow } from "./memberAdminShared"
 
@@ -9,6 +9,9 @@ function pickIconForMemberRole(
   const raw = String(row.role ?? "").trim().toLowerCase()
   const normalizedLabel = label.trim().toLowerCase()
 
+  if (raw === "platform_admin" || normalizedLabel === "platform admin") {
+    return Shield
+  }
   if (raw === "company_admin" || normalizedLabel === "company admin") {
     return ShieldCheck
   }
@@ -18,7 +21,7 @@ function pickIconForMemberRole(
   return null
 }
 
-/** Role pill for Org Members / company Members tables (Company Admin, Company Member icons). */
+/** Role pill for Org Members / company Members tables. */
 export function MemberRoleBadge({ row }: { row: Record<string, unknown> }) {
   const label = primaryRoleLabelFromRow(row)
 

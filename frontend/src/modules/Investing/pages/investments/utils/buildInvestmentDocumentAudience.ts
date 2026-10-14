@@ -1,5 +1,6 @@
 import { getLpInvestorDealIdsFromSession } from "@/common/auth/roleUtils"
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
+import { getSessionUserId } from "@/common/auth/sessionUserId"
 import {
   fetchDealInvestorClasses,
   fetchDealInvestors,
@@ -92,9 +93,10 @@ export async function buildInvestmentDocumentAudience(
       viewerRows = viewerRowsForEmail(lpPayload.investors, emn)
     }
     const viewerInvestorIds = collectViewerInvestorIds(allInvestors, emn)
+    const viewerUserId = getSessionUserId().trim() || undefined
 
     if (viewerRows.length > 0 || viewerInvestorIds.size > 0) {
-      return { viewerRows, dealClasses, viewerInvestorIds }
+      return { viewerRows, dealClasses, viewerInvestorIds, viewerUserId }
     }
 
     if (
@@ -102,13 +104,18 @@ export async function buildInvestmentDocumentAudience(
       viewerHasDealParticipation(fullPayload, emn) ||
       viewerHasDealParticipation(lpPayload, emn)
     ) {
-      return { viewerRows: [], dealClasses, viewerInvestorIds }
+      return { viewerRows: [], dealClasses, viewerInvestorIds, viewerUserId }
     }
 
     return EMPTY_INVESTMENT_DOCUMENT_AUDIENCE
   } catch {
     if (sessionIncludesDeal(id)) {
-      return { viewerRows: [], dealClasses: [], viewerInvestorIds: new Set() }
+      return {
+        viewerRows: [],
+        dealClasses: [],
+        viewerInvestorIds: new Set(),
+        viewerUserId: getSessionUserId().trim() || undefined,
+      }
     }
     return EMPTY_INVESTMENT_DOCUMENT_AUDIENCE
   }

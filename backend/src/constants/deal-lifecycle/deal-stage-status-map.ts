@@ -12,11 +12,14 @@ export const CAPITAL_RAISING_FUNDRAISING_STATUSES: readonly DealStatus[] = [
   "closed",
 ];
 
-/** Draft stage may use hidden + all fundraising statuses (investor access stays off until live). */
-export const DRAFT_OFFERING_STATUSES: readonly DealStatus[] = [
-  "draft_hidden",
-  ...CAPITAL_RAISING_FUNDRAISING_STATUSES,
-];
+/**
+ * Draft stage uses the fundraising statuses and starts at `coming_soon`.
+ * Investor access stays off regardless — `canInvestorAccessPublicOffering`
+ * blocks the draft stage and investor listings exclude it.
+ * `draft_hidden` is legacy only; existing rows resolve to the stage default.
+ */
+export const DRAFT_OFFERING_STATUSES: readonly DealStatus[] =
+  CAPITAL_RAISING_FUNDRAISING_STATUSES;
 
 /** Allowed `offering_status` values per canonical deal stage. */
 export const DEAL_STAGE_STATUS_MAP: Readonly<

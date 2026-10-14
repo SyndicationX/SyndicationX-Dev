@@ -20,6 +20,7 @@ import {
   getMyProfile,
   patchMyProfile,
   postChangePassword,
+  postOfferingPreviewAccessClaim,
 } from "../controllers/auth/account.controller.js";
 import {
   postAuthLogout,
@@ -42,6 +43,7 @@ userRoutes
 .post("/auth/activity/page-view", postActivityPageView)
 .post("/auth/change-password", postChangePassword)
 .get("/auth/me", getMyProfile)
+.post("/auth/offering-preview/claim", postOfferingPreviewAccessClaim)
 .patch("/auth/me", patchMyProfile)
 /** Same handler — some proxies or clients mishandle PATCH; SPA can use POST. */
 .post("/auth/me", patchMyProfile)

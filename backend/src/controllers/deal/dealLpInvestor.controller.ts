@@ -193,23 +193,17 @@ export async function postDealLpInvestor(
       return;
     }
 
-    if (!autosave) {
-      const duplicate = await findDealLpInvestorByDealAndContact(
-        dealId,
-        contactId,
-      );
-      if (duplicate) {
-        res.status(409).json({ message: LP_INVESTOR_ALREADY_ON_DEAL_MESSAGE });
-        return;
-      }
-    }
-
     const existingForContact = await findDealLpInvestorByDealAndContact(
       dealId,
       contactId,
     );
+    /* A draft row for this contact is this modal's own autosave — promote it, do not reject. */
+    if (!autosave && existingForContact && !existingForContact.isDraft) {
+      res.status(409).json({ message: LP_INVESTOR_ALREADY_ON_DEAL_MESSAGE });
+      return;
+    }
     if (!existingForContact) {
-      await assertEligibleForNewDealRosterAdd(contactId.trim());
+      await assertEligibleForNewDealRosterAdd(contactId.trim(), user.id);
     }
 
     const row = await upsertDealLpInvestor(dealId, {
@@ -225,6 +219,7 @@ export async function postDealLpInvestor(
       percentOfClassDistributions,
       entityOwnershipPercent,
       distributionAllocationPercent,
+      isDraft: autosave,
     });
 
     await reconcileAssigningDealUsersForDeal(dealId, user.id);
@@ -357,6 +352,7 @@ export async function putDealLpInvestor(
       );
       if (
         duplicate &&
+        !duplicate.isDraft &&
         String(duplicate.id).toLowerCase() !==
           String(existing.id).trim().toLowerCase()
       ) {
@@ -378,6 +374,7 @@ export async function putDealLpInvestor(
       percentOfClassDistributions,
       entityOwnershipPercent,
       distributionAllocationPercent,
+      isDraft: autosave,
     });
     if (!row) {
       res.status(404).json({ message: "Could not update LP investor" });

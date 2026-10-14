@@ -186,6 +186,12 @@
   color: var(--portal-text-secondary, #475569);
 }
 
+.notifications_item_action {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--portal-primary, #00477a);
+}
+
 .notifications_item_category {
   font-size: 0.6875rem;
   font-weight: 600;

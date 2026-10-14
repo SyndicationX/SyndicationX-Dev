@@ -1,5 +1,6 @@
 import { Activity, CircleOff, LayoutGrid } from "lucide-react"
 import { TabsScrollStrip } from "@/common/components/tabs-scroll-strip/TabsScrollStrip"
+import { formatCount } from "@/common/utils/formatCount"
 import "../active-archived-tabs/active-archived-tabs.css"
 
 export type UsageFilterTab = "all" | "in_use" | "unused"
@@ -48,7 +49,7 @@ export function UsageFilterTabs({
             id={`${idPrefix}-all`}
             role="tab"
             aria-selected={value === "all"}
-            aria-label={`All, ${allCount}`}
+            aria-label={`All, ${formatCount(allCount)}`}
             className={`um_members_tab deals_tabs_tab um_segmented_tab${
               value === "all" ? " um_members_tab_active" : ""
             }`}
@@ -62,7 +63,7 @@ export function UsageFilterTabs({
             />
             <span className="deals_tabs_label um_segmented_tab_label">All</span>
             <span className="deals_tabs_count" aria-hidden>
-              ({allCount})
+              ({formatCount(allCount)})
             </span>
           </button>
           <button
@@ -70,7 +71,7 @@ export function UsageFilterTabs({
             id={`${idPrefix}-in-use`}
             role="tab"
             aria-selected={value === "in_use"}
-            aria-label={`In use, ${inUseCount}`}
+            aria-label={`In use, ${formatCount(inUseCount)}`}
             className={`um_members_tab deals_tabs_tab um_segmented_tab${
               value === "in_use" ? " um_members_tab_active" : ""
             }`}
@@ -86,7 +87,7 @@ export function UsageFilterTabs({
               In use
             </span>
             <span className="deals_tabs_count" aria-hidden>
-              ({inUseCount})
+              ({formatCount(inUseCount)})
             </span>
           </button>
           <button
@@ -94,7 +95,7 @@ export function UsageFilterTabs({
             id={`${idPrefix}-unused`}
             role="tab"
             aria-selected={value === "unused"}
-            aria-label={`Unused, ${unusedCount}`}
+            aria-label={`Unused, ${formatCount(unusedCount)}`}
             className={`um_members_tab deals_tabs_tab um_segmented_tab${
               value === "unused" ? " um_members_tab_active" : ""
             }`}
@@ -110,7 +111,7 @@ export function UsageFilterTabs({
               Unused
             </span>
             <span className="deals_tabs_count" aria-hidden>
-              ({unusedCount})
+              ({formatCount(unusedCount)})
             </span>
           </button>
         </div>

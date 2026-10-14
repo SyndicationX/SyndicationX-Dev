@@ -33,7 +33,6 @@ import {
   appendEmailTemplate,
   EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES,
   EMAIL_TEMPLATE_BODY_HTML_MAX,
-  EMAIL_TEMPLATE_BODY_MAX,
   EMAIL_TEMPLATE_SUBJECT_MAX,
   fileToStoredAttachment,
   formatEmailAttachmentSize,
@@ -74,7 +73,6 @@ export default function EmailTemplateNewPage() {
     "idle" | "picking" | "processing"
   >("idle")
   const [submitting, setSubmitting] = useState(false)
-  const [bodyPlainLen, setBodyPlainLen] = useState(0)
 
   const editorRef = useRef<HTMLDivElement>(null)
   const quillRef = useRef<Quill | null>(null)
@@ -153,17 +151,9 @@ export default function EmailTemplateNewPage() {
       }
     }
 
-    const updatePlainLen = () => {
-      const t = quill.getText().replace(/\n$/, "").trim()
-      setBodyPlainLen(t.length)
-    }
-    updatePlainLen()
-
-    quill.on("text-change", updatePlainLen)
     quillRef.current = quill
 
     return () => {
-      quill.off("text-change", updatePlainLen)
       quillRef.current = null
       removeQuillSnowArtifacts(editorRef.current)
     }
@@ -276,14 +266,6 @@ export default function EmailTemplateNewPage() {
       const quill = quillRef.current
       if (!quill) {
         toast.error("Editor not ready", "Please wait a moment and try again.")
-        return
-      }
-      const plain = quill.getText().replace(/\n$/, "").trim()
-      if (plain.length > EMAIL_TEMPLATE_BODY_MAX) {
-        toast.error(
-          "Body too long",
-          `Use at most ${EMAIL_TEMPLATE_BODY_MAX} characters of text.`,
-        )
         return
       }
       const len = quill.getLength()
@@ -471,17 +453,12 @@ export default function EmailTemplateNewPage() {
         </div>
 
         <div className="um_field email_template_body_field">
-          <div className="email_template_new_label_row">
-            <span
-              className="um_field_label_row"
-              id="email-template-form-body-label"
-            >
-              Body
-            </span>
-            <span className="email_template_char_count" aria-live="polite">
-              {bodyPlainLen}/{EMAIL_TEMPLATE_BODY_MAX}
-            </span>
-          </div>
+          <span
+            className="um_field_label_row"
+            id="email-template-form-body-label"
+          >
+            Body
+          </span>
           <div
             className="deal_offering_quill"
             aria-labelledby="email-template-form-body-label"

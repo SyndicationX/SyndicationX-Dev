@@ -33,8 +33,12 @@ import {
   type DropdownSelectSection,
 } from "../../../../../common/components/dropdown-select"
 import { AddContactPanel } from "../../../contacts/components/AddContactPanel"
-import { createContact, fetchContacts } from "../../../contacts/api/contactsApi"
-import type { ContactRow } from "../../../contacts/types/contact.types"
+import { createContact, fetchDealContactPickerLists } from "../../../contacts/api/contactsApi"
+import {
+  PLATFORM_CONTACTS_PICKER_HINT,
+  type AddContactSavePayload,
+  type ContactRow,
+} from "../../../contacts/types/contact.types"
 import {
   fetchDealInvestorClasses,
   fetchUsersForMemberSelect,
@@ -177,6 +181,9 @@ export function AddInvestmentModal({
   const [submitting, setSubmitting] = useState(false)
   const [memberRows, setMemberRows] = useState<Record<string, unknown>[]>([])
   const [contactRows, setContactRows] = useState<ContactRow[]>([])
+  const [platformContactRows, setPlatformContactRows] = useState<ContactRow[]>(
+    [],
+  )
   const [dealClasses, setDealClasses] = useState<DealInvestorClass[]>([])
   const [investorClassesReady, setInvestorClassesReady] = useState(false)
   const [investorClassOptions, setInvestorClassOptions] = useState<
@@ -213,14 +220,15 @@ export function AddInvestmentModal({
     setInvestorClassesReady(false)
     setInvestorClassOptions([{ value: "", label: "Loading investor classes…" }])
     void (async () => {
-      const [users, contacts, classes] = await Promise.all([
+      const [users, picker, classes] = await Promise.all([
         fetchUsersForMemberSelect(),
-        fetchContacts(),
+        fetchDealContactPickerLists({ sort: "name" }),
         fetchDealInvestorClasses(dealId),
       ])
       if (cancelled) return
       setMemberRows(users)
-      setContactRows(contacts)
+      setContactRows(picker.contacts)
+      setPlatformContactRows(picker.platformContacts)
       setDealClasses(classes)
 
       if (classes.length > 0) {
@@ -305,7 +313,9 @@ export function AddInvestmentModal({
 
       if (raw.startsWith(PREFIX_CONTACT)) {
         const id = raw.slice(PREFIX_CONTACT.length)
-        const c = contactRows.find((x) => x.id === id)
+        const c =
+          contactRows.find((x) => x.id === id) ??
+          platformContactRows.find((x) => x.id === id)
         if (c) {
           const display = contactOptionLabel(c)
           patch({
@@ -355,20 +365,23 @@ export function AddInvestmentModal({
         contactUsername: undefined,
       })
     },
-    [contactRows, memberRows, patch],
+    [contactRows, platformContactRows, memberRows, patch],
   )
 
   const memberSelectValue = useMemo(() => {
     const id = form.contactId.trim()
     if (!id) return ""
-    if (contactRows.some((c) => c.id === id))
+    if (
+      contactRows.some((c) => c.id === id) ||
+      platformContactRows.some((c) => c.id === id)
+    )
       return `${PREFIX_CONTACT}${id}`
     if (memberRows.some((u) => String(u.id) === id))
       return `${PREFIX_USER}${id}`
     if (MEMBER_SELECT_OPTIONS.some((o) => o.value === id))
       return `${PREFIX_USER}${id}`
     return id
-  }, [form.contactId, contactRows, memberRows])
+  }, [form.contactId, contactRows, platformContactRows, memberRows])
 
   const memberDropdownSections = useMemo((): DropdownSelectSection[] => {
     const sections: DropdownSelectSection[] = []
@@ -376,6 +389,16 @@ export function AddInvestmentModal({
       sections.push({
         heading: "Contacts",
         options: contactRows.map((c) => ({
+          value: `${PREFIX_CONTACT}${c.id}`,
+          label: contactOptionLabel(c),
+        })),
+      })
+    }
+    if (platformContactRows.length > 0) {
+      sections.push({
+        heading: "Platform Contacts",
+        headingHint: PLATFORM_CONTACTS_PICKER_HINT,
+        options: platformContactRows.map((c) => ({
           value: `${PREFIX_CONTACT}${c.id}`,
           label: contactOptionLabel(c),
         })),
@@ -394,13 +417,19 @@ export function AddInvestmentModal({
       })
     }
     return sections
-  }, [contactRows, memberRows])
+  }, [contactRows, platformContactRows, memberRows])
 
   const handleContactCreated = useCallback(
     (contact: ContactRow) => {
       setContactRows((prev) => {
         if (prev.some((c) => c.id === contact.id)) return prev
-        return [...prev, contact]
+        return [...prev, contact].sort((a, b) =>
+          `${a.firstName} ${a.lastName} ${a.email}`.localeCompare(
+            `${b.firstName} ${b.lastName} ${b.email}`,
+            undefined,
+            { sensitivity: "base" },
+          ),
+        )
       })
       const display = contactOptionLabel(contact)
       const namePart = display.split(" — ")[0]?.trim() || display
@@ -419,7 +448,7 @@ export function AddInvestmentModal({
   )
 
   const handleAddContactSave = useCallback(
-    async (contact: Omit<ContactRow, "id" | "createdByDisplayName">) => {
+    async (contact: AddContactSavePayload) => {
       const created = await createContact(contact)
       handleContactCreated(created)
     },
@@ -966,7 +995,7 @@ export function AddInvestmentModal({
       onClose={() => setAddContactModalOpen(false)}
       onSave={handleAddContactSave}
       contactToEdit={null}
-      existingContacts={contactRows}
+      existingContacts={[...contactRows, ...platformContactRows]}
     />
     </>
   )

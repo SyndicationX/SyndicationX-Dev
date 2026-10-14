@@ -1,4 +1,5 @@
 import type { DealDetailApi } from "../../api/dealsApi"
+import type { ViewerDealMemberRole } from "../../utils/dealDetailTabVisibility"
 import { DocumentsSection } from "./DocumentsSection"
 import "../../deal-offering-details.css"
 import "./deal-docs-section-modal.css"
@@ -9,6 +10,8 @@ type DealDocumentsTabProps = {
   dealName?: string | null
   offeringInvestorPreviewJson?: string | null
   investorsListRefreshKey?: number
+  viewerDealMemberRole?: ViewerDealMemberRole
+  viewOnly?: boolean
   onOfferingPreviewSynced?: (deal: DealDetailApi) => void
 }
 
@@ -17,6 +20,8 @@ export function DealDocumentsTab({
   dealName,
   offeringInvestorPreviewJson,
   investorsListRefreshKey = 0,
+  viewerDealMemberRole = null,
+  viewOnly = false,
   onOfferingPreviewSynced,
 }: DealDocumentsTabProps) {
   return (
@@ -27,6 +32,8 @@ export function DealDocumentsTab({
         dealName={dealName}
         offeringInvestorPreviewJson={offeringInvestorPreviewJson}
         investorsListRefreshKey={investorsListRefreshKey}
+        viewerDealMemberRole={viewerDealMemberRole}
+        viewOnly={viewOnly}
         onOfferingPreviewSynced={onOfferingPreviewSynced}
       />
     </div>

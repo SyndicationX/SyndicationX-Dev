@@ -1,7 +1,7 @@
 import type { DealInvestorRow } from "@/modules/Syndication/Deals/types/deal-investors.types"
 import {
-  investorEsignIsFullyCompletedForRow,
   investorEsignWasSent,
+  investorInvestmentProfileIsComplete,
   investorRowCommittedNumeric,
 } from "@/modules/Syndication/Deals/utils/investorEsignStatus"
 import {
@@ -49,13 +49,26 @@ function esignSignSubProgress(row: DealInvestorRow): number {
   return 0.25
 }
 
+export function completedInvestNowProgress(): InvestNowDraftProgress {
+  return {
+    percent: 100,
+    phaseLabel: phaseLabelFor("esignatures"),
+    phaseId: "esignatures",
+  }
+}
+
 /**
  * Estimate Invest Now completion from a draft investor row (no commitment GET).
  * Aligns with the five Invest Now stepper phases on the wizard.
+ * ETL fallback: funds fully received + `doc_signed_date` is 100% complete.
  */
 export function investNowDraftProgressFromInvestorRow(
   row: DealInvestorRow,
 ): InvestNowDraftProgress {
+  if (investorInvestmentProfileIsComplete(row)) {
+    return completedInvestNowProgress()
+  }
+
   const phaseCount = INVEST_NOW_STEPPER_PHASES.length
   let completedPhases = 0
   let phaseId: InvestNowStepperPhase["id"] = "investor"
@@ -68,14 +81,6 @@ export function investNowDraftProgressFromInvestorRow(
   if (investorRowCommittedNumeric(row) > 0) {
     completedPhases = 2
     phaseId = "questionnaire"
-  }
-
-  if (investorEsignWasSent(row) && investorEsignIsFullyCompletedForRow(row)) {
-    return {
-      percent: 100,
-      phaseLabel: phaseLabelFor("esignatures"),
-      phaseId: "esignatures",
-    }
   }
 
   if (investorEsignWasSent(row)) {

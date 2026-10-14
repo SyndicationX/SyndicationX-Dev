@@ -561,6 +561,181 @@
       "when": 1894550000000,
       "tag": "0080_deal_saas_billing_starts_at",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1894600000000,
+      "tag": "0081_deal_member_name_sponsor_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1894650000000,
+      "tag": "0082_deal_extra_company_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1894700000000,
+      "tag": "0083_deal_member_lead_sponsor_email_intercept",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1894750000000,
+      "tag": "0084_drop_admin_billing_start_date",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1894800000000,
+      "tag": "0085_pending_deal_stage",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1894850000000,
+      "tag": "0086_user_feedback",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1894900000000,
+      "tag": "0087_feedback_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1894950000000,
+      "tag": "0088_roster_draft_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1895000000000,
+      "tag": "0089_contact_relationship_506b",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1895050000000,
+      "tag": "0090_feedback_priority",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1895100000000,
+      "tag": "0091_draft_stage_coming_soon",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1895150000000,
+      "tag": "0092_contact_relationship_506b_default_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1895200000000,
+      "tag": "0093_contact_visible_to_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1895250000000,
+      "tag": "0094_contact_invitation_email_sent",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1895300000000,
+      "tag": "0095_list_query_performance_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1895350000000,
+      "tag": "0096_user_referred_by_invite_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1895400000000,
+      "tag": "0097_contact_referred_by_deal",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1895450000000,
+      "tag": "0098_feedback_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1895500000000,
+      "tag": "0099_contact_import_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1895550000000,
+      "tag": "0100_deal_stripe_payer_customer",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1895600000000,
+      "tag": "0101_deal_member_removal_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1895650000000,
+      "tag": "0102_feedback_entry_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1895700000000,
+      "tag": "0103_deal_investment_commitment_emails",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1895750000000,
+      "tag": "0104_user_referred_by_company",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1895800000000,
+      "tag": "0105_deal_saas_coupon_code",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,9 @@
 import type { Request, Response } from "express";
 import type { DealMemoryUploadFile } from "../services/deal/dealForm.service.js";
-import { validateImageUploadFiles } from "./uploadFileValidation.js";
+import {
+  validateImageUploadFiles,
+  validateOfferingDocumentUploadFiles,
+} from "./uploadFileValidation.js";
 
 type MulterMemoryFile = {
   buffer?: Buffer;
@@ -75,6 +78,40 @@ export function requireDealMultipartFiles(
     });
   }
   res.status(400).json({ message: emptyMultipartMessage(req, fieldName) });
+  return null;
+}
+
+/**
+ * Documents tab upload — requires at least one non-empty PDF/Office file.
+ * Returns `null` after sending 400 when nothing usable was received.
+ */
+export function requireDealDocumentMultipartFiles(
+  req: Request,
+  res: Response,
+): DealMemoryUploadFile[] | null {
+  const files = parseDealMultipartFiles(req);
+  if (files.length > 0) {
+    const validation = validateOfferingDocumentUploadFiles(
+      files.map((f) => ({ originalname: f.originalname, buffer: f.buffer })),
+    );
+    if (!validation.ok) {
+      res.status(400).json({ message: validation.message });
+      return null;
+    }
+    return files;
+  }
+
+  const hadParts = multerCandidates(req).length > 0;
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console -- dev-only upload diagnostics
+    console.warn("dealMultipartUpload: no document file buffers", {
+      contentType: req.get("content-type") ?? null,
+      fieldName: "documentFiles",
+      hadParts,
+      method: req.method,
+    });
+  }
+  res.status(400).json({ message: emptyMultipartMessage(req, "documentFiles") });
   return null;
 }
 

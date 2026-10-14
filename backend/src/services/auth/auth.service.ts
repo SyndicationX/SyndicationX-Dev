@@ -103,14 +103,8 @@ export async function signInWithPassword(
       user_table.passwordHash,
     );
     if (!passwordMatch) {
-      if (isUserSignupCompleted(usertable.userSignupCompleted)) {
-        return {
-          ok: false,
-          message:
-            "Your account setup is not complete. Finish registration before signing in.",
-        };
-      }
-      return { ok: false, message: INVALID_SIGNIN_CREDENTIALS_MESSAGE };
+      // return { ok: false, message: ACCOUNT_EXISTS_RESET_PASSWORD_MESSAGE };
+      return { ok: false, message: "Incorrect password. Please try again or reset your password." };
     }
 
     if (!isUserSignupCompleted(usertable.userSignupCompleted)) {

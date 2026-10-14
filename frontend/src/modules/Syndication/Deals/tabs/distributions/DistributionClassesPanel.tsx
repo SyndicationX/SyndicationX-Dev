@@ -17,11 +17,18 @@ import type {
   PriorDistributionRecord,
 } from "../../distribution-setup/types/distribution-setup.types"
 import { DistributionNameClassMenu } from "./DistributionNameClassMenu"
+import { formatCount } from "@/common/utils/formatCount"
 import { DistributionClassInvestorsPanel } from "./DistributionClassInvestorsPanel"
+import { CLASS_TYPE_TONE } from "../../distribution-setup/types/distribution-setup.types"
 import {
   investorRowsForDistributionClass,
   type DistributionClassTableRow,
 } from "./utils/distributionListDisplay"
+
+function classTypeTone(classType: string | undefined): string {
+  const t = String(classType ?? "").trim().toLowerCase()
+  return CLASS_TYPE_TONE[t] || "lp"
+}
 
 type DistributionClassesPanelProps = {
   dealId: string
@@ -35,6 +42,7 @@ type DistributionClassesPanelProps = {
     saved: DistributionSetupBundle,
     investorId: string,
     nextPct?: number,
+    nextDealPct?: number,
   ) => void
   onReload: () => void
 }
@@ -172,8 +180,23 @@ export function DistributionClassesPanel({
             hint="LP, GP, preferred equity, or mezzanine."
           />
         ),
+        colWidth: "5rem",
+        align: "center",
+        thClassName: "deal_dist_th_type deal_dist_th_class_type",
+        tdClassName: "deal_dist_td_type deal_dist_td_class_type",
         sortValue: (row) => row.typeLabel.toLowerCase(),
-        cell: (row) => row.typeLabel || "—",
+        cell: (row) => {
+          const label = row.typeLabel.trim()
+          if (!label || label === "—") return "—"
+          const tone = classTypeTone(row.classType)
+          return (
+            <span
+              className={`deal_dist_class_type_chip deal_dist_class_type_chip--${tone}`}
+            >
+              {label}
+            </span>
+          )
+        },
       },
       {
         id: "investors",
@@ -183,10 +206,21 @@ export function DistributionClassesPanel({
             hint="Investors in this class on this distribution."
           />
         ),
-        align: "right",
-        thClassName: "deals_th_align_right",
+        colWidth: "5.75rem",
+        align: "center",
+        thClassName: "deal_dist_th_investors",
+        tdClassName: "deal_dist_td_investors",
         sortValue: (row) => row.investorCount,
-        cell: (row) => row.investorCount,
+        cell: (row) => {
+          const tone = classTypeTone(row.classType)
+          return (
+            <span
+              className={`deal_dist_investor_count deal_dist_investor_count--${tone}`}
+            >
+              {formatCount(row.investorCount)}
+            </span>
+          )
+        },
       },
       {
         id: "capital",
@@ -205,8 +239,8 @@ export function DistributionClassesPanel({
         id: "required",
         header: (
           <ColumnHeader
-            label="Required"
-            hint="Preferred / CoC due for this class in the distribution period (actual/365)."
+            label="Accumulated Pref"
+            hint="Preferred due for this class in the distribution period (actual/365)."
           />
         ),
         align: "right",
@@ -241,7 +275,7 @@ export function DistributionClassesPanel({
         header: (
           <ColumnHeader
             label="Unpaid"
-            hint="Required minus payment for this class on this run."
+            hint="Accumulated Pref minus payment for this class on this run."
           />
         ),
         align: "right",

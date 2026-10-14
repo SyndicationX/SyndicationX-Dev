@@ -309,6 +309,236 @@ export function esignDocumentAlignedTextFieldSize(
   };
 }
 
+/** Compact square choice box (~9pt on Letter) — the largest a radio should be. */
+const CHOICE_FIELD_SIDE_PT = 9;
+
+export function esignDocumentChoiceFieldSize(): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: signFlowPercentWidth(CHOICE_FIELD_SIDE_PT),
+    height: signFlowPercentHeight(CHOICE_FIELD_SIDE_PT),
+  };
+}
+
+function isSignFlowFieldType(field: SignFlowField, type: string): boolean {
+  return String(field.type ?? "").trim().toLowerCase() === type;
+}
+
+function signFlowChoiceFieldType(field: SignFlowField): "radio" | "checkbox" | null {
+  const t = String(field.type ?? "").trim().toLowerCase();
+  if (t === "radio") return "radio";
+  if (t === "checkbox") return "checkbox";
+  return null;
+}
+
+function normalizeSignFlowChoiceNumberedText(
+  value: unknown,
+  choiceType: "radio" | "checkbox",
+  optionNumber: number,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = value.match(/^(.*?)(\d+)(\s*)$/);
+  if (!match) return undefined;
+
+  const prefix = match[1] ?? "";
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  const typeWord = choiceType === "radio" ? "radio" : "checkbox";
+  if (
+    !normalizedPrefix.includes(typeWord) &&
+    !normalizedPrefix.includes("option")
+  ) {
+    return undefined;
+  }
+
+  return `${prefix}${optionNumber}${match[3] ?? ""}`;
+}
+
+function signFlowChoiceGroupKey(field: SignFlowField): string | null {
+  const raw = field as unknown as Record<string, unknown>;
+  for (const key of [
+    "groupId",
+    "groupID",
+    "group_id",
+    "choiceGroupId",
+    "choice_group_id",
+    "radioGroupId",
+    "radio_group_id",
+    "checkboxGroupId",
+    "checkbox_group_id",
+  ]) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return null;
+}
+
+function signFlowChoiceVisualGroupKey(
+  field: SignFlowField,
+  groupIndex: number,
+): string {
+  const type = signFlowChoiceFieldType(field) ?? "choice";
+  const recipient = String(field.recipientId ?? "").trim();
+  const page = Math.max(1, Math.floor(Number(field.page) || 1));
+  return `${type}|${recipient}|${page}|visual-${groupIndex}`;
+}
+
+/**
+ * SignFlow's embed may keep counting choices globally (Radio 1, 2, 3, 4...) when
+ * a sponsor adds another radio/checkbox group. Reset each stored group so every
+ * newly placed group starts at 1 again.
+ */
+export function normalizeSignFlowChoiceFieldOptionNumbers(
+  fields: SignFlowField[],
+): SignFlowField[] {
+  const choiceEntries = fields
+    .map((field, index) => ({
+      field,
+      index,
+      type: signFlowChoiceFieldType(field),
+      explicitGroup: signFlowChoiceGroupKey(field),
+      page: Math.max(1, Math.floor(Number(field.page) || 1)),
+      recipientId: String(field.recipientId ?? "").trim(),
+      x: Number(field.x) || 0,
+      y: Number(field.y) || 0,
+      h: Math.max(0.5, Number(field.height) || 1),
+    }))
+    .filter((entry): entry is typeof entry & { type: "radio" | "checkbox" } =>
+      entry.type === "radio" || entry.type === "checkbox",
+    )
+    .sort((a, b) => {
+      const byType = a.type.localeCompare(b.type);
+      if (byType) return byType;
+      const byRecipient = a.recipientId.localeCompare(b.recipientId);
+      if (byRecipient) return byRecipient;
+      if (a.page !== b.page) return a.page - b.page;
+      if (Math.abs(a.x - b.x) > 0.5) return a.x - b.x;
+      if (Math.abs(a.y - b.y) > 0.5) return a.y - b.y;
+      return a.index - b.index;
+    });
+
+  if (!choiceEntries.length) return fields;
+
+  let visualGroupIndex = 0;
+  const groupByOriginalIndex = new Map<number, string>();
+  let previous: (typeof choiceEntries)[number] | null = null;
+  for (const entry of choiceEntries) {
+    if (entry.explicitGroup) {
+      groupByOriginalIndex.set(
+        entry.index,
+        `${entry.type}|${entry.recipientId}|${entry.page}|explicit-${entry.explicitGroup}`,
+      );
+      previous = entry;
+      continue;
+    }
+
+    const xGap = previous ? Math.abs(entry.x - previous.x) : 0;
+    const newVisualGroup =
+      !previous ||
+      previous.type !== entry.type ||
+      previous.recipientId !== entry.recipientId ||
+      previous.page !== entry.page ||
+      xGap > Math.max(6, Math.max(previous.h, entry.h) * 3);
+
+    if (newVisualGroup) visualGroupIndex += 1;
+    groupByOriginalIndex.set(
+      entry.index,
+      signFlowChoiceVisualGroupKey(entry.field, visualGroupIndex),
+    );
+    previous = entry;
+  }
+
+  const optionCounts = new Map<string, number>();
+  let changed = false;
+  const next = fields.map((field, index) => {
+    const choiceType = signFlowChoiceFieldType(field);
+    const groupKey = groupByOriginalIndex.get(index);
+    if (!choiceType || !groupKey) return field;
+
+    const optionNumber = (optionCounts.get(groupKey) ?? 0) + 1;
+    optionCounts.set(groupKey, optionNumber);
+
+    const label = normalizeSignFlowChoiceNumberedText(
+      field.label,
+      choiceType,
+      optionNumber,
+    );
+    if (label === undefined || label === field.label) return field;
+    changed = true;
+    return { ...field, label };
+  });
+
+  return changed ? next : fields;
+}
+
+/** Most common checkbox box on the document, so radios match what is already placed. */
+function checkboxSizeOnDocument(
+  fields: SignFlowField[],
+): { width: number; height: number } | null {
+  const counts = new Map<string, { size: { width: number; height: number }; n: number }>();
+  for (const field of fields) {
+    if (!isSignFlowFieldType(field, "checkbox")) continue;
+    const width = Number(field.width) || 0;
+    const height = Number(field.height) || 0;
+    if (width <= 0 || height <= 0) continue;
+    const key = `${width.toFixed(2)}x${height.toFixed(2)}`;
+    const entry = counts.get(key);
+    if (entry) entry.n += 1;
+    else counts.set(key, { size: { width, height }, n: 1 });
+  }
+  let best: { size: { width: number; height: number }; n: number } | null = null;
+  for (const entry of counts.values()) {
+    if (!best || entry.n > best.n) best = entry;
+  }
+  return best?.size ?? null;
+}
+
+/**
+ * The embed can place choice boxes far larger than the printed marks. Match any
+ * existing compact checkbox so controls read the same, but never exceed the
+ * compact box.
+ */
+export function alignSignFlowRadioFieldSizeToChoiceBox(
+  fields: SignFlowField[],
+): SignFlowField[] {
+  if (
+    !fields.some(
+      (field) =>
+        isSignFlowFieldType(field, "radio") ||
+        isSignFlowFieldType(field, "checkbox"),
+    )
+  ) {
+    return fields;
+  }
+  const compact = esignDocumentChoiceFieldSize();
+  const checkbox = checkboxSizeOnDocument(fields);
+  const target = checkbox
+    ? {
+        width: Math.min(checkbox.width, compact.width),
+        height: Math.min(checkbox.height, compact.height),
+      }
+    : compact;
+  return fields.map((field) => {
+    if (
+      !isSignFlowFieldType(field, "radio") &&
+      !isSignFlowFieldType(field, "checkbox")
+    ) {
+      return field;
+    }
+    const width = Number(field.width) || 0;
+    const height = Number(field.height) || 0;
+    if (
+      Math.abs(width - target.width) < 0.05 &&
+      Math.abs(height - target.height) < 0.05
+    ) {
+      return field;
+    }
+    return { ...field, width: target.width, height: target.height };
+  });
+}
+
 /**
  * Shrink legacy SynX investor-data text/date boxes that used height ≈ 5% (too
  * large vs document body) down to the questionnaire-aligned text height.

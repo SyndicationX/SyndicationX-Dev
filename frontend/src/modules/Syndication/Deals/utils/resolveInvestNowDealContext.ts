@@ -101,23 +101,50 @@ export function pickInvestNowLeadSponsorDisplayName(
 
 
 
-/** Lead sponsor unless a valid referring preview link supplied a sponsor name. */
+function usableSponsorLabel(value: string | null | undefined): string {
+  const name = value?.trim() ?? ""
+  return name && name !== "—" ? name : ""
+}
 
+/**
+ * Sponsor who brought this investor onto the deal, then a referring link,
+ * then the lead sponsor.
+ */
 export function pickInvestNowSponsorDisplayName(
 
-  membersPayload: Pick<DealMembersPayload, "members" | "leadSponsorDisplayName">,
+  membersPayload: Pick<
+    DealMembersPayload,
+    | "members"
+    | "leadSponsorDisplayName"
+    | "sameOrganizationSponsorDisplayName"
+    | "onboardingSponsorDisplayName"
+  >,
 
   options?: {
 
     referringSponsorDisplayName?: string | null
+    /** Sponsor stored on this investor's roster row (`added_by`). */
+    investorAddedByDisplayName?: string | null
 
   },
 
 ): string {
 
-  const fromReferral = options?.referringSponsorDisplayName?.trim()
+  const fromOnboarding = usableSponsorLabel(
+    membersPayload.onboardingSponsorDisplayName,
+  )
+  if (fromOnboarding) return fromOnboarding
 
-  if (fromReferral && fromReferral !== "—") return fromReferral
+  const fromRoster = usableSponsorLabel(options?.investorAddedByDisplayName)
+  if (fromRoster) return fromRoster
+
+  const fromSameOrganization = usableSponsorLabel(
+    membersPayload.sameOrganizationSponsorDisplayName,
+  )
+  if (fromSameOrganization) return fromSameOrganization
+
+  const fromReferral = usableSponsorLabel(options?.referringSponsorDisplayName)
+  if (fromReferral) return fromReferral
 
   return pickInvestNowLeadSponsorDisplayName(membersPayload)
 

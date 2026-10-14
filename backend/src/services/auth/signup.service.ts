@@ -20,6 +20,10 @@ import {
   markContactsAsPortalUserByEmailNorm,
 } from "../contact/contact.service.js";
 import {
+  applyInvestorInviteAfterAuth,
+} from "../contact/investorInviteLink.service.js";
+import { applyOfferingPreviewSignupContact } from "../deal/offeringPreviewInvestorAccess.service.js";
+import {
   recordPlatformSelfServeSignupNotification,
   type PlatformSelfServeSignupKind,
 } from "../platform/platformSignupNotification.service.js";
@@ -42,9 +46,29 @@ const PASSWORD_MAX = 16;
 const ACCOUNT_NAME_MIN = 1;
 const ACCOUNT_NAME_MAX = 100;
 
+const SIGNUP_AS_INVESTOR = "investor";
+const SIGNUP_AS_SYNDICATOR = "syndicator";
+const SIGNUP_AS_BOTH = "both";
+
+function parseSelfServeSignupAs(raw: unknown): "investor" | "syndicator" | "both" | "" {
+  const v = str(raw).toLowerCase();
+  if (v === SIGNUP_AS_INVESTOR || v === SIGNUP_AS_SYNDICATOR || v === SIGNUP_AS_BOTH) {
+    return v;
+  }
+  return "";
+}
+
 export type SignupBody = {
   email?: unknown;
   companyName?: unknown;
+  /** Self-serve only: `investor` | `syndicator` | `both`. */
+  signupAs?: unknown;
+  /** Self-serve only: `ref` from a sponsor's investor invite link. */
+  inviteRef?: unknown;
+  /** Self-serve only: offering preview token from the shared portfolio link. */
+  offeringPreviewToken?: unknown;
+  /** Self-serve only: sponsor `ref` on the shared offering preview link. */
+  offeringPreviewSponsorRef?: unknown;
   userName?: unknown;
   phone?: unknown;
   firstName?: unknown;
@@ -54,7 +78,14 @@ export type SignupBody = {
 };
 
 export type SignupResult =
-  | { ok: true; message: string; emailSent: boolean }
+  | {
+      ok: true;
+      message: string;
+      emailSent: boolean;
+      joinedExistingCompany?: boolean;
+      companyCreated?: boolean;
+      companyName?: string;
+    }
   | { ok: false; status: number; message: string };
 
 type InvitePayload = {
@@ -147,6 +178,13 @@ export async function registerUser(
 ): Promise<SignupResult> {
   // const userName = str(body.userName);
   let companyName = str(body.companyName);
+  const investorInviteRef = str(body.inviteRef);
+  const hasInvestorInviteRef =
+    !inviteToken?.trim() && investorInviteRef.trim() !== "";
+  if (hasInvestorInviteRef) {
+    companyName = "";
+  }
+  const selfServeSignupAs = parseSelfServeSignupAs(body.signupAs);
   const phoneRaw = str(body.phone);
   const firstName = str(body.firstName);
   const lastName = str(body.lastName);
@@ -285,6 +323,25 @@ export async function registerUser(
         message: "A valid email is required when signing up without an invite link",
       };
     }
+    if (!selfServeSignupAs && !hasInvestorInviteRef) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Select whether you are an investor, syndicator, or both",
+      };
+    }
+    if (
+      !hasInvestorInviteRef &&
+      (selfServeSignupAs === SIGNUP_AS_SYNDICATOR ||
+        selfServeSignupAs === SIGNUP_AS_BOTH) &&
+      !companyName
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Company name is required for syndicator accounts",
+      };
+    }
   }
 
   const emailNorm = email.toLowerCase();
@@ -351,13 +408,25 @@ export async function registerUser(
 
     let organizationId: string | undefined = organizationIdFromInvite;
     let roleForUser: string = PLATFORM_USER;
+    let joinedExistingCompany = false;
+    let companyCreated = false;
     const applyInviteRole =
       Boolean(inviteToken?.trim()) &&
       invitedRoleFromToken != null &&
       !isDealMemberInvite;
 
-    if (isDealMemberInvite) {
+    if (hasInvestorInviteRef) {
+      roleForUser = INVESTOR;
+      organizationId = undefined;
+    } else if (isDealMemberInvite) {
       roleForUser = DEAL_PARTICIPANT;
+    } else if (!inviteToken?.trim() && selfServeSignupAs === SIGNUP_AS_INVESTOR) {
+      /**
+       * Investor-only self-serve: investing portal only. Company is collected
+       * later in My account (the signup field is disabled for this role).
+       */
+      roleForUser = INVESTOR;
+      organizationId = undefined;
     } else if (!organizationId && companyName) {
       const companyResult = await ensureCompanyByName(companyName);
       if (!companyResult.ok) {
@@ -368,11 +437,13 @@ export async function registerUser(
         };
       }
       organizationId = companyResult.company.id;
+      companyName = str(companyResult.company.name) || companyName;
+      const isSelfServeCompanySignup = !inviteToken?.trim();
+      companyCreated = isSelfServeCompanySignup && companyResult.created;
+      joinedExistingCompany =
+        isSelfServeCompanySignup && !companyResult.created;
       if (applyInviteRole) {
         roleForUser = invitedRoleFromToken!;
-      } else if (!inviteToken?.trim()) {
-        // Self-serve signup (user enters company name on the form): always company admin.
-        roleForUser = COMPANY_ADMIN;
       } else if (companyResult.created) {
         roleForUser = COMPANY_ADMIN;
       } else {
@@ -401,7 +472,9 @@ export async function registerUser(
 
     if (pendingId && existingByEmail) {
       const orgToSet =
-        organizationId ?? existingByEmail.organizationId ?? undefined;
+        hasInvestorInviteRef
+          ? undefined
+          : organizationId ?? existingByEmail.organizationId ?? undefined;
       membershipCompanyId = orgToSet;
       await db
         .update(users)
@@ -416,7 +489,11 @@ export async function registerUser(
           userSignupCompleted: "true",
           inviteExpiresAt: null,
           updatedAt: new Date(),
-          ...(orgToSet ? { organizationId: orgToSet } : {}),
+          ...(hasInvestorInviteRef
+            ? { organizationId: null }
+            : orgToSet
+              ? { organizationId: orgToSet }
+              : {}),
         })
         .where(eq(users.id, pendingId));
       createdUserId = pendingId;
@@ -455,16 +532,52 @@ export async function registerUser(
     let selfRegisteredContactId: string | null = null;
 
     if (createdUserId && roleForUser === INVESTOR && !organizationId) {
+      const invited = isSelfServeSignup
+        ? await applyInvestorInviteAfterAuth({
+            inviteRef: investorInviteRef,
+            userId: createdUserId,
+            emailNorm,
+            firstName,
+            lastName,
+            phone,
+            role: roleForUser,
+          }).catch((e) => {
+            console.error("applyInvestorInviteAfterAuth during signup:", e);
+            return { applied: false, contactId: null };
+          })
+        : { applied: false, contactId: null };
+      const previewAttributed =
+        invited.applied || !isSelfServeSignup
+          ? invited
+          : await applyOfferingPreviewSignupContact({
+              previewToken: str(body.offeringPreviewToken),
+              sponsorRef: str(body.offeringPreviewSponsorRef),
+              userId: createdUserId,
+              emailNorm,
+              firstName,
+              lastName,
+              phone,
+            }).catch((e) => {
+              console.error("applyOfferingPreviewSignupContact during signup:", e);
+              return { applied: false, contactId: null as string | null };
+            });
+      const fromOfferingPreview = Boolean(
+        str(body.offeringPreviewToken) || str(body.offeringPreviewSponsorRef),
+      );
       try {
-        selfRegisteredContactId = await ensureSelfRegisteredInvestorContact({
-          userId: createdUserId,
-          emailNorm,
-          firstName,
-          lastName,
-          phone,
-        });
+        if (previewAttributed.applied || fromOfferingPreview) {
+          selfRegisteredContactId = previewAttributed.contactId;
+        } else {
+          selfRegisteredContactId = await ensureSelfRegisteredInvestorContact({
+            userId: createdUserId,
+            emailNorm,
+            firstName,
+            lastName,
+            phone,
+          });
+        }
       } catch (e) {
-        console.error("ensureSelfRegisteredInvestorContact after signup:", e);
+        console.error("investor contact creation after signup:", e);
       }
     }
 
@@ -474,10 +587,13 @@ export async function registerUser(
       console.error("markContactsAsPortalUserByEmailNorm after signup:", e);
     }
 
-    if (createdUserId && isSelfServeSignup) {
+    const offeringPreviewSignup = Boolean(
+      str(body.offeringPreviewToken) || str(body.offeringPreviewSponsorRef),
+    );
+    if (createdUserId && isSelfServeSignup && !offeringPreviewSignup) {
       try {
         const signupKind: PlatformSelfServeSignupKind =
-          roleForUser === INVESTOR && !organizationId ? "investor" : "company";
+          roleForUser === INVESTOR ? "investor" : "company";
         await recordPlatformSelfServeSignupNotification({
           userId: createdUserId,
           email: emailNorm,
@@ -503,8 +619,7 @@ export async function registerUser(
         role: roleForUser,
         companyName: companyName || null,
         organizationId: organizationId ?? null,
-        signupKind:
-          roleForUser === INVESTOR && !organizationId ? "investor" : "company",
+        signupKind: roleForUser === INVESTOR ? "investor" : "company",
       });
     }
 
@@ -532,10 +647,19 @@ export async function registerUser(
       console.error("Signup success email:", e);
     }
 
+    const successMessage = joinedExistingCompany
+      ? `This company already exists. Your account was added to ${companyName}.`
+      : companyCreated
+        ? "Your company was created and added to the platform."
+        : "Account created successfully";
+
     return {
       ok: true,
-      message: "Account created successfully",
+      message: successMessage,
       emailSent,
+      joinedExistingCompany,
+      companyCreated,
+      companyName: companyName || undefined,
     };
   } catch (err: unknown) {
     const pg =

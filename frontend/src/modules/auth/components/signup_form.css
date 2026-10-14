@@ -97,7 +97,7 @@ body:has(.signup_page) #root {
 .signup_page .signupForm_rows {
   display: flex;
   flex-direction: column;
-  gap: 0.65em;
+  gap: 1.15em;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -107,7 +107,7 @@ body:has(.signup_page) #root {
 .signup_page .signupForm_row {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 0.65em;
+  gap: 1.15em;
   min-width: 0;
 }
 
@@ -125,7 +125,21 @@ body:has(.signup_page) #root {
 
 .signup_page .emailData,
 .signup_page .passwordData {
-  margin: 0 0 4px 0;
+  margin: 0;
+}
+
+.signup_page .signup_as_select {
+  width: 100%;
+  cursor: pointer;
+}
+
+.signup_page .signup_as_select--placeholder {
+  color: var(--auth-landing-ink-muted, rgba(244, 241, 235, 0.55));
+}
+
+.signup_page .signup_as_select:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 @media (min-width: 640px) {

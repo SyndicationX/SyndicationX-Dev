@@ -23,15 +23,19 @@ import "../deal_members/components/deal-member-row-actions.css"
 
 export interface InvestorCommunicationRowActionsProps {
   row: InvestorCommunicationMailRow
+  viewerIsCosponsor?: boolean
   onView?: (row: InvestorCommunicationMailRow) => void
   onResend?: (row: InvestorCommunicationMailRow) => void
+  onSendToInvestors?: (row: InvestorCommunicationMailRow) => void
   onDelete?: (row: InvestorCommunicationMailRow) => void | Promise<void>
 }
 
 export function InvestorCommunicationRowActions({
   row,
+  viewerIsCosponsor = false,
   onView,
   onResend,
+  onSendToInvestors,
   onDelete,
 }: InvestorCommunicationRowActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -45,8 +49,14 @@ export function InvestorCommunicationRowActions({
 
   const label = row.subject?.trim() || "mail"
   const hasRecipients = row.recipientUsers.length > 0
+  const heldForCosponsor = row.heldForCosponsorRelease === true
+  const canSendToInvestors =
+    viewerIsCosponsor &&
+    Boolean(onSendToInvestors) &&
+    (heldForCosponsor || row.status === "not_sent")
   const canResend =
     Boolean(onResend) &&
+    !canSendToInvestors &&
     row.status !== "not_sent" &&
     hasRecipients
 
@@ -269,7 +279,28 @@ export function InvestorCommunicationRowActions({
                     </button>
                   </li>
                 ) : null}
-                {onResend ? (
+                {canSendToInvestors ? (
+                  <li role="none">
+                    <button
+                      type="button"
+                      className="um_kebab_menuitem"
+                      role="menuitem"
+                      title="Send this email to your investors"
+                      onClick={() => {
+                        runMenuAction(() => onSendToInvestors?.(row))
+                      }}
+                    >
+                      <Send
+                        className="um_kebab_menuitem_icon"
+                        size={16}
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                      Send to my investors
+                    </button>
+                  </li>
+                ) : null}
+                {onResend && !canSendToInvestors ? (
                   <li role="none">
                     <button
                       type="button"

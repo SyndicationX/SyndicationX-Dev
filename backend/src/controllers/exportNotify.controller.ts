@@ -196,6 +196,11 @@ export async function postDealMembersExportNotify(
   const b = req.body as Record<string, unknown>;
   const rowCount = bodyPositiveInt(b.rowCount);
   const exportedSampleLines = sanitizeExportedLinesForNotify(b.exportedLines);
+  const rosterLabelRaw = String(b.rosterLabel ?? "").trim();
+  const rosterLabel =
+    rosterLabelRaw === "General Partners" || rosterLabelRaw === "Team Members"
+      ? rosterLabelRaw
+      : undefined;
 
   const ctx = await loadExporterAuditContext(jwtUser.id);
   if (!ctx) {
@@ -207,6 +212,7 @@ export async function postDealMembersExportNotify(
     ...ctx,
     rowCount: rowCount > 0 ? rowCount : exportedSampleLines?.length ?? 0,
     exportedSampleLines,
+    entityLabel: rosterLabel,
   });
 
   if (result.status === "skipped_no_recipient") {

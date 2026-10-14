@@ -1,21 +1,25 @@
-import { MoreHorizontal, TrendingUp } from "lucide-react"
+import { MoreHorizontal, Plus, TrendingUp } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import "@/modules/Syndication/usermanagement/user_management.css"
 
 type InvestmentProfileBreakdownRowActionsProps = {
   profileLabel: string
-  /** When false, kebab stays visible but cannot open (profile has no Invest Now draft). */
+  /** When false, kebab stays visible but cannot open. */
   disabled?: boolean
+  onAddInvestment?: () => void
   onResumeInvesting?: () => void
 }
 
 /**
- * Kebab (⋯) for Profile and investment breakdown rows — Resume investing when in draft.
+ * Kebab (⋯) for Profile and investment breakdown rows.
+ * Add investment opens Invest now with this row’s profile selected.
+ * Resume investing appears when that profile has an in-progress draft.
  */
 export function InvestmentProfileBreakdownRowActions({
   profileLabel,
   disabled = false,
+  onAddInvestment,
   onResumeInvesting,
 }: InvestmentProfileBreakdownRowActionsProps) {
   const a11yLabel = (profileLabel?.trim() || "Profile").replace(/"/g, "”")
@@ -25,7 +29,7 @@ export function InvestmentProfileBreakdownRowActions({
   const close = useCallback(() => setOpen(false), [])
 
   useLayoutEffect(() => {
-    if (!open || disabled || !onResumeInvesting) return
+    if (!open || disabled || (!onResumeInvesting && !onAddInvestment)) return
 
     function syncPosition() {
       const trigger = wrapRef.current
@@ -60,7 +64,7 @@ export function InvestmentProfileBreakdownRowActions({
       window.removeEventListener("scroll", syncPosition, true)
       window.removeEventListener("resize", syncPosition)
     }
-  }, [open, disabled, onResumeInvesting])
+  }, [open, disabled, onAddInvestment, onResumeInvesting])
 
   useEffect(() => {
     if (!open) return
@@ -81,9 +85,8 @@ export function InvestmentProfileBreakdownRowActions({
     }
   }, [open, close])
 
-  const triggerTitle = disabled
-    ? "No in-progress Invest Now draft for this profile"
-    : "Actions"
+  const hasMenu = Boolean(onAddInvestment || onResumeInvesting)
+  const triggerTitle = "Actions"
 
   return (
     <div
@@ -109,32 +112,55 @@ export function InvestmentProfileBreakdownRowActions({
       >
         <MoreHorizontal size={18} strokeWidth={2} aria-hidden />
       </button>
-      {open && !disabled && onResumeInvesting && typeof document !== "undefined"
+      {open && !disabled && hasMenu && typeof document !== "undefined"
         ? createPortal(
             <ul
               ref={menuRef}
               className="um_kebab_menu um_kebab_menu--portal"
               role="menu"
             >
-              <li role="none">
-                <button
-                  type="button"
-                  className="um_kebab_menuitem"
-                  role="menuitem"
-                  onClick={() => {
-                    close()
-                    onResumeInvesting()
-                  }}
-                >
-                  <TrendingUp
-                    className="um_kebab_menuitem_icon"
-                    size={16}
-                    strokeWidth={2}
-                    aria-hidden
-                  />
-                  Resume investing
-                </button>
-              </li>
+              {onAddInvestment ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="um_kebab_menuitem"
+                    role="menuitem"
+                    onClick={() => {
+                      close()
+                      onAddInvestment()
+                    }}
+                  >
+                    <Plus
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    Add investment
+                  </button>
+                </li>
+              ) : null}
+              {onResumeInvesting ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="um_kebab_menuitem"
+                    role="menuitem"
+                    onClick={() => {
+                      close()
+                      onResumeInvesting()
+                    }}
+                  >
+                    <TrendingUp
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    Resume investing
+                  </button>
+                </li>
+              ) : null}
             </ul>,
             document.body,
           )

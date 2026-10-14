@@ -3,12 +3,10 @@ import { portalAuthHeaders } from "../../../common/auth/portalAuthHeaders"
 import { getApiV1Base } from "../../../common/utils/apiBaseUrl"
 
 export const EMAIL_TEMPLATE_SUBJECT_MAX = 255
-/** Max plain-text characters (Quill content), excluding HTML markup. */
-export const EMAIL_TEMPLATE_BODY_MAX = 255
-/** Stored body is semantic HTML from Quill (larger than plain-text limit). */
+/** Stored body is semantic HTML from Quill. */
 export const EMAIL_TEMPLATE_BODY_HTML_MAX = 200_000
 /** Single attachment per template; max file size. */
-export const EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES = 1024 * 1024
+export const EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES = 30 * 1024 * 1024
 
 /** Human-readable attachment size for UI labels. */
 export function formatEmailAttachmentSize(bytes: number): string {
@@ -208,7 +206,7 @@ export function fileToStoredAttachment(
   if (file.size > EMAIL_TEMPLATE_ATTACHMENT_MAX_BYTES) {
     return Promise.resolve({
       ok: false,
-      error: "Attachment must be 1 MB or smaller.",
+      error: "Attachment must be 30 MB or smaller.",
     })
   }
   return new Promise((resolve) => {

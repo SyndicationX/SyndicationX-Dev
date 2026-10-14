@@ -36,6 +36,12 @@ export const dealInvestment = pgTable("deal_investment", {
   fundApprovedCommitmentSnapshot: text("fund_approved_commitment_snapshot")
     .notNull()
     .default(""),
+  /**
+   * Debounced autosave from the Add Member / Add Investor modal. Draft rows are
+   * excluded from investor lists, rosters, KPIs and billing until an explicit
+   * Save clears the flag.
+   */
+  isDraft: boolean("is_draft").notNull().default(false),
   status: text("status").notNull().default(""),
   investorClass: text("investor_class").notNull().default(""),
   docSignedDate: text("doc_signed_date"),
@@ -48,6 +54,19 @@ export const dealInvestment = pgTable("deal_investment", {
   /** Invest Now funding method (`stripe_checkout`, `wire_transfer`, legacy `ach`, `check`). */
   fundingMethod: text("funding_method").notNull().default(""),
   commitmentAmount: text("commitment_amount").notNull().default(""),
+  /** Set once when the investor finishes Invest Now. */
+  commitmentCompletedAt: timestamp("commitment_completed_at", {
+    withTimezone: true,
+  }),
+  /** Set after the investor confirmation email is accepted by the mailer. */
+  commitmentInvestorEmailSentAt: timestamp(
+    "commitment_investor_email_sent_at",
+    { withTimezone: true },
+  ),
+  /** Set after the sponsor notification email is accepted by the mailer. */
+  commitmentSponsorEmailSentAt: timestamp("commitment_sponsor_email_sent_at", {
+    withTimezone: true,
+  }),
   extraContributionAmounts: jsonb("extra_contribution_amounts")
     .$type<string[]>()
     .notNull(),

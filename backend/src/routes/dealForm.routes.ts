@@ -17,10 +17,12 @@ import {
   patchDealOfferingInvestorPreview,
   patchDealOfferingOverview,
   patchDealArchived,
+  patchDealStage,
   postDeal,
   putDeal,
   deleteDeal,
 } from "../controllers/deal/add_deal.controller.js";
+import { getDealInvestorInviteLink } from "../controllers/contact.controller.js";
 import {
   deleteDealPriorDistribution,
   postDealDistributionComplete,
@@ -41,6 +43,7 @@ import {
 import { patchDealLpInvestorMyInvestNowAddon } from "../controllers/deal/dealLpInvestorMyInvestNow.addon.controller.js";
 import { getDealLpInvestorMyInvestNowCommitment } from "../controllers/deal/dealLpInvestorMyInvestNowCommitment.get.controller.js";
 import { postDealLpInvestorMyInvestNowEsignSend } from "../controllers/deal/dealLpInvestorMyInvestNowEsignSend.controller.js";
+import { postDealLpInvestorMyInvestNowCommitmentComplete } from "../controllers/deal/dealLpInvestorMyInvestNowCommitmentComplete.controller.js";
 import {
   deleteDealEsignTemplate,
   getDealEsignTemplateView,
@@ -65,11 +68,14 @@ import {
 } from "../controllers/deal/dealInvestorQuestionnaire.controller.js";
 import {
   deleteDealMember,
+  getDealCoSponsorEmailIntercept,
   getDealMemberEsignStatus,
   getDealMembers,
   getDealReferringSponsor,
+  patchDealCoSponsorEmailIntercept,
   postDealMemberInvitationEmail,
   postDealMemberSendEsign,
+  putDealMember,
 } from "../controllers/deal/dealMember.controller.js";
 import {
   getDealMyEsignDocuments,
@@ -99,6 +105,7 @@ import {
   postDealInvestorCommunicationMail,
 } from "../controllers/deal/dealInvestorCommunicationMail.controller.js";
 import multer from "multer";
+import { blockCrossOrgColleagueDealMutations } from "../middleware/crossOrgDealManage.middleware.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -106,6 +113,8 @@ const upload = multer({
 });
 
 const router = Router();
+
+router.use("/deals/:dealId", blockCrossOrgColleagueDealMutations);
 
 router.get("/public/offering-preview", getPublicOfferingPreview);
 
@@ -128,8 +137,6 @@ router.post(
   postDealInvestorsExportNotify,
 );
 router.post("/deals/:dealId/lp-investors", postDealLpInvestor);
-router.get("/deals/:dealId/lp-investors/:lpInvestorId", getDealLpInvestor);
-router.put("/deals/:dealId/lp-investors/:lpInvestorId", putDealLpInvestor);
 router.patch(
   "/deals/:dealId/lp-investors/my-commitment",
   patchDealLpInvestorMyCommitment,
@@ -146,6 +153,12 @@ router.post(
   "/deals/:dealId/lp-investors/my-invest-now-esign-send",
   postDealLpInvestorMyInvestNowEsignSend,
 );
+router.post(
+  "/deals/:dealId/lp-investors/my-invest-now-commitment-complete",
+  postDealLpInvestorMyInvestNowCommitmentComplete,
+);
+router.get("/deals/:dealId/lp-investors/:lpInvestorId", getDealLpInvestor);
+router.put("/deals/:dealId/lp-investors/:lpInvestorId", putDealLpInvestor);
 router.get(
   "/deals/:dealId/investor-communication/mails",
   getDealInvestorCommunicationMails,
@@ -160,11 +173,20 @@ router.delete(
 );
 router.get("/deals/:dealId/referring-sponsor", getDealReferringSponsor);
 router.get("/deals/:dealId/members", getDealMembers);
+router.get(
+  "/deals/:dealId/co-sponsor-email-intercept",
+  getDealCoSponsorEmailIntercept,
+);
+router.patch(
+  "/deals/:dealId/co-sponsor-email-intercept",
+  patchDealCoSponsorEmailIntercept,
+);
 router.post(
   "/deals/:dealId/members/export-notify",
   postDealMembersExportNotify,
 );
 router.delete("/deals/:dealId/members/:rowId", deleteDealMember);
+router.put("/deals/:dealId/members/:rowId", putDealMember);
 router.post(
   "/deals/:dealId/members/send-invitation-email",
   postDealMemberInvitationEmail,
@@ -270,15 +292,19 @@ router.post(
 );
 router.post(
   "/deals/:dealId/offering-document-uploads",
-  upload.array("documentFiles", 20),
   postDealOfferingDocumentUploads,
 );
 router.patch("/deals/:dealId/offering-gallery", patchDealOfferingGallery);
 router.patch("/deals/:dealId/offering-overview", patchDealOfferingOverview);
 router.patch("/deals/:dealId/archived", patchDealArchived);
+router.patch("/deals/:dealId/deal-stage", patchDealStage);
 router.get(
   "/deals/:dealId/offering-preview-token",
   getOfferingPreviewToken,
+);
+router.get(
+  "/deals/:dealId/investor-invite-link",
+  getDealInvestorInviteLink,
 );
 router.post(
   "/deals/:dealId/offering-preview-share-email",

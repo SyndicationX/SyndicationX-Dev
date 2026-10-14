@@ -753,6 +753,43 @@ async function ensureSignedPdfStoredForSignedSend(
 /** Cap Dropbox polls per HTTP request (deal-wide investor list + portal loads). */
 const MAX_ESIGN_SYNC_TARGETS_PER_REQUEST = 12;
 
+/** Minimum gap between background syncs for one deal; the tab refetches several times per action. */
+const ESIGN_SYNC_COOLDOWN_MS = 15_000;
+
+const esignSyncInFlightDealIds = new Set<string>();
+const esignSyncLastRunAtByDealId = new Map<string, number>();
+
+/**
+ * Queue the Dropbox refresh to run *after* the current response.
+ *
+ * Each poll is a sequential third-party round trip, so awaiting up to
+ * MAX_ESIGN_SYNC_TARGETS_PER_REQUEST of them inside GET /deals/:dealId/investors pushed the
+ * response past the 3s read budget and the SPA aborted it, leaving an empty roster. Webhooks
+ * are the primary status path; this poll only reconciles missed events, so results landing in
+ * the next load is an acceptable trade for a list that renders.
+ *
+ * Concurrent loads of the same deal share one run, and a cooldown keeps repeated tab
+ * refreshes from hammering the provider.
+ */
+export function scheduleDealInvestorEsignSync(dealId: string): void {
+  const id = dealId.trim();
+  if (!id) return;
+  if (esignSyncInFlightDealIds.has(id)) return;
+  if (Date.now() - (esignSyncLastRunAtByDealId.get(id) ?? 0) < ESIGN_SYNC_COOLDOWN_MS) {
+    return;
+  }
+
+  esignSyncInFlightDealIds.add(id);
+  void syncDealInvestorEsignStatusesForDeal(id)
+    .catch((err: unknown) => {
+      console.warn("scheduleDealInvestorEsignSync:", err);
+    })
+    .finally(() => {
+      esignSyncInFlightDealIds.delete(id);
+      esignSyncLastRunAtByDealId.set(id, Date.now());
+    });
+}
+
 /**
  * Refresh pending eSign rows from Dropbox before building the Investors tab list.
  */

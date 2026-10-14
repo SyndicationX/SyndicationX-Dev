@@ -77,15 +77,9 @@ export function listWorkspaceDocumentsForOfferingPreview(
     if (isEsignTemplateDocumentsSection(sec)) continue
     for (const d of sec.nestedDocuments) {
       if (isInvestorEsignWorkspaceDocument(d)) continue
-      const scoped = applyHiddenByDefaultWhenNoAudience(d)
-      const scope = effectiveDocumentSharedWithScope(scoped, sec)
+      const scope = effectiveDocumentSharedWithScope(d, sec)
       if (!sectionVisibleOnOfferingPreview(scope, ctx)) continue
-      if (
-        ctx.isLpDealWorkspace &&
-        !nestedDocumentHasSharedAudience(scoped)
-      )
-        continue
-      tryAdd(scoped)
+      tryAdd(d)
     }
   }
 
@@ -178,8 +172,7 @@ export type NestedPreviewDocument = {
    * Overrides the section scope for this file when set.
    * `offering_page`: offering link + preview (+ LPs when signed in).
    * `lp_investor`: LP portal only.
-   * `not_visible` / Hidden by default: hidden from investors / offering link until
-   * Shared With recipients are chosen (sponsor workspace only).
+   * `not_visible` / Hidden by default: sponsor workspace only.
    */
   sharedWithScope?: SectionSharedWithScope
   /**
@@ -187,6 +180,8 @@ export type NestedPreviewDocument = {
    * on at least one commitment for this deal (Funding Information PDFs).
    */
   requiresProfileInvestment?: boolean
+  /** When Shared With recipients were last set (ISO). Used for investor inbox timestamps. */
+  sharedAt?: string
   /** Present on auto-synced investor eSign PDFs in Investor e signatures section. */
   esignSignatureRequestId?: string
   esignInvestorRowId?: string
@@ -194,6 +189,10 @@ export type NestedPreviewDocument = {
   esignTemplateFileId?: string
   esignAwaitingSponsorSignature?: boolean
   esignSponsorSigned?: boolean
+  /** Portal user who uploaded this file from the Documents tab. */
+  uploadedByUserId?: string
+  /** Co-sponsor uploads stay hidden from lead / admin sponsors unless shared with them. */
+  uploadedByIsCoSponsor?: boolean
 }
 
 /** True when Shared With has at least one recipient / All Investors. */
@@ -211,17 +210,6 @@ export function nestedDocumentHasSharedAudience(
   if (doc.sharedInvestorIds.length > 0) return true
   if ((doc.sharedSponsorUserIds?.length ?? 0) > 0) return true
   return false
-}
-
-/**
- * Docs with no Shared With audience stay Hidden by default until recipients are chosen.
- */
-export function applyHiddenByDefaultWhenNoAudience(
-  doc: NestedPreviewDocument,
-): NestedPreviewDocument {
-  if (nestedDocumentHasSharedAudience(doc)) return doc
-  if (doc.sharedWithScope === "not_visible") return doc
-  return { ...doc, sharedWithScope: "not_visible" }
 }
 
 export type OfferingPreviewSection = {
@@ -430,6 +418,7 @@ export function mergeAutoManagedDocumentSections(
   localSections: OfferingPreviewSection[],
   dealId: string,
   previewJson?: string | null,
+  opts?: { preferPreviewJson?: boolean },
 ): OfferingPreviewSection[] {
   const id = dealId.trim()
   const fromJson = parseDocumentSectionsFromPreviewJson(previewJson).filter(
@@ -444,10 +433,12 @@ export function mergeAutoManagedDocumentSections(
   }
   for (const section of fromWorkspace) {
     const existing = autoById.get(section.id)
-    if (
-      !existing ||
-      section.nestedDocuments.length >= existing.nestedDocuments.length
-    ) {
+    if (!existing) {
+      autoById.set(section.id, section)
+      continue
+    }
+    if (opts?.preferPreviewJson) continue
+    if (section.nestedDocuments.length >= existing.nestedDocuments.length) {
       autoById.set(section.id, section)
     }
   }
@@ -767,7 +758,17 @@ function normalizeNested(
       : undefined
   const esignAwaitingSponsorSignature = Boolean(raw.esignAwaitingSponsorSignature)
   const esignSponsorSigned = Boolean(raw.esignSponsorSigned)
-  return applyHiddenByDefaultWhenNoAudience({
+  const uploadedByUserId =
+    typeof raw.uploadedByUserId === "string" && raw.uploadedByUserId.trim()
+      ? raw.uploadedByUserId.trim()
+      : undefined
+  const uploadedByIsCoSponsor = raw.uploadedByIsCoSponsor === true
+  const sharedAtRaw =
+    typeof raw.sharedAt === "string" && raw.sharedAt.trim()
+      ? raw.sharedAt.trim()
+      : ""
+  const sharedAtMs = sharedAtRaw ? Date.parse(sharedAtRaw) : Number.NaN
+  return {
     id,
     name,
     url,
@@ -777,6 +778,7 @@ function normalizeNested(
     sharedInvestorIds,
     sharedWithAllInvestors,
     sharedSponsorUserIds,
+    ...(Number.isFinite(sharedAtMs) ? { sharedAt: new Date(sharedAtMs).toISOString() } : {}),
     ...(sharedWithScope ? { sharedWithScope } : {}),
     ...(requiresProfileInvestment ? { requiresProfileInvestment: true } : {}),
     ...(esignSignatureRequestId ? { esignSignatureRequestId } : {}),
@@ -785,7 +787,9 @@ function normalizeNested(
     ...(esignTemplateFileId ? { esignTemplateFileId } : {}),
     ...(esignAwaitingSponsorSignature ? { esignAwaitingSponsorSignature: true } : {}),
     ...(esignSponsorSigned ? { esignSponsorSigned: true } : {}),
-  })
+    ...(uploadedByUserId ? { uploadedByUserId } : {}),
+    ...(uploadedByIsCoSponsor ? { uploadedByIsCoSponsor: true } : {}),
+  }
 }
 
 function normalizeSection(raw: unknown): OfferingPreviewSection | null {

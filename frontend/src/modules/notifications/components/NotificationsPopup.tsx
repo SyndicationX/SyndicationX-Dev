@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react"
-import { useCallback, useEffect, useRef, type RefObject } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, type RefObject } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { useNotifications } from "../hooks/useNotifications"
 import type { PortalNotification } from "../types/notification.types"
@@ -15,7 +15,7 @@ interface NotificationsPopupProps {
   anchorRef: RefObject<HTMLElement | null>
 }
 
-export function NotificationsPopup({
+function NotificationsPopupImpl({
   open,
   onClose,
   anchorRef,
@@ -27,12 +27,15 @@ export function NotificationsPopup({
     unreadCount,
     isLoading,
     loadError,
-    refresh,
+    refreshIfStale,
     markRead,
     markAllRead,
   } = useNotifications()
 
-  const preview = notifications.slice(0, POPUP_PREVIEW_LIMIT)
+  const preview = useMemo(
+    () => notifications.slice(0, POPUP_PREVIEW_LIMIT),
+    [notifications],
+  )
 
   const handleOpen = useCallback(
     (item: PortalNotification) => {
@@ -43,10 +46,11 @@ export function NotificationsPopup({
     [markRead, navigate, onClose],
   )
 
+  /* Opening the panel reuses a recent build; rebuilding here re-fetched every deal roster. */
   useEffect(() => {
     if (!open) return
-    void refresh()
-  }, [open, refresh])
+    void refreshIfStale()
+  }, [open, refreshIfStale])
 
   useEffect(() => {
     if (!open) return
@@ -129,3 +133,5 @@ export function NotificationsPopup({
     </div>
   )
 }
+
+export const NotificationsPopup = memo(NotificationsPopupImpl)

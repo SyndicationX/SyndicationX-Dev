@@ -110,6 +110,8 @@
 .investing_add_profile_form_panel--inline.deals_add_inv_modal_panel.um_modal.um_modal_view {
   max-width: 100%;
   width: 100%;
+  max-height: none;
+  overflow: visible;
   box-shadow: none;
   border: 1px solid var(--portal-border, #e2e8f0);
   border-radius: var(--portal-card-radius, 4px);
@@ -117,7 +119,9 @@
   box-sizing: border-box;
 }
 
-.investing_add_profile_form_panel--inline .deals_add_inv_modal_scroll {
+.investing_add_profile_form_panel--inline .deals_add_inv_modal_scroll,
+.investing_add_profile_form_panel--inline .deals_add_inv_modal_form,
+.investing_add_profile_form_panel--inline .deals_add_inv_modal_body {
   flex: 0 1 auto;
   min-height: 0;
   max-height: none;

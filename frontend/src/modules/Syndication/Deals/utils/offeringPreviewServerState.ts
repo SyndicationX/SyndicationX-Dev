@@ -5,7 +5,6 @@ import {
   readOfferingPreviewSections,
   writeOfferingPreviewSections,
   migrateFlatDocumentsToSections,
-  reconcileFlatDocumentsIntoSections,
   flattenSectionsToPreviewDocs,
   type OfferingPreviewSection,
 } from "./offeringPreviewDocSections"
@@ -126,13 +125,14 @@ export function applyOfferingInvestorPreviewJsonFromServer(
   const sectionsRaw = parsed.sections
   let sections = parseOfferingPreviewSectionsJson(sectionsRaw)
   const flatFromJson = parseOfferingPreviewDocumentsJson(parsed.offeringDocuments)
-  const flatFromRuntime = readOfferingPreviewDocuments(id)
+  const serverProvidedSections = Array.isArray(sectionsRaw)
+  const flatFromRuntime = serverProvidedSections
+    ? []
+    : readOfferingPreviewDocuments(id)
   const flat = flatFromJson.length > 0 ? flatFromJson : flatFromRuntime
   const hasNestedDocs = sections.some((s) => s.nestedDocuments.length > 0)
   if (!hasNestedDocs && flat.length > 0) {
     sections = migrateFlatDocumentsToSections(flat)
-  } else if (flat.length > 0) {
-    sections = reconcileFlatDocumentsIntoSections(sections, flat)
   }
   writeOfferingPreviewSections(id, sections, opts)
   if (flatFromJson.length > 0) {
@@ -176,6 +176,7 @@ export async function persistOfferingInvestorPreviewToServer(
 ): Promise<DealDetailApi | null> {
   const id = dealId?.trim() ?? ""
   if (!id || typeof window === "undefined") return null
+  cancelOfferingInvestorPreviewServerSync(id)
   markOfferingPreviewHydrated(id)
   const sections = opts?.sections ?? readOfferingPreviewSections(id)
   const visibility = readOfferingPreviewInvestorVisibility(id)

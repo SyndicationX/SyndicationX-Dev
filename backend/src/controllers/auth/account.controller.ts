@@ -3,8 +3,10 @@ import { getValidJwtUser } from "../../middleware/jwtUser.js";
 import {
   changePasswordForUser,
   getOwnProfile,
+  parseVisibleToUsersFlag,
   updateOwnProfile,
 } from "../../services/auth/account.service.js";
+import { grantOfferingPreviewInvestorAccess } from "../../services/deal/offeringPreviewInvestorAccess.service.js";
 
 export async function getMyProfile(req: Request, res: Response): Promise<void> {
   try {
@@ -23,6 +25,57 @@ export async function getMyProfile(req: Request, res: Response): Promise<void> {
     console.error("getMyProfile:", err);
     res.status(500).json({
       message: "Could not load profile. Please try again.",
+    });
+  }
+}
+
+export async function postOfferingPreviewAccessClaim(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const jwtUser = await getValidJwtUser(req);
+    if (!jwtUser?.id) {
+      res.status(401).json({ message: "Authorization required" });
+      return;
+    }
+    const body = req.body as Record<string, unknown>;
+    const previewToken =
+      typeof body.previewToken === "string"
+        ? body.previewToken
+        : typeof body.preview === "string"
+          ? body.preview
+          : "";
+    const sponsorRef =
+      typeof body.sponsorRef === "string"
+        ? body.sponsorRef
+        : typeof body.offeringPreviewSponsorRef === "string"
+          ? body.offeringPreviewSponsorRef
+          : "";
+    const result = await grantOfferingPreviewInvestorAccess({
+      userId: jwtUser.id,
+      previewToken,
+      sponsorRef,
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ message: result.message });
+      return;
+    }
+
+    const profile = await getOwnProfile(jwtUser.id);
+    res.status(200).json({
+      dealId: result.dealId,
+      ...(profile.ok ? { userDetails: [profile.user] } : {}),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("OFFERING_PREVIEW_SECRET")) {
+      res.status(503).json({ message: "Preview links are not configured." });
+      return;
+    }
+    console.error("postOfferingPreviewAccessClaim:", err);
+    res.status(500).json({
+      message: "Could not add this offering to your account.",
     });
   }
 }
@@ -81,6 +134,8 @@ export async function patchMyProfile(req: Request, res: Response): Promise<void>
       phone?: string;
       companyName?: string;
       username?: string;
+      visibleToUsers?: boolean;
+      startSyndicating?: boolean;
     } = {};
     if (typeof body.firstName === "string") patch.firstName = body.firstName;
     if (typeof body.lastName === "string") patch.lastName = body.lastName;
@@ -90,6 +145,14 @@ export async function patchMyProfile(req: Request, res: Response): Promise<void>
     if (typeof body.userName === "string" && patch.username === undefined) {
       patch.username = body.userName;
     }
+    const visibleToUsers = parseVisibleToUsersFlag(
+      body.visibleToUsers ?? body.visible_to_users,
+    );
+    if (visibleToUsers !== undefined) patch.visibleToUsers = visibleToUsers;
+    const startSyndicating = parseVisibleToUsersFlag(
+      body.startSyndicating ?? body.start_syndicating,
+    );
+    if (startSyndicating !== undefined) patch.startSyndicating = startSyndicating;
 
     const result = await updateOwnProfile(jwtUser.id, patch);
 
@@ -101,6 +164,8 @@ export async function patchMyProfile(req: Request, res: Response): Promise<void>
     res.status(200).json({
       message: "Profile updated",
       user: result.user,
+      joinedExistingCompany: result.joinedExistingCompany,
+      startedSyndicating: result.startedSyndicating,
     });
   } catch (err) {
     console.error("patchMyProfile:", err);

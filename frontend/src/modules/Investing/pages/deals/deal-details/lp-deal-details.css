@@ -753,11 +753,33 @@ button.lpd_link:hover {
 }
 
 /* Embedded in offering wireframe — outer `.deal_offer_pf_panel` carries the card surface. */
+.lpdd_offering_docs--embedded {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lpdd_offering_docs--embedded .investment_detail_offering_docs,
+.lpdd_offering_docs--embedded .investment_detail_offering_docs_panel,
+.lpdd_offering_docs--embedded .deal_docs_ui_root,
+.lpdd_offering_docs--embedded .deal_docs_ui_table_scroll {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .lpdd_offering_docs--embedded .investment_detail_offering_docs_panel {
   padding: 0;
   border: none;
   background: transparent;
   box-shadow: none;
+}
+
+.lpdd_offering_docs--embedded
+  .investment_detail_offering_docs_toolbar.um_toolbar.deal_docs_toolbar
+  .um_search_wrap {
+  order: 0;
+  margin-left: 0;
+  flex: 1 1 16rem;
+  max-width: 22em;
 }
 
 /* Sticky CTA (mobile) */

@@ -7,6 +7,7 @@ import {
   ModalResetButton,
   ModalSaveButton,
 } from "@/common/components/modal/ModalFooterButtons"
+import { TableHScrollShell } from "@/common/components/data-table/TableHScrollShell"
 import {
   ESIGN_ENTITY_CATEGORIES,
   ESIGN_ENTITY_CATEGORY_COLUMN_LABELS,
@@ -125,6 +126,7 @@ export function ManageQuestionnaireModal({
           are turned on by default for that profile type.
         </p> */}
         <div className="deals_add_inv_modal_scroll deal_esign_manage_q_scroll">
+          <TableHScrollShell ariaLabel="Questionnaire columns">
           <table className="deal_esign_manage_q_table">
             <thead>
               <tr>
@@ -231,6 +233,7 @@ export function ManageQuestionnaireModal({
               ))}
             </tbody>
           </table>
+          </TableHScrollShell>
           <p className="deal_esign_manage_q_note" role="note">
             <span className="deal_esign_manage_q_recommended_icon_note" aria-hidden>
               <Sparkles size={8} strokeWidth={2} />

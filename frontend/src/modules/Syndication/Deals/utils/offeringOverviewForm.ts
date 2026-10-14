@@ -35,6 +35,16 @@ export type OfferingStatusSelectOption = {
 
 export const DEFAULT_OFFERING_STATUS: OfferingStatusValue = "draft_hidden"
 
+/** Hidden from Offering Details → Deal Status picker (kept in DB/catalog for existing deals). */
+const HIDDEN_OFFERING_STATUS_PICKER_VALUES = new Set<DealStatus>([
+  "open_hard_commitment",
+  "draft_hidden",
+])
+
+function isVisibleOfferingStatusPickerValue(value: DealStatus): boolean {
+  return !HIDDEN_OFFERING_STATUS_PICKER_VALUES.has(value)
+}
+
 export const OFFERING_VISIBILITY_OPTIONS = [
   {
     value: "show_on_dashboard",
@@ -64,15 +74,17 @@ export function offeringStatusOptionsForDealStage(
 ): OfferingStatusSelectOption[] {
   const stage = normalizeDealStageCanonical(dealStage)
   if (!stage) {
-    return OFFERING_STATUS_OPTIONS_LIST.map((m) => ({
+    return OFFERING_STATUS_OPTIONS_LIST.filter((m) =>
+      isVisibleOfferingStatusPickerValue(m.value),
+    ).map((m) => ({
       value: m.value,
       label: m.label,
     }))
   }
   const allowed = new Set<DealStatus>(allowedStatusesForStage(stage))
-  return OFFERING_STATUS_OPTIONS_LIST.filter((m) => allowed.has(m.value)).map(
-    (m) => ({ value: m.value, label: m.label }),
-  )
+  return OFFERING_STATUS_OPTIONS_LIST.filter(
+    (m) => allowed.has(m.value) && isVisibleOfferingStatusPickerValue(m.value),
+  ).map((m) => ({ value: m.value, label: m.label }))
 }
 
 /** True when the overview status dropdown should be editable (draft or capital raising). */
@@ -98,6 +110,15 @@ export function offeringStatusFromApi(
   return String(raw ?? "").trim()
 }
 
+/** Picker value: omit Draft so the control shows the placeholder, not "Draft". */
+export function offeringStatusPickerValue(
+  raw: string | null | undefined,
+): string {
+  const v = offeringStatusFromApi(raw)
+  if (v === "draft_hidden") return ""
+  return v
+}
+
 /** Human-readable label for overview visibility; empty API value shows "—". */
 export function offeringVisibilityLabelFromRaw(
   raw: string | null | undefined,
@@ -117,6 +138,7 @@ export function offeringStatusOptionsForOverview(
   const cur = offeringStatusFromApi(currentOfferingStatus)
   const opts = offeringStatusOptionsForDealStage(dealStage)
   if (!cur) return opts
+  if (HIDDEN_OFFERING_STATUS_PICKER_VALUES.has(cur as DealStatus)) return opts
   if (opts.some((o) => o.value === cur)) return opts
   return [{ value: cur, label: offeringStatusLabelFromRaw(cur) }, ...opts]
 }

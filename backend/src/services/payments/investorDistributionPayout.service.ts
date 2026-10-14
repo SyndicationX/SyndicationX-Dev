@@ -13,6 +13,7 @@ import {
   users,
 } from "../../schema/schema.js";
 import { getStripeClient } from "../billing/companyBilling.service.js";
+import { listCoSponsorVisibleInvestorMatchKeys } from "../deal/dealLpInvestor.service.js";
 import { getDistributionSetupBundle } from "../distributionSetup/distributionSetup.service.js";
 import {
   resolveConnectBankAccountSummary,
@@ -692,7 +693,24 @@ export async function executeDistributionPayouts(params: {
         })
       : distribution.investorPayments;
 
-  if (onlyInvestmentIds.size > 0 && paymentLines.length === 0) {
+  const coSponsorKeys = await listCoSponsorVisibleInvestorMatchKeys(
+    dealId,
+    params.initiatedByUserId,
+  );
+  const visiblePaymentLines = coSponsorKeys
+    ? paymentLines.filter((line) => {
+        const invId = String(line.investorId ?? "").trim().toLowerCase();
+        const contactId = String(line.contactId ?? "").trim().toLowerCase();
+        const email = String(line.userEmail ?? "").trim().toLowerCase();
+        if (invId && coSponsorKeys.investmentIds.has(invId)) return true;
+        if (contactId && coSponsorKeys.contactIds.has(contactId)) return true;
+        if (invId && coSponsorKeys.contactIds.has(invId)) return true;
+        if (email.includes("@") && coSponsorKeys.emails.has(email)) return true;
+        return false;
+      })
+    : paymentLines;
+
+  if (onlyInvestmentIds.size > 0 && visiblePaymentLines.length === 0) {
     return {
       ok: false,
       status: 404,
@@ -700,7 +718,7 @@ export async function executeDistributionPayouts(params: {
     };
   }
 
-  for (const line of paymentLines) {
+  for (const line of visiblePaymentLines) {
     const investmentId = uuid(line.investorId);
     const amount = Number(String(line.payment ?? "").replace(/[$,\s]/g, ""));
     const amountCents = Math.round(amount * 100);
@@ -998,11 +1016,12 @@ export async function executeDistributionPayouts(params: {
 export async function listDistributionPayouts(params: {
   dealId: string;
   distributionId: string;
+  viewerUserId?: string | null;
 }) {
   const dealId = uuid(params.dealId);
   const distributionId = String(params.distributionId ?? "").trim();
   if (!dealId || !distributionId) return [];
-  return db
+  const rows = await db
     .select()
     .from(investorDistributionPayouts)
     .where(
@@ -1011,6 +1030,15 @@ export async function listDistributionPayouts(params: {
         eq(investorDistributionPayouts.distributionId, distributionId),
       ),
     );
+  const keys = await listCoSponsorVisibleInvestorMatchKeys(
+    dealId,
+    String(params.viewerUserId ?? "").trim(),
+  );
+  if (!keys) return rows;
+  return rows.filter((row) => {
+    const invId = String(row.investmentId ?? "").trim().toLowerCase();
+    return Boolean(invId && keys.investmentIds.has(invId));
+  });
 }
 
 function connectAccountIdFromWebhookEvent(event: Stripe.Event): string | null {

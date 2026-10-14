@@ -2,11 +2,16 @@ import type { LucideIcon } from "lucide-react"
 import {
   ArrowLeft,
   BarChart3,
+  Check,
+  Copy,
   File,
   FileSignature,
   FileText,
+  Info,
+  Link2,
   Pencil,
   Users,
+  X,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
@@ -27,6 +32,7 @@ import { getSessionUserId } from "../../../common/auth/sessionUserId"
 import { isCompanyAdmin, isPlatformAdmin } from "../../../common/auth/roleUtils"
 import { setAppDocumentTitle } from "../../../common/utils/appDocumentTitle"
 import {
+  areRequiredDealDetailFieldsIncomplete,
   buildDealOfferingPreviewShareUrl,
   deleteDealMemberRoster,
   fetchDealById,
@@ -36,12 +42,15 @@ import {
   isDealDetailFormIncomplete,
   DEAL_ESIGN_TEMPLATES_CHANGED_EVENT,
   fetchDealEsignTemplates,
+  fetchDealInvestorInviteLink,
   postDealInvestorSendEsign,
   postDealMemberInvitationEmail,
   type DealDetailApi,
 } from "./api/dealsApi"
 import { DealAnnouncementBanner } from "./components/DealAnnouncementBanner"
 import { DealsPageCenteredLoader } from "./components/DealsPageCenteredLoader"
+import { DealBillableStageNoticeModal } from "./components/DealBillableStageNoticeModal"
+import { DealManageStageModal } from "./components/DealManageStageModal"
 import { DealSaasPaywallModal } from "./components/DealSaasPaywallModal"
 import {
   dealInvestNowPath,
@@ -85,11 +94,15 @@ import {
   viewerCanSendDealEsignTemplates,
   viewerCanUploadDealEsignTemplates,
   viewerCanApproveDealFund,
+  viewerCanEditDeal,
   visibleDealDetailTabIds,
   isUsableInvestorEmail,
   type ViewerDealMemberRole,
 } from "./utils/dealDetailTabVisibility"
 import { toast } from "../../../common/components/Toast"
+import { FormTooltip } from "../../../common/components/form-tooltip/FormTooltip"
+import { getSessionOrganizationCompanyId } from "../../../common/auth/sessionOrganization"
+import { syncExtraCompanyUserCheckout } from "../company/companyBillingApi"
 import {
   isDealStageDraft,
   isDealStageOfferingShareBlocked,
@@ -98,6 +111,7 @@ import { dealHasOfferingShareLink } from "./utils/offeringOverviewForm"
 import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { notifyDealsListRefetch } from "./createDealFormDraftStorage"
 import {
+  dealSaasBillingSettingsPath,
   isDealSaasPaymentRequiredError,
   type DealSaasPaywallDeal,
 } from "./utils/dealSaasAccess"
@@ -138,7 +152,7 @@ const DEAL_DETAIL_TABS: DealDetailTabDef[] = [
   { id: "investors", label: "Investors", icon: Users },
   { id: "investor_communication", label: "Investor Communication ", icon: BarChart3 },
   { id: "distributions", label: "Distributions", icon: BarChart3 },
-  { id: "deal_members", label: "Deal Members", icon: Users },
+  { id: "deal_members", label: "General Partners", icon: Users },
 ]
 
 export function DealDetailPage() {
@@ -173,6 +187,13 @@ export function DealDetailPage() {
   const [dealDetailApi, setDealDetailApi] = useState<DealDetailApi | null>(null)
   const [saasPaywallDeal, setSaasPaywallDeal] =
     useState<DealSaasPaywallDeal | null>(null)
+  const [manageStageOpen, setManageStageOpen] = useState(false)
+  /** Requested Capital Raising / Asset Managing stage held until SaaS payment. */
+  const [stageBillingNotice, setStageBillingNotice] = useState<string | null>(
+    null,
+  )
+  const [upgradePromptDeal, setUpgradePromptDeal] =
+    useState<DealSaasPaywallDeal | null>(null)
 
   const handleDealPersisted = useCallback((d: DealDetailApi) => {
     setDealDetailApi(d)
@@ -191,7 +212,12 @@ export function DealDetailPage() {
     DealInvestorRow[]
   >([])
   const [viewerDealMemberRoleFromApi, setViewerDealMemberRoleFromApi] =
-    useState<ViewerDealMemberRole | null>(null)
+    useState<ViewerDealMemberRole | undefined>(undefined)
+  const [inviteLinkOpen, setInviteLinkOpen] = useState(false)
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false)
+  const [inviteShareUrl, setInviteShareUrl] = useState("")
+  const [inviteLinkLoading, setInviteLinkLoading] = useState(false)
+  const [inviteLinkError, setInviteLinkError] = useState("")
 
   const openInvestNow = useCallback(() => {
     const id = dealId?.trim()
@@ -204,7 +230,7 @@ export function DealDetailPage() {
   }, [dealId])
 
   useEffect(() => {
-    setViewerDealMemberRoleFromApi(null)
+    setViewerDealMemberRoleFromApi(undefined)
     if (!dealId?.trim()) return
     let cancelled = false
     void fetchDealMembers(dealId).then((result) => {
@@ -223,7 +249,9 @@ export function DealDetailPage() {
   const sessionUserId = getSessionUserId()
 
   const viewerDealMemberRole = useMemo(() => {
-    if (viewerDealMemberRoleFromApi != null) return viewerDealMemberRoleFromApi
+    if (viewerDealMemberRoleFromApi !== undefined) {
+      return viewerDealMemberRoleFromApi
+    }
     return resolveViewerDealMemberRole(
       memberRosterForTabs,
       sessionEmail,
@@ -236,28 +264,57 @@ export function DealDetailPage() {
     sessionUserId,
   ])
 
+  const isWorkspaceAdmin = isCompanyAdmin() || isPlatformAdmin()
+
+  const syndicationViewOnly =
+    mode !== "investing" && dealDetailApi?.viewerCanManageDeal === false
+
   const viewerDealTabIds = useMemo(
-    () =>
-      visibleDealDetailTabIds(viewerDealMemberRole, {
-        isWorkspaceAdmin: isCompanyAdmin() || isPlatformAdmin(),
-      }),
-    [viewerDealMemberRole],
+    () => {
+      const ids = visibleDealDetailTabIds(viewerDealMemberRole, {
+        isWorkspaceAdmin,
+        isRoleLoading: viewerDealMemberRoleFromApi === undefined,
+      })
+      return ids
+    },
+    [
+      viewerDealMemberRole,
+      viewerDealMemberRoleFromApi,
+      isWorkspaceAdmin,
+      syndicationViewOnly,
+    ],
   )
 
   const canUploadEsignTemplates = useMemo(
-    () => viewerCanUploadDealEsignTemplates(viewerDealMemberRole),
-    [viewerDealMemberRole],
+    () =>
+      !syndicationViewOnly &&
+      viewerCanUploadDealEsignTemplates(viewerDealMemberRole),
+    [viewerDealMemberRole, syndicationViewOnly],
   )
 
   const canSendEsignTemplates = useMemo(
-    () => viewerCanSendDealEsignTemplates(viewerDealMemberRole),
-    [viewerDealMemberRole],
+    () =>
+      !syndicationViewOnly &&
+      viewerCanSendDealEsignTemplates(viewerDealMemberRole),
+    [viewerDealMemberRole, syndicationViewOnly],
   )
 
   const canApproveFund = useMemo(
-    () => viewerCanApproveDealFund(viewerDealMemberRole),
-    [viewerDealMemberRole],
+    () =>
+      !syndicationViewOnly &&
+      viewerCanApproveDealFund(viewerDealMemberRole, { isWorkspaceAdmin }),
+    [viewerDealMemberRole, isWorkspaceAdmin, syndicationViewOnly],
   )
+
+  const canEditDeal = useMemo(() => {
+    if (syndicationViewOnly) return false
+    if (dealDetailApi?.viewerCanEditDeal === false) return false
+    return viewerCanEditDeal(viewerDealMemberRole)
+  }, [
+    dealDetailApi?.viewerCanEditDeal,
+    viewerDealMemberRole,
+    syndicationViewOnly,
+  ])
 
   const [dealHasEsignDocuments, setDealHasEsignDocuments] = useState(false)
 
@@ -329,6 +386,36 @@ export function DealDetailPage() {
     setActiveTab((prev) => (prev === tabFromUrl ? prev : tabFromUrl))
   }, [searchParams, dealDetailTabsVisible])
 
+  useEffect(() => {
+    const extraUser = searchParams.get("extraCompanyUser")?.trim()
+    const sessionId = searchParams.get("session_id")?.trim() ?? ""
+    if (extraUser !== "success" || !sessionId) return
+    const companyId = getSessionOrganizationCompanyId()?.trim() ?? ""
+    if (!companyId) return
+    let cancelled = false
+    void syncExtraCompanyUserCheckout(companyId, sessionId).then((result) => {
+      if (cancelled) return
+      if (result.ok) {
+        toast.success(
+          "Extra company user paid",
+          "You can save the additional team member now.",
+        )
+      }
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete("extraCompanyUser")
+          next.delete("session_id")
+          return next
+        },
+        { replace: true },
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, setSearchParams])
+
   const selectDealTab = useCallback(
     (tabId: string) => {
       setActiveTab(tabId)
@@ -362,6 +449,7 @@ export function DealDetailPage() {
     setDeal(undefined)
     setDealDetailApi(null)
     setSaasPaywallDeal(null)
+    setUpgradePromptDeal(null)
     void (async () => {
       try {
         const d = await fetchDealById(id)
@@ -376,10 +464,38 @@ export function DealDetailPage() {
           }
           setDealDetailApi(d)
           setDeal(dealDetailApiToRecord(d))
+          if (
+            mode !== "investing" &&
+            d.viewerIsLeadSponsor === true &&
+            d.needsPlanUpgrade === true
+          ) {
+            const key = `sx-deal-upgrade-prompt:${d.id}`
+            try {
+              if (sessionStorage.getItem(key) !== "1") {
+                setUpgradePromptDeal({
+                  id: d.id,
+                  dealName: d.dealName ?? "",
+                  needsPlanUpgrade: true,
+                  suggestedPlanId: d.suggestedPlanId ?? null,
+                  billingPlanId: d.billingPlanId ?? d.listRow?.billingPlanId ?? null,
+                  viewerIsLeadSponsor: true,
+                })
+              }
+            } catch {
+              setUpgradePromptDeal({
+                id: d.id,
+                dealName: d.dealName ?? "",
+                needsPlanUpgrade: true,
+                suggestedPlanId: d.suggestedPlanId ?? null,
+                billingPlanId: d.billingPlanId ?? null,
+                viewerIsLeadSponsor: true,
+              })
+            }
+          }
         }
       } catch (err) {
         if (!cancelled) {
-          if (mode !== "investing" && isDealSaasPaymentRequiredError(err)) {
+          if (isDealSaasPaymentRequiredError(err)) {
             setSaasPaywallDeal({
               ...err.payload,
               id: err.payload.id || id,
@@ -485,16 +601,67 @@ export function DealDetailPage() {
   /** Stage chip already says Draft — avoid a second draft marker beside the title. */
   const showIncompleteDraftBadge = dealFormIncomplete && !isDealDraftStage
 
+  /** General Partner invitation emails can be sent from draft/incomplete deals. */
+  const rosterInvitationMailBlocked = false
+
   const offeringLinkAvailable = useMemo(
     () => dealHasOfferingShareLink(dealDetailApi) && !isDealOfferingShareBlocked,
     [dealDetailApi, isDealOfferingShareBlocked],
   )
 
+  /** Required fields still hold autosave placeholders — the wizard must be finished first. */
+  const dealRequiredFieldsIncomplete =
+    dealDetailApi != null &&
+    areRequiredDealDetailFieldsIncomplete(dealDetailApi)
+
   const handleEditDeal = useCallback(() => {
     if (!dealId?.trim()) return
+    if (!dealRequiredFieldsIncomplete) {
+      setManageStageOpen(true)
+      return
+    }
     const id = encodeURIComponent(dealId.trim())
     navigate(`/deals/create?edit=${id}&from=detail`)
-  }, [dealId, navigate])
+  }, [dealId, dealRequiredFieldsIncomplete, navigate])
+
+  const canShareDealInvestorInvite =
+    !syndicationViewOnly &&
+    (viewerDealMemberRole === "lead_sponsor" ||
+      viewerDealMemberRole === "admin_sponsor" ||
+      viewerDealMemberRole === "co_sponsor")
+
+  const openDealInviteLinkModal = useCallback(() => {
+    if (!dealId?.trim() || isDealOfferingShareBlocked) return
+    setInviteLinkCopied(false)
+    setInviteLinkError("")
+    setInviteLinkOpen(true)
+    setInviteShareUrl("")
+    setInviteLinkLoading(true)
+    void fetchDealInvestorInviteLink(dealId.trim())
+      .then((url) => setInviteShareUrl(url))
+      .catch((err) =>
+        setInviteLinkError(
+          err instanceof Error ? err.message : "Could not load your invite link.",
+        ),
+      )
+      .finally(() => setInviteLinkLoading(false))
+  }, [dealId, isDealOfferingShareBlocked])
+
+  const closeDealInviteLinkModal = useCallback(() => {
+    setInviteLinkOpen(false)
+    setInviteLinkCopied(false)
+  }, [])
+
+  const copyDealInviteLink = useCallback(async () => {
+    if (!inviteShareUrl) return
+    try {
+      await navigator.clipboard.writeText(inviteShareUrl)
+      setInviteLinkCopied(true)
+      window.setTimeout(() => setInviteLinkCopied(false), 2000)
+    } catch {
+      setInviteLinkError("Could not copy the link. Select it and copy manually.")
+    }
+  }, [inviteShareUrl])
 
   const handleCopyMemberOfferingLink = useCallback(
     async (row: DealInvestorRow) => {
@@ -690,9 +857,13 @@ export function DealDetailPage() {
         {saasPaywallDeal ? (
           <>
             <p className="deals_list_not_found">
-              {saasPaywallDeal.dealName.trim()
-                ? `Pay monthly SaaS (MRR) for “${saasPaywallDeal.dealName.trim()}” to continue.`
-                : "Pay monthly SaaS (MRR) for this deal to continue."}{" "}
+              {mode === "investing"
+                ? saasPaywallDeal.dealName.trim()
+                  ? `Contact your sponsor for access to “${saasPaywallDeal.dealName.trim()}”.`
+                  : "Contact your sponsor for access to this deal."
+                : saasPaywallDeal.dealName.trim()
+                  ? `Pay monthly SaaS (MRR) for “${saasPaywallDeal.dealName.trim()}” to continue.`
+                  : "Pay monthly SaaS (MRR) for this deal to continue."}{" "}
               <Link to={dealsListBackPath} className="deals_list_inline_back">
                 <ArrowLeft size={18} strokeWidth={2} aria-hidden />
                 Back to deals
@@ -700,6 +871,7 @@ export function DealDetailPage() {
             </p>
             <DealSaasPaywallModal
               deal={saasPaywallDeal}
+              investorFacing={mode === "investing"}
               onClose={() => navigate(dealsListBackPath)}
             />
           </>
@@ -758,15 +930,74 @@ export function DealDetailPage() {
               </span>
             ) : null}
           </div>
+          {canShareDealInvestorInvite || canEditDeal ? (
+          <div className="deals_detail_header_actions">
+            {canShareDealInvestorInvite ? (
+              <span className="deals_detail_invite_link_wrap">
+                <button
+                  type="button"
+                  className="um_btn_secondary deals_detail_invite_link_btn"
+                  disabled={isDealOfferingShareBlocked}
+                  title={
+                    isDealOfferingShareBlocked
+                      ? "Change the deal stage before sharing an investor invite link."
+                      : "Copy a unique invite link for this deal"
+                  }
+                  onClick={openDealInviteLinkModal}
+                >
+                  <Link2 size={16} strokeWidth={2} aria-hidden />
+                  Invite Investor Link
+                </button>
+                <FormTooltip
+                  label="About the investor invite link"
+                  placement="bottom"
+                  panelAlign="end"
+                  content={
+                    <div className="deals_invite_link_tooltip">
+                      <p>
+                        A sign-up link that is unique to you and this deal. Share
+                        it with investors you want on this offering.
+                      </p>
+                      <p>
+                        When someone joins through it they can sign up or sign
+                        in, and they are saved to your organization’s contacts
+                        against this deal with you as the sponsor.
+                      </p>
+                    </div>
+                  }
+                />
+              </span>
+            ) : null}
+            {canEditDeal ? (
           <button
             type="button"
             className="um_btn_secondary deals_detail_edit_deal_btn"
             onClick={handleEditDeal}
           >
             <Pencil size={16} strokeWidth={2} aria-hidden />
-            {dealFormIncomplete ? "Continue editing" : "Edit deal"}
+            {dealRequiredFieldsIncomplete
+              ? "Continue editing"
+              : "Manage deal stage"}
           </button>
+            ) : null}
+          </div>
+          ) : null}
         </div>
+        {syndicationViewOnly ? (
+          <div
+            className="deals_cross_org_view_only_notice"
+            role="status"
+            aria-label="View-only deal access"
+          >
+            <Info size={20} strokeWidth={2.25} aria-hidden />
+            <div>
+              <strong>View-only access</strong>
+              <span>
+                You can view this deal. Only the sponsor can make changes.
+              </span>
+            </div>
+          </div>
+        ) : null}
       </header>
 
       <div className="um_members_tabs_outer deals_tabs_outer um_segmented_tabs_outer">
@@ -831,11 +1062,11 @@ export function DealDetailPage() {
       {showSyndicatingDealChrome ? (
         <>
       <div
-        className={
-          activeTab === "deal_members"
-            ? "um_members_tab_content deal_members_tab"
-            : "um_members_tab_content"
-        }
+        className={`${activeTab === "deal_members"
+          ? "um_members_tab_content deal_members_tab"
+          : "um_members_tab_content"}${
+          syndicationViewOnly ? " deals_syndication_view_only_content" : ""
+        }`}
       >
         <div
           id="deal-detail-tabpanel"
@@ -856,6 +1087,7 @@ export function DealDetailPage() {
                 investorsRefreshKey={dealMembersRefreshKey}
                 invitationMailStatusByRowId={invitationMailSentByRowId}
                 invitationMailSendingByRowId={invitationMailSendingByRowId}
+                invitationMailBlocked={rosterInvitationMailBlocked}
                 onAddMember={(kind) => {
                   setInvestmentModalEntry(
                     dealInvestmentModalEntryFromRosterKind(kind),
@@ -882,6 +1114,7 @@ export function DealDetailPage() {
                 onViewMember={(row) => {
                   dealInvestorsTabRef.current?.openViewInvestor(row)
                 }}
+                viewOnly={syndicationViewOnly}
               />
             ) : null}
             <DealInvestorsTab
@@ -924,12 +1157,15 @@ export function DealDetailPage() {
               invitationMailStatusByRowId={invitationMailSentByRowId}
               viewerDealMemberRole={viewerDealMemberRole}
               dealMembersRoster={memberRosterForTabs}
+              viewOnly={syndicationViewOnly}
             />
           </>
         ) : activeTab === "offering_details" && dealDetailApi ? (
           <DealOfferingDetailsTab
             detail={dealDetailApi}
             onDealUpdated={handleDealPersisted}
+            viewerDealMemberRole={viewerDealMemberRole}
+            viewOnly={syndicationViewOnly}
           />
         ) : activeTab === "documents" && dealDetailApi ? (
           <DealDocumentsTab
@@ -937,6 +1173,8 @@ export function DealDetailPage() {
             dealName={displayName}
             offeringInvestorPreviewJson={dealDetailApi.offeringInvestorPreviewJson}
             investorsListRefreshKey={dealMembersRefreshKey}
+            viewerDealMemberRole={viewerDealMemberRole}
+            viewOnly={syndicationViewOnly}
             onOfferingPreviewSynced={handleDealPersisted}
           />
         ) : activeTab === "esign_templates" ? (
@@ -948,7 +1186,10 @@ export function DealDetailPage() {
             canUploadDocuments={canUploadEsignTemplates}
           />
         ) : activeTab === "investor_communication" && dealId?.trim() ? (
-          <InvestorCommunicationTab dealId={dealId.trim()} />
+          <InvestorCommunicationTab
+            dealId={dealId.trim()}
+            viewOnly={syndicationViewOnly}
+          />
         ) : activeTab === "distributions" && dealId?.trim() ? (
           <DistributionsTab
             dealId={dealId.trim()}
@@ -957,6 +1198,7 @@ export function DealDetailPage() {
               deal?.title?.trim() ||
               undefined
             }
+            viewOnly={syndicationViewOnly}
           />
         ) : (
           <div className="deal_detail_wip_wrap" role="status">
@@ -970,6 +1212,141 @@ export function DealDetailPage() {
         </div>
       </div>
         </>
+      ) : null}
+      <DealManageStageModal
+        open={manageStageOpen && dealDetailApi != null}
+        dealId={dealId ?? ""}
+        dealName={displayName}
+        currentStage={dealDetailApi?.dealStage ?? ""}
+        onClose={() => setManageStageOpen(false)}
+        onSaved={(updated, pendingDealStage) => {
+          handleDealPersisted(updated)
+          if (pendingDealStage) {
+            setStageBillingNotice(pendingDealStage)
+            return
+          }
+          toast.success(
+            "Deal stage updated",
+            `This deal is now ${dealStageLabel(updated.dealStage)}.`,
+          )
+        }}
+      />
+      <DealBillableStageNoticeModal
+        open={stageBillingNotice != null}
+        dealStage={stageBillingNotice}
+        mode="billing"
+        onOk={() => {
+          const id = dealId?.trim()
+          if (!id) return
+          navigate(dealSaasBillingSettingsPath(id, displayName))
+        }}
+        onClose={() => setStageBillingNotice(null)}
+      />
+      <DealSaasPaywallModal
+        deal={upgradePromptDeal}
+        onClose={() => {
+          const id = upgradePromptDeal?.id?.trim()
+          if (id) {
+            try {
+              sessionStorage.setItem(`sx-deal-upgrade-prompt:${id}`, "1")
+            } catch {
+              /* ignore */
+            }
+          }
+          setUpgradePromptDeal(null)
+        }}
+      />
+      {inviteLinkOpen ? (
+        <div
+          className="um_modal_overlay"
+          role="presentation"
+          onClick={closeDealInviteLinkModal}
+        >
+          <div
+            className="um_modal deals_invite_link_modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deal-invite-link-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="um_modal_head">
+              <h3
+                id="deal-invite-link-title"
+                className="um_modal_title um_title_with_icon"
+              >
+                <Link2
+                  className="um_title_icon"
+                  size={22}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span>Invite Investor Link</span>
+              </h3>
+              <button
+                type="button"
+                className="um_modal_close"
+                aria-label="Close"
+                onClick={closeDealInviteLinkModal}
+              >
+                <X size={20} strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+            <p className="deals_invite_link_help">
+              Share this unique link with investors you want to invite to this
+              deal. They can sign up or sign in; the contact is saved to your
+              organization with this deal and your user.
+            </p>
+            <div className="um_field deals_invite_link_field">
+              <div className="um_field_label_row">
+                <Link2
+                  className="um_field_label_icon"
+                  size={16}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <label htmlFor="deal-invite-share-url">Sharable link</label>
+              </div>
+              <div className="deals_invite_link_copy_row">
+                <input
+                  id="deal-invite-share-url"
+                  type="text"
+                  readOnly
+                  value={
+                    inviteLinkLoading
+                      ? "Loading your link…"
+                      : inviteShareUrl || "—"
+                  }
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  className="um_btn_primary"
+                  disabled={inviteLinkLoading || !inviteShareUrl}
+                  onClick={() => void copyDealInviteLink()}
+                >
+                  {inviteLinkCopied ? (
+                    <Check size={16} strokeWidth={2} aria-hidden />
+                  ) : (
+                    <Copy size={16} strokeWidth={2} aria-hidden />
+                  )}
+                  {inviteLinkCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              {inviteLinkError ? (
+                <p className="deals_invite_link_error">{inviteLinkError}</p>
+              ) : null}
+            </div>
+            <div className="um_modal_actions">
+              <button
+                type="button"
+                className="um_btn_secondary"
+                onClick={closeDealInviteLinkModal}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   )

@@ -175,6 +175,9 @@
 .deals_create_select {
   cursor: pointer;
   appearance: auto;
+  -webkit-appearance: auto;
+  -moz-appearance: auto;
+  background-image: none;
 }
 
 .deals_create_input:hover,

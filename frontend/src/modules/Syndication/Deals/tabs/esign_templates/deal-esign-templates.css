@@ -1121,29 +1121,33 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.3rem;
 }
 
 .deal_esign_questionnaire_option_row {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .deal_esign_questionnaire_option_label {
-  font-size: 0.8125rem;
+  flex-shrink: 0;
+  width: 4.75rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--portal-text, #334155);
+  color: var(--portal-text-muted, #64748b);
+  white-space: nowrap;
 }
 
 .deal_esign_questionnaire_option_input_row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+  max-width: 24rem;
 }
 
-.deal_esign_questionnaire_option_input_row .deal_esign_questionnaire_option_readonly,
 .deal_esign_questionnaire_option_input_row .deal_esign_questionnaire_option_input {
   flex: 1;
   min-width: 0;
@@ -1160,35 +1164,17 @@
 .deal_esign_questionnaire_option_input {
   flex: 1;
   min-width: 0;
-}
-
-.deal_esign_questionnaire_option_readonly {
-  flex: 1;
-  min-width: 0;
-  padding: 0.55rem 0.65rem;
-  font-size: 0.875rem;
-  line-height: 1.4;
-  color: var(--portal-text, #334155);
-  background: color-mix(
-    in srgb,
-    var(--portal-gold-accent, #d4af37) 6%,
-    var(--portal-surface, #fff)
-  );
-  border: 1px solid
-    color-mix(
-      in srgb,
-      var(--portal-gold-accent, #d4af37) 16%,
-      var(--portal-border, #cbd5e1)
-    );
-  border-radius: var(--portal-card-radius, 4px);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8125rem;
 }
 
 .deal_esign_questionnaire_option_remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
   border: none;
   background: transparent;
@@ -1202,10 +1188,40 @@
   background: color-mix(in srgb, #b91c1c 10%, transparent);
 }
 
-.deal_esign_questionnaire_option_add {
-  align-self: flex-start;
-  margin-top: 0.15rem;
+.deal_esign_questionnaire_option_add_icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--portal-focus, #2563eb);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.deal_esign_questionnaire_option_add_icon:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--portal-focus, #2563eb) 10%, transparent);
+}
+
+.deal_esign_questionnaire_option_add_icon:disabled,
+.deal_esign_questionnaire_option_remove:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.deal_esign_questionnaire_option_add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  margin-top: 0.3rem;
+  margin-left: 4.75rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--portal-card-radius, 4px);
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--portal-focus, #2563eb);
@@ -1512,8 +1528,7 @@
   );
 }
 
-:root[data-theme="dark"] .deal_esign_questionnaire_field_input_locked,
-:root[data-theme="dark"] .deal_esign_questionnaire_option_readonly {
+:root[data-theme="dark"] .deal_esign_questionnaire_field_input_locked {
   background: color-mix(
     in srgb,
     var(--portal-gold-accent, #d4af37) 8%,

@@ -9,6 +9,7 @@ import {
   Search,
 } from "lucide-react";
 import { DataTablePagination } from "../../../common/components/DataTablePagination/DataTablePagination";
+import { TableHScrollShell } from "../../../common/components/data-table/TableHScrollShell";
 
 type Props = {
   companyName: string;
@@ -201,6 +202,7 @@ export function CompanyContactAttributesTab(props: Props) {
       </div>
 
       <div className="um_table_wrap cp_contact_table_wrap">
+        <TableHScrollShell ariaLabel="Contact attributes columns">
         <table className="um_table um_table_sortable cp_contact_table">
           <thead>
             <tr>
@@ -277,6 +279,7 @@ export function CompanyContactAttributesTab(props: Props) {
             )}
           </tbody>
         </table>
+        </TableHScrollShell>
       </div>
       {sortedRows.length > 0 ? (
         <DataTablePagination

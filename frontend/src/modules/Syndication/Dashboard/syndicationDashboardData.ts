@@ -13,15 +13,6 @@ import {
 } from "../Deals/dealsDashboardMoney"
 import type { DealListRow } from "../Deals/types/deals.types"
 
-function lpInvestorCountForDashboard(row: DealListRow, payloadLen: number): number {
-  const raw = String(row.investors ?? "").trim()
-  if (raw && raw !== "—") {
-    const n = parseInt(raw.replace(/[^\d]/g, ""), 10)
-    if (Number.isFinite(n)) return n
-  }
-  return payloadLen
-}
-
 export interface SyndicationDashboardSummary {
   dealCount: number
   /** Sum of investor rows across all deals (investment line items). */
@@ -37,7 +28,7 @@ async function loadDashboardSummaryForDealList(
 ): Promise<SyndicationDashboardSummary> {
   const [list, contacts] = await Promise.all([
     fetchDealsList(listOptions),
-    fetchContacts(),
+    fetchContacts({ lean: true }),
   ])
 
   const contactsCount = contacts.length
@@ -56,7 +47,7 @@ async function loadDashboardSummaryForDealList(
   const perDeal = await Promise.all(
     list.map(async (row: DealListRow) => {
       const [payload, classes, distSetup] = await Promise.all([
-        fetchDealInvestors(row.id),
+        fetchDealInvestors(row.id, { lpInvestorsOnly: true }),
         fetchDealInvestorClasses(row.id),
         fetchDistributionSetup(row.id).catch(() => null),
       ])
@@ -70,7 +61,7 @@ async function loadDashboardSummaryForDealList(
   let sumDistributed = 0
 
   for (const { row, payload, classes, distSetup } of perDeal) {
-    totalInvestorRows += lpInvestorCountForDashboard(row, payload.investors.length)
+    totalInvestorRows += payload.investors.length
     sumTarget += targetAmountNumberForDeal(row, classes)
     sumAccepted += acceptedAmountForPayload(payload)
     sumDistributed += sumPriorDistributionsAmount(distSetup?.priorDistributions)

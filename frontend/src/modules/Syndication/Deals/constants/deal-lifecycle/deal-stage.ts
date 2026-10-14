@@ -18,6 +18,14 @@ export function isDealStageLiquidated(raw: string | null | undefined): boolean {
   return normalizeDealStageCanonical(raw) === "liquidated"
 }
 
+/** Capital Raising and Asset Managing are billed monthly (MRR). */
+export function isDealStageSaasBillable(
+  raw: string | null | undefined,
+): boolean {
+  const stage = normalizeDealStageCanonical(raw)
+  return stage === "capital_raising" || stage === "asset_managing"
+}
+
 /** Draft and liquidated deals cannot copy or share offering preview links. */
 export function isDealStageOfferingShareBlocked(
   raw: string | null | undefined,

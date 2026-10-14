@@ -293,9 +293,27 @@
   border-bottom: none;
 }
 
-.investment_detail_offering_docs_table {
+.investment_detail_offering_docs_panel
+  .investment_detail_offering_docs_table.deal_docs_ui_table {
   min-width: 0;
   width: 100%;
+  table-layout: fixed;
+}
+
+.investment_detail_offering_docs_panel .deal_docs_ui_th_doc,
+.investment_detail_offering_docs_panel .deal_docs_ui_td_doc {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  vertical-align: middle;
+}
+
+.investment_detail_offering_docs_panel .deal_docs_ui_th_date,
+.investment_detail_offering_docs_panel .deal_docs_ui_td_date {
+  width: 7.75rem;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .investment_detail_offering_doc_unavailable {
@@ -303,6 +321,33 @@
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--portal-text-muted, #64748b);
+}
+
+.investment_detail_offering_docs_panel .deal_docs_ui_doc_name_link,
+.investment_detail_offering_docs_panel .deal_docs_ui_doc_name_wrap > .deal_docs_ui_doc_name_text {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.45rem;
+}
+
+.investment_detail_offering_docs_panel .deal_docs_ui_doc_name_link .deal_docs_ui_doc_name_text {
+  display: inline;
+}
+
+.investment_detail_offering_doc_new {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
 }
 
 .investment_detail_offering_docs_notice {

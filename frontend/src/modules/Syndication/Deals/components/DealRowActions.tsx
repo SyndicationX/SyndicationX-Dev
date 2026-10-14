@@ -29,11 +29,20 @@ interface DealRowActionsProps {
    */
   readOnlyActions?: boolean
   /**
+   * Syndication list: peer's deal in another organization. Preview and view only.
+   */
+  viewOnlySyndication?: boolean
+  /**
    * Session create-deal draft row: “Edit Deal” becomes “Continue editing”
    * (`/deals/create?resume=1`). Archive is disabled; Delete discards the session draft
    * after confirmation with a required reason.
    */
   draftRow?: boolean
+  /**
+   * Saved deal whose required fields are still incomplete: “Edit deal” becomes
+   * “Continue editing” since the deal cannot leave Draft yet.
+   */
+  requiredFieldsIncomplete?: boolean
   /** Deal lifecycle stage (e.g. `draft`) — used for delete confirmation copy. */
   dealStage?: string
   /** Opens read-only deal preview (e.g. modal). */
@@ -51,6 +60,8 @@ interface DealRowActionsProps {
   /** Unpaid / expired SaaS — view, preview, and edit open the paywall instead. */
   saasAccessLocked?: boolean
   onSaasLocked?: () => void
+  /** When false, hide Edit Deal (co-sponsor / LP on this deal). Default true. */
+  canEditDeal?: boolean
 }
 
 export function DealRowActions({
@@ -58,7 +69,9 @@ export function DealRowActions({
   dealName,
   archived = false,
   readOnlyActions = false,
+  viewOnlySyndication = false,
   draftRow = false,
+  requiredFieldsIncomplete = false,
   dealStage = "",
   onPreviewDeal,
   onInvestNow,
@@ -69,6 +82,7 @@ export function DealRowActions({
   actionsDisabled = false,
   saasAccessLocked = false,
   onSaasLocked,
+  canEditDeal = true,
 }: DealRowActionsProps) {
   const navigate = useNavigate()
   const confirmTitleId = useId()
@@ -283,7 +297,7 @@ export function DealRowActions({
               className="um_kebab_menu um_kebab_menu--portal"
               role="menu"
             >
-              {onPreviewDeal || draftRow ? (
+              {(!viewOnlySyndication && onPreviewDeal) || draftRow ? (
                 <li role="none">
                   <button
                     type="button"
@@ -343,8 +357,9 @@ export function DealRowActions({
                   </button>
                 </li>
               ) : null}
-              {!readOnlyActions ? (
+              {!readOnlyActions && !viewOnlySyndication ? (
                 <>
+                  {canEditDeal || draftRow ? (
                   <li role="none">
                     <button
                       type="button"
@@ -353,9 +368,12 @@ export function DealRowActions({
                       onClick={handleEditDeal}
                     >
                       <Pencil className="um_kebab_menuitem_icon" size={16} strokeWidth={2} aria-hidden />
-                      {draftRow ? "Continue editing" : "Edit Deal"}
+                      {draftRow || requiredFieldsIncomplete
+                        ? "Continue editing"
+                        : "Edit deal"}
                     </button>
                   </li>
+                  ) : null}
                   <li role="none">
                     {archived ? (
                       <button

@@ -6,6 +6,7 @@ import {
 } from "../../services/deal/dealAccess.service.js";
 import { requestedOrganizationIdFromRequest } from "../../services/org/orgResolution.service.js";
 import { sendDealDocumentSharedEmail } from "../../services/deal/dealDocumentSharedEmail.service.js";
+import { resolveDealDocumentSharedRecipients } from "../../services/deal/dealDocumentSharedAudience.service.js";
 
 function bodyString(v: unknown): string {
   if (v == null) return "";
@@ -42,12 +43,50 @@ function parseDocumentNames(raw: unknown): string[] {
   return raw.map((n) => bodyString(n).trim()).filter(Boolean);
 }
 
+function parseIdList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((id) => bodyString(id).trim()).filter(Boolean);
+}
+
+function parseAudience(raw: unknown): {
+  allInvestors: boolean;
+  investorIds: string[];
+  sponsorUserIds: string[];
+  classIds: string[];
+} {
+  if (raw == null || typeof raw !== "object") {
+    return {
+      allInvestors: false,
+      investorIds: [],
+      sponsorUserIds: [],
+      classIds: [],
+    };
+  }
+  const o = raw as Record<string, unknown>;
+  const allRaw = o.all_investors ?? o.allInvestors;
+  return {
+    allInvestors: allRaw === true || allRaw === "true" || allRaw === 1,
+    investorIds: parseIdList(o.investor_ids ?? o.investorIds),
+    sponsorUserIds: parseIdList(o.sponsor_user_ids ?? o.sponsorUserIds),
+    classIds: parseIdList(o.class_ids ?? o.classIds),
+  };
+}
+
 /**
  * POST /deals/:dealId/documents/send-shared-notification
  * Body: {
- *   recipients: { to_email: string; member_display_name?: string }[]
+ *   recipients?: { to_email: string; member_display_name?: string }[]
+ *   audience?: {
+ *     all_investors?: boolean
+ *     investor_ids?: string[]
+ *     sponsor_user_ids?: string[]
+ *     class_ids?: string[]
+ *   }
  *   document_names: string[]
  * }
+ *
+ * Audience is resolved on the server (unredacted emails), including co-sponsor
+ * LPs whose addresses are hidden from lead/admin in the Documents tab UI.
  */
 export async function postDealDocumentSharedNotification(
   req: Request,
@@ -68,15 +107,10 @@ export async function postDealDocumentSharedNotification(
   }
 
   const b = req.body as Record<string, unknown>;
-  const recipients = parseRecipients(b.recipients);
+  const clientRecipients = parseRecipients(b.recipients);
+  const audience = parseAudience(b.audience);
   const documentNames = parseDocumentNames(b.document_names ?? b.documentNames);
 
-  if (recipients.length === 0) {
-    res.status(400).json({
-      message: "At least one recipient with a valid email is required",
-    });
-    return;
-  }
   if (documentNames.length === 0) {
     res.status(400).json({ message: "At least one document name is required" });
     return;
@@ -93,19 +127,36 @@ export async function postDealDocumentSharedNotification(
       return;
     }
 
+    const recipients = await resolveDealDocumentSharedRecipients({
+      dealId,
+      viewerUserId: user.id,
+      audience,
+      extraRecipients: clientRecipients.map((r) => ({
+        toEmail: r.to_email,
+        memberDisplayName: r.member_display_name,
+      })),
+    });
+
+    if (recipients.length === 0) {
+      res.status(400).json({
+        message: "At least one recipient with a valid email is required",
+      });
+      return;
+    }
+
     const failures: { email: string; message: string }[] = [];
     let sent = 0;
     const seen = new Set<string>();
 
     for (const r of recipients) {
-      const key = r.to_email.trim().toLowerCase();
+      const key = r.toEmail.trim().toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
 
       const result = await sendDealDocumentSharedEmail({
         dealId,
-        toEmail: r.to_email,
-        memberDisplayName: r.member_display_name,
+        toEmail: r.toEmail,
+        memberDisplayName: r.memberDisplayName,
         documentNames,
       });
       if (result.ok) {
@@ -115,7 +166,7 @@ export async function postDealDocumentSharedNotification(
           result.error instanceof Error
             ? result.error.message
             : "Could not send email";
-        failures.push({ email: r.to_email, message: msg });
+        failures.push({ email: r.toEmail, message: msg });
       }
     }
 

@@ -99,6 +99,11 @@ function normalizeNested(
       : undefined;
   const esignAwaitingSponsorSignature = Boolean(raw.esignAwaitingSponsorSignature);
   const esignSponsorSigned = Boolean(raw.esignSponsorSigned);
+  const uploadedByUserId =
+    typeof raw.uploadedByUserId === "string" && raw.uploadedByUserId.trim()
+      ? clipStr(raw.uploadedByUserId.trim(), 120)
+      : undefined;
+  const uploadedByIsCoSponsor = raw.uploadedByIsCoSponsor === true;
   return {
     id,
     name,
@@ -110,6 +115,8 @@ function normalizeNested(
     sharedInvestorIds,
     sharedWithAllInvestors,
     sharedSponsorUserIds,
+    ...(uploadedByUserId ? { uploadedByUserId } : {}),
+    ...(uploadedByIsCoSponsor ? { uploadedByIsCoSponsor: true } : {}),
     ...(requiresProfileInvestment ? { requiresProfileInvestment: true } : {}),
     ...(esignSignatureRequestId ? { esignSignatureRequestId } : {}),
     ...(esignInvestorRowId ? { esignInvestorRowId } : {}),

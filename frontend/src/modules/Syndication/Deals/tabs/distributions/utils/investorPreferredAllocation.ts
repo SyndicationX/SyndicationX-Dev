@@ -18,6 +18,7 @@ import {
   investorCapitalForDistribution,
   parseStoredClassPercent,
   resolveInvestorClass,
+  resolvePercentOfDeal,
   type InvestorDistributionLine,
 } from "./investorDistributionAllocation"
 
@@ -209,6 +210,7 @@ export function allocateInvestorsByPreferredDue(params: {
     })
   }
 
+  const dealCapital = matched.reduce((s, m) => s + Math.max(0, m.capital), 0)
   const lines: InvestorPreferredLine[] = matched.map((m, i) => {
     const payment = paymentByIndex[i] ?? 0
     const classCap = capitalByClass.get(m.classId) ?? 0
@@ -236,6 +238,11 @@ export function allocateInvestorsByPreferredDue(params: {
       className: m.className,
       capital: m.capital,
       percentOfClass,
+      percentOfDeal: resolvePercentOfDeal({
+        entityOwnershipPercent: m.investor.entityOwnershipPercent,
+        capital: m.capital,
+        dealCapital,
+      }),
       payment,
       required: m.required,
       unpaid: roundMoney(Math.max(0, m.required - payment)),

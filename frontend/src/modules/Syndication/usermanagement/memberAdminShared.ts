@@ -494,7 +494,7 @@ export function memberRowIsInactive(row: Record<string, unknown>): boolean {
 }
 
 export const INACTIVE_MEMBER_CANNOT_ADD_TO_DEAL_MESSAGE =
-  "Inactive company users cannot be added to deal members or investors.";
+  "Inactive company users cannot be added to general partners or investors.";
 
 export function memberInvitePending(row: Record<string, unknown>): boolean {
   const v = String(

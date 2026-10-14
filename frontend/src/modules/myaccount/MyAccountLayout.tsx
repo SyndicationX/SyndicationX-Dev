@@ -13,8 +13,8 @@ function accountTabClass(isActive: boolean): string {
 
 export function MyAccountLayout() {
   const { pathname } = useLocation()
-  const companyActive =
-    pathname === "/account/company" || pathname === "/account"
+  /** Bare `/account` resolves to a tab in {@link MyAccountIndexRedirect}; nothing is active yet. */
+  const companyActive = pathname === "/account/company"
   const personalActive = pathname === "/account/personal"
   const passwordActive = pathname === "/account/password"
 

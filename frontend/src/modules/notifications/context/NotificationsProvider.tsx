@@ -1,11 +1,12 @@
 import {
-  createContext,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
+import { FEEDBACK_PENDING_CHANGED_EVENT } from "@/modules/feedback/api/feedbackApi"
 import { fetchPortalNotifications } from "../api/fetchPortalNotifications"
 import type { PortalNotification } from "../types/notification.types"
 import {
@@ -13,20 +14,10 @@ import {
   persistAllNotificationsRead,
   persistNotificationRead,
 } from "../utils/notificationReadStorage"
+import { NotificationsContext } from "./notificationsContext"
 
-interface NotificationsContextValue {
-  notifications: PortalNotification[]
-  unreadCount: number
-  isLoading: boolean
-  loadError: string | null
-  refresh: () => Promise<void>
-  markRead: (id: string) => void
-  markAllRead: () => void
-}
-
-export const NotificationsContext = createContext<
-  NotificationsContextValue | undefined
->(undefined)
+export { NotificationsContext } from "./notificationsContext"
+export type { NotificationsContextValue } from "./notificationsContext"
 
 function applyReadState(
   items: Omit<PortalNotification, "read">[],
@@ -40,13 +31,20 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    setIsLoading(true)
+  const hasLoadedRef = useRef(false)
+
+  /**
+   * `force` rebuilds; otherwise a cached set is reused (see fetchPortalNotifications).
+   * Only the first load shows the spinner — background refreshes keep the list on screen.
+   */
+  const load = useCallback(async (options?: { force?: boolean }) => {
+    if (!hasLoadedRef.current) setIsLoading(true)
     try {
-      const fetched = await fetchPortalNotifications()
+      const fetched = await fetchPortalNotifications({ force: options?.force })
       const readIds = getReadNotificationIds()
       setNotifications(applyReadState(fetched, readIds))
       setLoadError(null)
+      hasLoadedRef.current = true
     } catch {
       setNotifications([])
       setLoadError("Could not load notifications. Try again in a moment.")
@@ -55,17 +53,35 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const refresh = useCallback(async () => {
+    await load({ force: true })
+  }, [load])
+
+  const refreshIfStale = useCallback(async () => {
+    await load()
+  }, [load])
+
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    void load()
+  }, [load])
 
   useEffect(() => {
     function onFocus() {
-      void refresh()
+      void load()
+    }
+    function onFeedbackChanged() {
+      void load({ force: true })
     }
     window.addEventListener("focus", onFocus)
-    return () => window.removeEventListener("focus", onFocus)
-  }, [refresh])
+    window.addEventListener(FEEDBACK_PENDING_CHANGED_EVENT, onFeedbackChanged)
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      window.removeEventListener(
+        FEEDBACK_PENDING_CHANGED_EVENT,
+        onFeedbackChanged,
+      )
+    }
+  }, [load])
 
   const unreadCount = useMemo(
     () => notifications.filter((n) => !n.read).length,
@@ -96,6 +112,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       isLoading,
       loadError,
       refresh,
+      refreshIfStale,
       markRead,
       markAllRead,
     }),
@@ -105,6 +122,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       isLoading,
       loadError,
       refresh,
+      refreshIfStale,
       markRead,
       markAllRead,
     ],

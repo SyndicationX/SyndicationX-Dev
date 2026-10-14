@@ -14,7 +14,11 @@ function authHeaders(): HeadersInit {
 /** Same audit/email pattern as members export. Best-effort; failures are ignored by callers. */
 export async function notifyDealMembersExportAudit(
   dealId: string,
-  params: { rowCount: number; exportedLines?: string[] },
+  params: {
+    rowCount: number
+    exportedLines?: string[]
+    rosterLabel?: string
+  },
 ): Promise<void> {
   const base = getApiV1Base()
   if (!base || !dealId.trim()) return
@@ -30,8 +34,9 @@ export async function notifyDealMembersExportAudit(
         credentials: "include",
         body: JSON.stringify({
           rowCount: params.rowCount,
-          format: "excel_csv",
+          format: "xlsx",
           exportedLines: params.exportedLines,
+          rosterLabel: params.rosterLabel,
         }),
       },
     )

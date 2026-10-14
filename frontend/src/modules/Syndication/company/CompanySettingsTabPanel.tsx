@@ -17,6 +17,7 @@ import {
   fetchWorkspaceTabSettings,
   materializeBrandingFile,
   MAX_BRANDING_FILE_BYTES,
+  patchCompanyDisplayName,
   postCompanySettingsBranding,
   putWorkspaceTabSettings,
 } from "./companyWorkspaceSettingsApi";
@@ -156,6 +157,7 @@ function SettingsFieldEditActions({
   editing,
   saveLabel = "Save",
   editAriaLabel = "Edit",
+  saveDisabled = false,
   onEdit,
   onSave,
   onCancel,
@@ -164,6 +166,7 @@ function SettingsFieldEditActions({
   editing: boolean;
   saveLabel?: string;
   editAriaLabel?: string;
+  saveDisabled?: boolean;
   onEdit: () => void;
   onSave: () => void | Promise<void>;
   onCancel: () => void;
@@ -172,7 +175,7 @@ function SettingsFieldEditActions({
   if (editing) {
     return (
       <div className="cp_settings_row_actions um_modal_actions add_contact_modal_actions">
-        <button type="button" className="um_btn_secondary" onClick={onCancel}>
+        <button type="button" className="um_btn_secondary" onClick={onCancel} disabled={saveDisabled}>
           <X size={16} strokeWidth={2} aria-hidden />
           Close
         </button>
@@ -180,6 +183,7 @@ function SettingsFieldEditActions({
           <button
             type="button"
             className="um_btn_primary"
+            disabled={saveDisabled}
             onClick={() => void onSave()}
           >
             <Save size={16} strokeWidth={2} aria-hidden />
@@ -223,6 +227,8 @@ type Props = {
   initialCompanyName: string;
   /** When true, mutating controls are disabled (company member / view-only). */
   readOnly?: boolean;
+  /** Company admin / platform admin may persist a unique organization name. */
+  canRenameCompanyName?: boolean;
   /** When set, registration / deal settings are loaded and saved per organization. */
   workspaceCompanyId?: string;
   /** After a successful name save: update session / directory so headers and other tabs match. */
@@ -232,12 +238,15 @@ type Props = {
 export function CompanySettingsTabPanel({
   initialCompanyName,
   readOnly = false,
+  canRenameCompanyName = true,
   workspaceCompanyId,
   onCompanyDisplayNamePersisted,
 }: Props) {
   const [companyName, setCompanyName] = useState(initialCompanyName);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(initialCompanyName);
+  const [nameError, setNameError] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
   const prevInitialNameRef = useRef(initialCompanyName);
 
   const [qualificationEnabled, setQualificationEnabled] = useState(false);
@@ -534,8 +543,6 @@ export function CompanySettingsTabPanel({
 
   useEffect(() => {
     if (!readOnly) return;
-    setEditingName(false);
-    setNameDraft(companyName);
     setEditQualification(false);
     setEditOfferings(false);
     setEditEmailVerify(false);
@@ -545,7 +552,7 @@ export function CompanySettingsTabPanel({
     setEditBg(false);
     setEditLogoIcon(false);
     setDistributionDropdownOpen(false);
-  }, [readOnly, companyName]);
+  }, [readOnly]);
 
   const portalHost = useMemo(
     () => portalHostFromCompanyName(companyName),
@@ -669,9 +676,8 @@ export function CompanySettingsTabPanel({
       <header className="cp_settings_header">
         <h2 className="cp_settings_title">Workspace settings</h2>
         <p className="cp_settings_page_lead">
-          Configure your organization name, investor registration, deal defaults, and branding
-          for the company portal. Changes apply to this workspace and are saved to your company
-          record.
+          View workspace settings for this company. Company administrators can update the
+          company name; other settings on this page are view-only.
         </p>
       </header>
 
@@ -695,32 +701,74 @@ export function CompanySettingsTabPanel({
                 type="text"
                 className="cp_settings_field_input"
                 value={editingName ? nameDraft : companyName}
-                disabled={readOnly || !editingName}
-                onChange={(e) => setNameDraft(e.target.value)}
+                disabled={!canRenameCompanyName || !editingName || nameSaving}
+                onChange={(e) => {
+                  setNameDraft(e.target.value);
+                  if (nameError) setNameError("");
+                }}
                 aria-label="Company name"
+                aria-invalid={nameError ? true : undefined}
+                aria-describedby={nameError ? "cp-company-name-error" : undefined}
               />
               <SettingsFieldEditActions
-                readOnly={readOnly}
+                readOnly={!canRenameCompanyName}
                 editing={editingName}
+                saveDisabled={nameSaving}
+                saveLabel={nameSaving ? "Saving…" : "Save"}
                 editAriaLabel="Edit company name"
                 onEdit={() => {
                   setNameDraft(companyName);
+                  setNameError("");
                   setEditingName(true);
                 }}
-                onSave={() => {
-                  const next = nameDraft.trim() || companyName;
-                  setCompanyName(next);
-                  setNameDraft(next);
+                onSave={async () => {
+                  const next = nameDraft.trim();
+                  if (!next) {
+                    setNameError("Company name is required.");
+                    return;
+                  }
+                  if (next === companyName.trim()) {
+                    setNameDraft(companyName);
+                    setNameError("");
+                    setEditingName(false);
+                    return;
+                  }
+                  if (!workspaceCompanyId) {
+                    setNameError("Company workspace is not available.");
+                    return;
+                  }
+                  setNameSaving(true);
+                  setNameError("");
+                  const result = await patchCompanyDisplayName(
+                    workspaceCompanyId,
+                    next,
+                  );
+                  setNameSaving(false);
+                  if (!result.ok) {
+                    setNameError(result.message);
+                    toast.error("Could not update company name", result.message);
+                    return;
+                  }
+                  const saved = result.name;
+                  setCompanyName(saved);
+                  setNameDraft(saved);
                   setEditingName(false);
-                  onCompanyDisplayNamePersisted?.(next);
+                  onCompanyDisplayNamePersisted?.(saved);
                   toast.success("Saved", "Company name updated.");
                 }}
                 onCancel={() => {
+                  if (nameSaving) return;
                   setNameDraft(companyName);
+                  setNameError("");
                   setEditingName(false);
                 }}
               />
             </div>
+            {nameError ? (
+              <p id="cp-company-name-error" className="cp_settings_name_error" role="alert">
+                {nameError}
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="cp_settings_row cp_settings_row_spaced cp_settings_row_general">

@@ -1,12 +1,17 @@
 import type { Request, Response } from "express";
+import { eq } from "drizzle-orm";
 import { signInWithPassword } from "../../services/auth/auth.service.js";
 import { linkPortalSessionToAuthTokens } from "../../services/auth/token.service.js";
 import { startUserPortalSession } from "../../services/platform/userActivity.service.js";
+import { applyInvestorInviteAfterAuth } from "../../services/contact/investorInviteLink.service.js";
+import { db } from "../../database/db.js";
+import { users } from "../../schema/auth.schema/signin.js";
 import { setRefreshTokenCookie } from "../../utils/authCookies.js";
 
 type SigninBody = {
   email?: unknown;
   password?: unknown;
+  inviteRef?: unknown;
 };
 
 export async function postSignin(req: Request, res: Response): Promise<void> {
@@ -51,6 +56,43 @@ export async function postSignin(req: Request, res: Response): Promise<void> {
     }
   } catch (err) {
     console.error("startUserPortalSession after signin:", err);
+  }
+
+  const inviteRef =
+    typeof body.inviteRef === "string" ? body.inviteRef.trim() : "";
+  if (inviteRef) {
+    try {
+      const userId = String(
+        (result.userDetails[0] as { id?: string } | undefined)?.id ?? "",
+      ).trim();
+      if (userId) {
+        const [row] = await db
+          .select({
+            id: users.id,
+            email: users.email,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            phone: users.phone,
+            role: users.role,
+          })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1);
+        if (row) {
+          await applyInvestorInviteAfterAuth({
+            inviteRef,
+            userId,
+            emailNorm: String(row.email ?? "").trim().toLowerCase(),
+            firstName: String(row.firstName ?? "").trim(),
+            lastName: String(row.lastName ?? "").trim(),
+            phone: String(row.phone ?? "").trim(),
+            role: String(row.role ?? "").trim(),
+          });
+        }
+      }
+    } catch (err) {
+      console.error("applyInvestorInviteAfterAuth after signin:", err);
+    }
   }
 
   setRefreshTokenCookie(res, result.refreshToken);

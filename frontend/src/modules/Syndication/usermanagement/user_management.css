@@ -324,6 +324,25 @@ a.um_toolbar_export_btn {
   color: #64748b;
 }
 
+.um_toolbar_notice--error {
+  color: #b91c1c;
+}
+
+.um_toolbar_notice_retry {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 0.375em;
+  padding: 0.1em 0.6em;
+  font: inherit;
+  cursor: pointer;
+}
+
+.um_toolbar_notice_retry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .um_btn_primary,
 .um_btn_secondary {
   display: inline-flex;
@@ -563,13 +582,6 @@ select {
   background-color: var(--portal-surface, #fff);
   color: var(--portal-text, #0f172a);
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.65em center;
-  background-size: 1em;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease,
@@ -609,7 +621,6 @@ select option {
   padding: 0.35em 0.5em;
 }
 
-:root[data-theme="dark"] .um_field_select,
 :root[data-theme="dark"] select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
 }
@@ -1179,6 +1190,49 @@ select option {
 .um_membership_company {
   color: #0f172a;
   font-weight: 500;
+}
+
+.um_org_badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.um_org_badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.2em 0.55em;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--ui-button-border-radius, 4px);
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+
+.um_org_badge_icon {
+  flex-shrink: 0;
+  color: #64748b;
+}
+
+.um_org_badge_label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+td.um_td_memberships:not(.um_td_role) {
+  max-width: 18rem;
 }
 
 .um_membership_sep {

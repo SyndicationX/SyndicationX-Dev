@@ -4,6 +4,7 @@ import {
 } from "../../utils/offeringMoneyFormat"
 import type { ClassSetupTotals } from "../utils/classSetupTotals"
 import { formatMoney, formatPct } from "../utils/classSetupTotals"
+import { formatCount } from "@/common/utils/formatCount"
 
 interface CapitalizationCardProps {
   totals: ClassSetupTotals
@@ -56,11 +57,11 @@ export function CapitalizationCard({
       </div>
       <div className="cs_metric">
         <span className="cs_metric_label">Equity classes</span>
-        <span className="cs_metric_value">{totals.equityClassCount}</span>
+        <span className="cs_metric_value">{formatCount(totals.equityClassCount)}</span>
       </div>
       <div className="cs_metric">
         <span className="cs_metric_label">Fixed-return classes</span>
-        <span className="cs_metric_value">{totals.fixedReturnClassCount}</span>
+        <span className="cs_metric_value">{formatCount(totals.fixedReturnClassCount)}</span>
       </div>
       <div className="cs_metric">
         <span className="cs_metric_label">Equity ownership</span>

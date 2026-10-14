@@ -22,6 +22,8 @@ export type WorkspaceExportAuditInput = {
   exporterOrgName: string;
   rowCount: number;
   exportedSampleLines?: string[];
+  /** Overrides email title/subject (e.g. "General Partners", "Team Members"). */
+  entityLabel?: string;
 };
 
 export type WorkspaceExportAuditResult =
@@ -40,12 +42,24 @@ function escapeHtml(s: string): string {
 const EMAIL_FONT =
   "'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif";
 
-function copyForKind(kind: WorkspaceExportAuditKind): {
+function copyForKind(
+  kind: WorkspaceExportAuditKind,
+  entityLabel?: string,
+): {
   textTitle: string;
   htmlTitle: string;
   intro: string;
   subjectEntity: string;
 } {
+  const label = entityLabel?.trim();
+  if (label) {
+    return {
+      textTitle: `${label} export — SyndicationX`,
+      htmlTitle: `${label} exported`,
+      intro: `A user exported ${label.toLowerCase()} rows for a deal.`,
+      subjectEntity: label,
+    };
+  }
   switch (kind) {
     case "members":
       return {
@@ -108,7 +122,7 @@ function buildBodies(
   kind: WorkspaceExportAuditKind,
   input: WorkspaceExportAuditInput,
 ): { text: string; html: string } {
-  const { textTitle, htmlTitle, intro } = copyForKind(kind);
+  const { textTitle, htmlTitle, intro } = copyForKind(kind, input.entityLabel);
   const when = new Date().toISOString();
 
   const text = [
@@ -224,7 +238,7 @@ export async function sendWorkspaceExportAuditNotification(
     };
   }
 
-  const { subjectEntity } = copyForKind(kind);
+  const { subjectEntity } = copyForKind(kind, input.entityLabel);
   const subject = `[SyndicationX] ${subjectEntity} exported (${input.rowCount} record${input.rowCount === 1 ? "" : "s"})`;
 
   /** When BCC env addresses are on `To`, do not repeat them in a `bcc` header. */

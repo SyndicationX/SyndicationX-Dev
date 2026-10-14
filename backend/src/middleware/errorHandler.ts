@@ -41,6 +41,18 @@ export function errorHandler(
 
   const message = err instanceof Error ? err.message : String(err);
   console.error("[api] unhandled error:", message);
+  const cause =
+    err instanceof Error && "cause" in err ? err.cause : undefined;
+  if (cause instanceof Error) {
+    const code =
+      "code" in cause && cause.code != null ? String(cause.code) : "";
+    console.error(
+      "[api] error cause:",
+      [code, cause.message].filter(Boolean).join(" "),
+    );
+  } else if (cause != null) {
+    console.error("[api] error cause:", cause);
+  }
   if (err instanceof Error && err.stack) {
     console.error(err.stack);
   }

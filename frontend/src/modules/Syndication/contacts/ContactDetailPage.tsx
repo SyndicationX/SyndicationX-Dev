@@ -1,5 +1,6 @@
 import {
   Activity,
+  Briefcase,
   Calendar,
   CheckCircle2,
   ChevronDown,
@@ -21,15 +22,26 @@ import {
   displayEmail,
   isDisplayableEmail,
 } from "../../../common/utils/displayEmail"
+import { isPlatformAdmin } from "../../../common/auth/roleUtils"
+import { DealAvatarIconRing } from "../../../common/components/entity-avatar/EntityAvatarNameCell"
+import {
+  DataTable,
+  type DataTableColumn,
+} from "../../../common/components/data-table/DataTable"
 import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { toast } from "../../../common/components/Toast"
-import { fetchContact } from "./api/contactsApi"
-import type { ContactRow } from "./types/contact.types"
+import { investorRoleLabel } from "../Deals/constants/investor-profile"
+import { fetchContact, fetchContactDeals } from "./api/contactsApi"
+import {
+  withPlatformContactTag,
+  type ContactDealRow,
+  type ContactRow,
+} from "./types/contact.types"
 import "../Deals/deals-list.css"
 import "./contacts.css"
 import "./contact-detail.css"
 
-type MainTab = "activities" | "referrals"
+type MainTab = "activities" | "referrals" | "deals"
 type ActivityFilter =
   | "all"
   | "notes"
@@ -68,7 +80,7 @@ const ACTIVITY_FILTERS: ReadonlyArray<{
   { id: "pipelines", label: "Pipelines" },
   { id: "automations", label: "Automations" },
   { id: "tasks", label: "Tasks" },
-  { id: "meetings", label: "Meetings", isNew: true },
+  { id: "meetings", label: "Meetings" },
   { id: "texts", label: "Texts" },
 ]
 
@@ -137,7 +149,7 @@ function buildActivities(contact: ContactRow): ActivityItem[] {
       id: `welcome-${contact.id}`,
       kind: "email",
       title: "System email",
-      subject: "Welcome to Cash Flow Portal",
+      subject: "Welcome to SyndicationX",
       at: contact.createdAt,
     })
   }
@@ -172,9 +184,84 @@ function buildActivities(contact: ContactRow): ActivityItem[] {
   )
 }
 
+const DEAL_LAST_WENT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const
+
+/** `11-Oct-2026`. Empty when the contact has never opened the deal. */
+function formatDealLastWent(iso: string | null): string {
+  if (!iso?.trim()) return "—"
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return "—"
+  return `${date.getDate()}-${DEAL_LAST_WENT_MONTHS[date.getMonth()]}-${date.getFullYear()}`
+}
+
+const CONTACT_DEAL_COLUMNS: DataTableColumn<ContactDealRow>[] = [
+  {
+    id: "dealName",
+    header: "Deal name",
+    sortValue: (row) => row.dealName.toLowerCase(),
+    cell: (row) => {
+      const name = row.dealName.trim() || "—"
+      const dealId = row.dealId.trim()
+      return (
+        <div className="deals_list_name_cell">
+          <DealAvatarIconRing />
+          <div className="deals_list_name_text">
+            {dealId ? (
+              <Link
+                className="deals_table_name_link"
+                to={`/deals/${encodeURIComponent(dealId)}`}
+              >
+                {name}
+              </Link>
+            ) : (
+              name
+            )}
+          </div>
+        </div>
+      )
+    },
+  },
+  {
+    id: "contactRole",
+    header: "Contact role",
+    sortValue: (row) => investorRoleLabel(row.contactRole).toLowerCase(),
+    cell: (row) => investorRoleLabel(row.contactRole),
+  },
+  {
+    id: "dealOrganization",
+    header: "Deal organization",
+    sortValue: (row) => row.dealOrganization.toLowerCase(),
+    cell: (row) => row.dealOrganization.trim() || "—",
+  },
+  {
+    id: "lastWentAt",
+    header: "Last visit",
+    sortValue: (row) => {
+      if (!row.lastWentAt) return 0
+      const time = new Date(row.lastWentAt).getTime()
+      return Number.isNaN(time) ? 0 : time
+    },
+    cell: (row) => formatDealLastWent(row.lastWentAt),
+  },
+]
+
 function ContactDetailPage() {
   const { contactId = "" } = useParams<{ contactId: string }>()
   const navigate = useNavigate()
+  const platformAdmin = isPlatformAdmin()
   const [contact, setContact] = useState<ContactRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [mainTab, setMainTab] = useState<MainTab>("activities")
@@ -183,6 +270,9 @@ function ContactDetailPage() {
     Partial<Record<SidebarSectionId, boolean>>
   >({})
   const [moreOpen, setMoreOpen] = useState(false)
+  const [contactDeals, setContactDeals] = useState<ContactDealRow[]>([])
+  const [dealsLoading, setDealsLoading] = useState(false)
+  const [dealsError, setDealsError] = useState("")
 
   const load = useCallback(async () => {
     const id = contactId.trim()
@@ -194,7 +284,7 @@ function ContactDetailPage() {
     setLoading(true)
     try {
       const row = await fetchContact(id)
-      setContact(row)
+      setContact(row ? withPlatformContactTag(row) : row)
       if (!row) toast.error("Not found", "This contact could not be loaded.")
     } catch {
       setContact(null)
@@ -207,6 +297,31 @@ function ContactDetailPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!platformAdmin || mainTab !== "deals") return
+    const id = contactId.trim()
+    if (!id) return
+    let cancelled = false
+    setDealsLoading(true)
+    setDealsError("")
+    void fetchContactDeals(id)
+      .then((rows) => {
+        if (!cancelled) setContactDeals(rows)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setContactDeals([])
+          setDealsError("Could not load deals for this contact.")
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDealsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [platformAdmin, mainTab, contactId])
 
   const activities = useMemo(
     () => (contact ? buildActivities(contact) : []),
@@ -431,6 +546,18 @@ function ContactDetailPage() {
                           </dd>
                         </div>
                         <div>
+                          <dt>Invited by</dt>
+                          <dd>{contact.invitedByDisplayName?.trim() || "—"}</dd>
+                        </div>
+                        {platformAdmin ? (
+                          <div>
+                            <dt>Visible on platform</dt>
+                            <dd>
+                              {contact.visibleToUsers === true ? "Yes" : "No"}
+                            </dd>
+                          </div>
+                        ) : null}
+                        <div>
                           <dt>Added by</dt>
                           <dd>{contact.createdByDisplayName?.trim() || "—"}</dd>
                         </div>
@@ -510,20 +637,69 @@ function ContactDetailPage() {
                     Referrals
                   </span>
                 </button>
+                {platformAdmin ? (
+                  <button
+                    type="button"
+                    id="cd-main-tab-deals"
+                    role="tab"
+                    aria-selected={mainTab === "deals"}
+                    aria-controls="cd-main-panel-deals"
+                    className={`um_members_tab deals_tabs_tab um_segmented_tab${
+                      mainTab === "deals" ? " um_members_tab_active" : ""
+                    }`}
+                    onClick={() => setMainTab("deals")}
+                  >
+                    <Briefcase
+                      className="deals_tabs_icon um_segmented_tab_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    <span className="deals_tabs_label um_segmented_tab_label">
+                      Deals
+                    </span>
+                  </button>
+                ) : null}
               </div>
             </TabsScrollStrip>
           </div>
-          <a
+          {/* <a
             className="cd_demo_link"
             href="https://www.cashflowportal.com"
             target="_blank"
             rel="noreferrer"
           >
             Schedule a demo
-          </a>
+          </a> */}
         </div>
 
-        {mainTab === "activities" ? (
+        {mainTab === "deals" && platformAdmin ? (
+          <div
+            id="cd-main-panel-deals"
+            role="tabpanel"
+            aria-labelledby="cd-main-tab-deals"
+            className="cd_feed cd_deals_panel"
+          >
+            <h2 className="cd_feed_title">Deals</h2>
+            {dealsError ? (
+              <p className="cd_feed_empty" role="alert">
+                {dealsError}
+              </p>
+            ) : (
+              <DataTable<ContactDealRow>
+                columns={CONTACT_DEAL_COLUMNS}
+                rows={contactDeals}
+                getRowKey={(row) => row.dealId}
+                emptyLabel="No deals for this contact."
+                visualVariant="members"
+                membersShell="plain"
+                stickyFirstColumn={false}
+                isLoading={dealsLoading}
+                initialSort={{ columnId: "dealName", direction: "asc" }}
+              />
+            )}
+          </div>
+        ) : mainTab === "activities" ? (
           <>
             <div className="um_members_tabs_outer deals_tabs_outer um_segmented_tabs_outer cd_activity_filters_outer">
               <TabsScrollStrip scrollClassName="deals_tabs_scroll um_segmented_tabs_scroll">

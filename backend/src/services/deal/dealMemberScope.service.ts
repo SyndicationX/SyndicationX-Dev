@@ -1,5 +1,17 @@
-import { pool } from "../../database/db.js";
-import { isCompanyAdminRole } from "../../constants/roles.js";
+import { eq } from "drizzle-orm";
+import { db, pool } from "../../database/db.js";
+import {
+  isCompanyAdminRole,
+  isPlatformAdminRole,
+  LEGACY_USER,
+  PLATFORM_USER,
+} from "../../constants/roles.js";
+import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
+import { companies, users } from "../../schema/schema.js";
+import {
+  listOrganizationIdsForUser,
+  userHasAccessToOrganization,
+} from "../org/orgResolution.service.js";
 
 const DEAL_INVESTMENT_AUTOSAVE_CONTACT =
   "__portal_investment_autosave__";
@@ -15,7 +27,8 @@ export async function listDealIdsFromDealMemberRosterForUser(
     `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE trim(dm.deal_member_role) <> ''
+     WHERE dm.is_draft = false
+       AND trim(dm.deal_member_role) <> ''
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -48,6 +61,7 @@ export async function isPortalUserOnDealMemberRoster(
      FROM deal_member dm
      INNER JOIN users u ON u.id = $2::uuid
      WHERE dm.deal_id = $1::uuid
+       AND dm.is_draft = false
        AND trim(dm.deal_member_role) <> ''
        AND (
          trim(dm.contact_member_id) = u.id::text
@@ -158,12 +172,14 @@ export async function listCoSponsorPortalUserIdsOnDeal(
        SELECT DISTINCT trim(both from dm.contact_member_id) AS member_key
        FROM deal_member dm
        WHERE dm.deal_id = $1::uuid
+         AND dm.is_draft = false
          AND lower(trim(dm.deal_member_role)) IN ('co-sponsor', 'co sponsor')
          AND trim(coalesce(dm.contact_member_id, '')) <> ''
        UNION
        SELECT DISTINCT trim(both from di.contact_id) AS member_key
        FROM deal_investment di
        WHERE di.deal_id = $1::uuid
+         AND di.is_draft = false
          AND lower(trim(di.investor_role)) IN ('co-sponsor', 'co sponsor')
          AND trim(di.contact_id) <> $2
          AND trim(coalesce(di.contact_id, '')) <> ''
@@ -232,6 +248,7 @@ export async function resolveViewerDealMemberRoleOnDeal(
      FROM deal_member dm
      INNER JOIN users u ON u.id = $2::uuid
      WHERE dm.deal_id = $1::uuid
+       AND dm.is_draft = false
        AND trim(dm.deal_member_role) <> ''
        AND (
          trim(dm.contact_member_id) = u.id::text
@@ -246,6 +263,7 @@ export async function resolveViewerDealMemberRoleOnDeal(
      FROM deal_investment di
      INNER JOIN users u ON u.id = $2::uuid
      WHERE di.deal_id = $1::uuid
+       AND di.is_draft = false
        AND trim(di.investor_role) <> ''
        AND trim(di.contact_id) <> '__portal_investment_autosave__'
        AND (
@@ -288,7 +306,8 @@ export async function listDealIdsWhereViewerIsCoSponsor(
     `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE lower(trim(dm.deal_member_role)) IN ('co-sponsor', 'co sponsor')
+     WHERE dm.is_draft = false
+       AND lower(trim(dm.deal_member_role)) IN ('co-sponsor', 'co sponsor')
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -301,7 +320,8 @@ export async function listDealIdsWhereViewerIsCoSponsor(
      SELECT DISTINCT di.deal_id::text AS deal_id
      FROM deal_investment di
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE lower(trim(di.investor_role)) IN ('co-sponsor', 'co sponsor')
+     WHERE di.is_draft = false
+       AND lower(trim(di.investor_role)) IN ('co-sponsor', 'co sponsor')
        AND trim(di.contact_id) <> $2
        AND (
          trim(di.contact_id) = u.id::text
@@ -353,7 +373,8 @@ export async function viewerHasNonCoSponsorDealMemberRole(
     `SELECT 1 AS ok
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE trim(dm.deal_member_role) <> ''
+     WHERE dm.is_draft = false
+       AND trim(dm.deal_member_role) <> ''
        AND lower(trim(dm.deal_member_role)) NOT IN ('co-sponsor', 'co sponsor')
        AND (
          trim(dm.contact_member_id) = u.id::text
@@ -412,7 +433,8 @@ export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
     `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE ${sqlRoleIsLeadOrAdmin("dm.deal_member_role")}
+     WHERE dm.is_draft = false
+       AND ${sqlRoleIsLeadOrAdmin("dm.deal_member_role")}
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -425,7 +447,8 @@ export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
      SELECT DISTINCT di.deal_id::text AS deal_id
      FROM deal_investment di
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE ${sqlRoleIsLeadOrAdmin("di.investor_role")}
+     WHERE di.is_draft = false
+       AND ${sqlRoleIsLeadOrAdmin("di.investor_role")}
        AND trim(di.contact_id) <> $2
        AND (
          trim(di.contact_id) = u.id::text
@@ -459,7 +482,8 @@ export async function listDealIdsWhereViewerIsLeadSponsor(
     `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE ${sqlRoleIsLead("dm.deal_member_role")}
+     WHERE dm.is_draft = false
+       AND ${sqlRoleIsLead("dm.deal_member_role")}
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -472,7 +496,8 @@ export async function listDealIdsWhereViewerIsLeadSponsor(
      SELECT DISTINCT di.deal_id::text AS deal_id
      FROM deal_investment di
      INNER JOIN users u ON u.id = $1::uuid
-     WHERE ${sqlRoleIsLead("di.investor_role")}
+     WHERE di.is_draft = false
+       AND ${sqlRoleIsLead("di.investor_role")}
        AND trim(di.contact_id) <> $2
        AND (
          trim(di.contact_id) = u.id::text
@@ -506,6 +531,17 @@ export async function viewerIsLeadOrAdminSponsorOnAnyDeal(
   return ids.length > 0;
 }
 
+/** Lead Sponsor, Admin sponsor, or Co-sponsor on any deal roster. */
+export async function viewerIsDealSponsorOnAnyDeal(
+  userId: string,
+): Promise<boolean> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return false;
+  if (await viewerIsLeadOrAdminSponsorOnAnyDeal(uid)) return true;
+  const coIds = await listDealIdsWhereViewerIsCoSponsor(uid);
+  return coIds.length > 0;
+}
+
 const SPONSOR_ROLES_IN =
   "('lead sponsor', 'admin sponsor', 'co-sponsor', 'co sponsor')";
 
@@ -531,6 +567,107 @@ export async function isPortalUserLeadOrAdminSponsorOnDeal(
   return role === "lead_sponsor" || role === "admin_sponsor";
 }
 
+/** Lead Sponsor, Admin sponsor, or Co-sponsor on this deal. */
+export async function isPortalUserDealSponsorOnDeal(
+  dealId: string,
+  userId: string,
+): Promise<boolean> {
+  const role = await resolveViewerDealMemberRoleOnDeal(dealId, userId);
+  return (
+    role === "lead_sponsor" ||
+    role === "admin_sponsor" ||
+    role === "co_sponsor"
+  );
+}
+
+/**
+ * Deal profile PUT (name, stage, property, etc.): co-sponsors and LP roster
+ * members cannot edit. Lead / admin sponsor and same-org workspace viewers can.
+ * A syndicator who only sees the deal because a peer sponsors it in another
+ * organization cannot edit it.
+ */
+export function viewerDealMemberRoleMayEditDealProfile(
+  role: ViewerDealMemberRoleKind,
+): boolean {
+  return role !== "co_sponsor" && role !== "lp_investor";
+}
+
+export async function viewerMayEditDealProfile(
+  dealId: string,
+  userId: string,
+): Promise<boolean> {
+  const role = await resolveViewerDealMemberRoleOnDeal(dealId, userId);
+  if (role === "lead_sponsor" || role === "admin_sponsor") return true;
+  if (!viewerDealMemberRoleMayEditDealProfile(role)) return false;
+
+  const uid = String(userId ?? "").trim();
+  const [actor] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, uid))
+    .limit(1);
+  const actorRole = String(actor?.role ?? "").trim();
+  if (isPlatformAdminRole(actorRole)) return true;
+
+  const orgIds = await listOrganizationIdsForUser(uid);
+  if (
+    orgIds.length === 0 &&
+    (actorRole === PLATFORM_USER || actorRole === LEGACY_USER)
+  ) {
+    return true;
+  }
+
+  const [deal] = await db
+    .select({
+      organizationId: addDealForm.organizationId,
+      owningEntityName: addDealForm.owningEntityName,
+    })
+    .from(addDealForm)
+    .where(eq(addDealForm.id, dealId))
+    .limit(1);
+  if (!deal) return false;
+  const dealOrg = String(deal.organizationId ?? "").trim().toLowerCase();
+  for (const orgId of orgIds) {
+    if (dealOrg && dealOrg === orgId) return true;
+    if (dealOrg) continue;
+    const [company] = await db
+      .select({ name: companies.name })
+      .from(companies)
+      .where(eq(companies.id, orgId))
+      .limit(1);
+    const companyName = String(company?.name ?? "").trim().toLowerCase();
+    const owning = String(deal.owningEntityName ?? "").trim().toLowerCase();
+    if (companyName && owning && companyName === owning) return true;
+  }
+  return false;
+}
+
+/**
+ * Approve fund: Lead / Admin sponsor, platform admin, or company admin of the
+ * deal’s organization.
+ */
+export async function viewerCanApproveDealFundOnDeal(params: {
+  dealId: string;
+  userId: string;
+  userRole?: string | null;
+}): Promise<boolean> {
+  const dealId = String(params.dealId ?? "").trim();
+  const userId = String(params.userId ?? "").trim();
+  if (!dealId || !userId) return false;
+  if (await isPortalUserLeadOrAdminSponsorOnDeal(dealId, userId)) return true;
+  const role = String(params.userRole ?? "").trim();
+  if (isPlatformAdminRole(role)) return true;
+  if (!isCompanyAdminRole(role)) return false;
+  const [deal] = await db
+    .select({ organizationId: addDealForm.organizationId })
+    .from(addDealForm)
+    .where(eq(addDealForm.id, dealId))
+    .limit(1);
+  const orgId = String(deal?.organizationId ?? "").trim();
+  if (!orgId) return false;
+  return userHasAccessToOrganization(userId, orgId);
+}
+
 /** True when the portal user is Lead Sponsor on this deal (id or contact email match). */
 export async function isPortalUserLeadSponsorOnDeal(
   dealId: string,
@@ -552,6 +689,7 @@ export async function isPortalUserSponsorOnDeal(
      FROM deal_member dm
      INNER JOIN users u ON u.id = $2::uuid
      WHERE dm.deal_id = $1::uuid
+       AND dm.is_draft = false
        AND lower(trim(dm.deal_member_role)) IN ${SPONSOR_ROLES_IN}
        AND (
          trim(dm.contact_member_id) = u.id::text
@@ -566,6 +704,7 @@ export async function isPortalUserSponsorOnDeal(
      FROM deal_investment di
      INNER JOIN users u ON u.id = $2::uuid
      WHERE di.deal_id = $1::uuid
+       AND di.is_draft = false
        AND lower(trim(di.investor_role)) IN ${SPONSOR_ROLES_IN}
        AND trim(di.contact_id) <> '__portal_investment_autosave__'
        AND (

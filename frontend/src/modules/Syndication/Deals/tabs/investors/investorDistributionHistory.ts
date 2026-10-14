@@ -17,6 +17,9 @@ export interface InvestorDistHistoryRow {
   key: string
   distributionId: string
   memo: string
+  distributionName: string
+  date: string
+  achStatus: string
   type: string
   paymentDate: string
   payment: number
@@ -97,6 +100,17 @@ export function buildInvestorPaymentMatchKeys(params: {
     if (email) emails.add(email)
   }
   return { investorIds, contactIds, emails }
+}
+
+export function payoutMatchesInvestor(
+  keys: InvestorPaymentMatchKeys,
+  investmentId: string | undefined,
+): boolean {
+  const payId = norm(investmentId)
+  if (!payId) return false
+  if (keys.investorIds.has(payId)) return true
+  if (keys.contactIds.has(payId)) return true
+  return false
 }
 
 export function investorMatchesPayment(
@@ -236,16 +250,21 @@ export function buildInvestorDistributionHistory(params: {
     )
     const distId = String(prior.id ?? "").trim()
     const window = resolvePeriodWindow(prior)
+    const memo = memoLabel(prior)
+    const named = String(prior.name ?? "").trim()
     rows.push({
       key: `${distId}:${index}`,
       distributionId: distId,
-      memo: memoLabel(prior),
+      memo,
+      distributionName: named || memo,
+      date: formatPaymentDateLabel(prior.date || prior.paymentDate || window.end),
+      achStatus: "not sent",
       type: typeDisplayLabel(prior),
       paymentDate: formatPaymentDateLabel(
         prior.paymentDate || prior.date || window.end,
       ),
       payment,
-      dateSort: String(prior.paymentDate || prior.date || "").slice(0, 10),
+      dateSort: String(prior.date || prior.paymentDate || "").slice(0, 10),
     })
     index += 1
   }

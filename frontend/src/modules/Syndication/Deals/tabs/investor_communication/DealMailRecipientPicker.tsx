@@ -16,12 +16,13 @@ import {
   type ReactNode,
 } from "react"
 import { EMAIL_UNAVAILABLE_LABEL } from "../../../../../common/utils/displayEmail"
+import { formatCount } from "@/common/utils/formatCount"
 import {
   groupDealMailRecipients,
   type DealMailRecipient,
 } from "./dealMailRecipients"
 
-type RecipientTab = "all" | "lp" | "gp"
+type RecipientTab = "all" | "lp" | "gp" | "sponsor"
 
 const LIST_NEAR_BOTTOM_PX = 24
 
@@ -290,7 +291,7 @@ function TabButton({
       onClick={() => onSelect(id)}
     >
       <span className="deal_inv_comm_recip_tab_label">{label}</span>
-      <span className="deal_inv_comm_recip_tab_count">{count}</span>
+      <span className="deal_inv_comm_recip_tab_count">{formatCount(count)}</span>
     </button>
   )
 }
@@ -314,11 +315,16 @@ export function DealMailRecipientPicker({
     () => filterRecipientsByQuery(tree.gps, query),
     [tree.gps, query],
   )
+  const filteredSponsors = useMemo(
+    () => filterRecipientsByQuery(tree.sponsors, query),
+    [tree.sponsors, query],
+  )
   const visibleIds = useMemo(() => {
     if (tab === "lp") return filteredLps.map((r) => r.id)
     if (tab === "gp") return filteredGps.map((r) => r.id)
-    return [...filteredLps, ...filteredGps].map((r) => r.id)
-  }, [tab, filteredLps, filteredGps])
+    if (tab === "sponsor") return filteredSponsors.map((r) => r.id)
+    return [...filteredLps, ...filteredGps, ...filteredSponsors].map((r) => r.id)
+  }, [tab, filteredLps, filteredGps, filteredSponsors])
   const visibleState = selectionState(visibleIds, selectedIds)
   const selectedCount = recipients.filter((r) => selectedIds.has(r.id)).length
   const releaseCount = recipients.filter(
@@ -353,6 +359,7 @@ export function DealMailRecipientPicker({
     recipients.length,
     filteredLps.length,
     filteredGps.length,
+    filteredSponsors.length,
   ])
 
   function scrollListToBottom() {
@@ -375,7 +382,9 @@ export function DealMailRecipientPicker({
         <TabButton
           id="all"
           label="All"
-          count={filteredLps.length + filteredGps.length}
+          count={
+            filteredLps.length + filteredGps.length + filteredSponsors.length
+          }
           active={tab === "all"}
           onSelect={setTab}
         />
@@ -393,6 +402,13 @@ export function DealMailRecipientPicker({
           active={tab === "gp"}
           onSelect={setTab}
         />
+        <TabButton
+          id="sponsor"
+          label="Sponsors"
+          count={filteredSponsors.length}
+          active={tab === "sponsor"}
+          onSelect={setTab}
+        />
       </div>
 
       <div className="deal_inv_comm_recip_toolbar">
@@ -401,10 +417,10 @@ export function DealMailRecipientPicker({
           <input
             type="search"
             className="um_search_input deal_inv_comm_recip_search_input"
-            placeholder="Search LP or GP…"
+            placeholder="Search LP, GP or sponsor…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search limited partners or general partners"
+            aria-label="Search limited partners, general partners or sponsors"
           />
         </div>
         <div className="deal_inv_comm_recip_bulk">
@@ -460,7 +476,7 @@ export function DealMailRecipientPicker({
           className="deal_inv_comm_recip_groups"
           role="tabpanel"
         >
-          {tab !== "gp" && filteredLps.length > 0 ? (
+          {(tab === "all" || tab === "lp") && filteredLps.length > 0 ? (
             <div className={tab === "all" ? "deal_inv_comm_recip_section" : undefined}>
               {tab === "all" ? (
                 <p className="deal_inv_comm_recip_section_label">Limited Partners</p>
@@ -473,13 +489,15 @@ export function DealMailRecipientPicker({
             </div>
           ) : null}
 
-          {tab !== "lp" && filteredGps.length > 0 ? (
+          {(tab === "all" || tab === "gp") && filteredGps.length > 0 ? (
             <div className={tab === "all" ? "deal_inv_comm_recip_section" : undefined}>
               {tab === "all" ? (
-                <p className="deal_inv_comm_recip_section_label">General Partners</p>
+                <p className="deal_inv_comm_recip_section_label">
+                  Class B General Partners
+                </p>
               ) : null}
               <GroupBlock
-                title="General Partners"
+                title="Class B General Partners"
                 countLabel={`${filteredGps.length}`}
                 ids={filteredGps.map((r) => r.id)}
                 selectedIds={selectedIds}
@@ -501,9 +519,39 @@ export function DealMailRecipientPicker({
             </div>
           ) : null}
 
+          {(tab === "all" || tab === "sponsor") && filteredSponsors.length > 0 ? (
+            <div className={tab === "all" ? "deal_inv_comm_recip_section" : undefined}>
+              {tab === "all" ? (
+                <p className="deal_inv_comm_recip_section_label">Sponsors</p>
+              ) : null}
+              <GroupBlock
+                title="Sponsors"
+                countLabel={`${filteredSponsors.length}`}
+                ids={filteredSponsors.map((r) => r.id)}
+                selectedIds={selectedIds}
+                onChangeSelectedIds={onChangeSelectedIds}
+                hint="Lead sponsor, admin sponsors, and co-sponsors on this deal."
+              >
+                {filteredSponsors.map((r) => (
+                  <InvestorRow
+                    key={r.id}
+                    recipient={r}
+                    checked={selectedIds.has(r.id)}
+                    onToggle={() =>
+                      onChangeSelectedIds(
+                        toggleIds(selectedIds, [r.id], !selectedIds.has(r.id)),
+                      )
+                    }
+                  />
+                ))}
+              </GroupBlock>
+            </div>
+          ) : null}
+
           {tab === "all" &&
           filteredLps.length === 0 &&
-          filteredGps.length === 0 ? (
+          filteredGps.length === 0 &&
+          filteredSponsors.length === 0 ? (
             <p className="deal_inv_comm_recipient_empty deal_inv_comm_recipient_empty_inset">
               No investors match your search.
             </p>
@@ -518,8 +566,15 @@ export function DealMailRecipientPicker({
           {tab === "gp" && filteredGps.length === 0 ? (
             <p className="deal_inv_comm_recipient_empty deal_inv_comm_recipient_empty_inset">
               {query.trim()
-                ? "No general partners match your search."
-                : "No general partners on this deal."}
+                ? "No Class B general partners match your search."
+                : "No Class B general partners on this deal."}
+            </p>
+          ) : null}
+          {tab === "sponsor" && filteredSponsors.length === 0 ? (
+            <p className="deal_inv_comm_recipient_empty deal_inv_comm_recipient_empty_inset">
+              {query.trim()
+                ? "No sponsors match your search."
+                : "No sponsors on this deal."}
             </p>
           ) : null}
         </div>
@@ -537,9 +592,9 @@ export function DealMailRecipientPicker({
       </div>
 
       <p className="deal_inv_comm_recip_summary" role="status">
-        <strong>{selectedCount} selected</strong>
+        <strong>{formatCount(selectedCount)} selected</strong>
         {releaseCount > 0
-          ? ` · ${releaseCount} require cosponsor release.`
+          ? ` · ${formatCount(releaseCount)} require cosponsor release.`
           : "."}
       </p>
     </div>

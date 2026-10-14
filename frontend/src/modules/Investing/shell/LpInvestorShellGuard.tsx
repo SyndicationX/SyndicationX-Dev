@@ -59,12 +59,12 @@ export function isPathAllowedForLpInvestor(pathname: string): boolean {
 
 /**
  * Redirects LP Investor deal participants away from admin / syndicating shell routes
- * (e.g. `/deals`, `/members`) to the investing deals hub — except
+ * (e.g. `/deals`, `/members`) to the dashboard — except
  * `/deals/:dealId/offering-portfolio` and `/deals/:dealId` (read-only deal / offering view).
  */
 export function LpInvestorShellGuard() {
   const { pathname } = useLocation()
   if (!isLpInvestorSessionUser()) return <Outlet />
   if (isPathAllowedForLpInvestor(pathname)) return <Outlet />
-  return <Navigate to="/investing/investments" replace />
+  return <Navigate to="/dashboard" replace />
 }

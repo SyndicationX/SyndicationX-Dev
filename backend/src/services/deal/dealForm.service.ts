@@ -21,10 +21,13 @@ import { syncFundingInstructionsPdfToDocumentsTab } from "./dealFundingDocuments
 import { sanitizeKeyHighlightsJson } from "../../utils/sanitizeKeyHighlightsJson.js";
 import { encryptOfferingPreviewDealId } from "../../utils/offeringPreviewCrypto.js";
 import {
+  DEFAULT_STATUS_BY_STAGE,
+  defaultStatusForStage,
   isDealStatus,
   isDealStageDraft,
   normalizeDealStageCanonical,
   normalizeDealStatus,
+  offeringStatusRequiresInvestorClass,
   resolveOfferingStatusForStageChange,
   validateDealStageAndStatus,
   validateOfferingStatusChange,
@@ -45,7 +48,9 @@ import {
 import {
   cancelDealSaasBillingBeforeDelete,
   scheduleDealSaasBillingSync,
+  syncDealSaasBillingForDeal,
 } from "../billing/dealBilling.service.js";
+import { resolveDealStageForSaasPaymentHold } from "../billing/dealStageSaasPaymentHold.js";
 
 const UPLOAD_SUBDIR = DEAL_ASSETS_UPLOAD_SUBDIR;
 
@@ -390,18 +395,16 @@ export async function insertAddDealForm(
       assetRelativePaths,
     ),
   };
-  const initialStageCanon = normalizeDealStageCanonical(
-    normalizedInput.dealStage,
-  );
+  const stageHold = resolveDealStageForSaasPaymentHold({
+    requestedStage: normalizedInput.dealStage,
+  });
+  const initialStageCanon = normalizeDealStageCanonical(stageHold.persistStage);
   const initialOfferingStatus =
     initialStageCanon != null
-      ? resolveOfferingStatusForStageChange({
-          nextStage: initialStageCanon,
-          currentStatus: "draft_hidden",
-        })
-      : "draft_hidden";
+      ? defaultStatusForStage(initialStageCanon)
+      : DEFAULT_STATUS_BY_STAGE.draft;
 
-  const candidates = dealStageCandidates(normalizedInput.dealStage);
+  const candidates = dealStageCandidates(stageHold.persistStage);
   let lastErr: unknown = null;
   for (const stage of candidates) {
     try {
@@ -409,6 +412,7 @@ export async function insertAddDealForm(
         ...baseRow,
         dealStage: stage,
         offeringStatus: initialOfferingStatus,
+        pendingDealStage: stageHold.pendingDealStage,
       };
       const [created] = await db.insert(addDealForm).values(row).returning();
       if (!created) throw new Error("Insert failed");
@@ -459,11 +463,24 @@ export type DealViewerScope = {
    */
   coSponsorDashboardDealIds: string[] | null;
   /**
-   * Investing Mode (and LP-email-scoped viewers): apply CRM Contacts Visibility
-   * (`show_offerings_visibility`) even for Lead / Admin / Co / company roles.
-   * Syndicating workspace lists skip this so sponsors still see every org deal.
+   * Contact / deal_participant / investor (not company workspace staff):
+   * syndicating lists and deal access are limited to Lead / Admin / Co deals.
+   */
+  syndicationSponsorOnly: boolean;
+  /** Deal ids for {@link syndicationSponsorOnly} (Lead / Admin / Co). */
+  syndicationSponsorDealIds: string[] | null;
+  /**
+   * Investing Mode only: apply CRM Contacts Visibility (`show_offerings_visibility`)
+   * for LP investors and for Lead / Admin / Co / company roles who switched modes.
+   * Syndicating workspace lists and deal access skip this.
    */
   enforceContactOfferingVisibility: boolean;
+  /**
+   * Offerings in another company where someone who shares an organization with
+   * this viewer is Lead, Admin, or Co-sponsor. Org 1 investors see them in
+   * Investing. Org 1 syndicators also see them on the syndication list, view only.
+   */
+  crossOrgColleagueSponsoredDealIds: string[];
 };
 
 export async function listAddDealFormsForViewer(
@@ -625,6 +642,67 @@ export async function updateDealGalleryCoverById(
   return updated;
 }
 
+/**
+ * Manage-deal-stage flow: moves lifecycle stage without touching any other deal field.
+ * Applies the same SaaS payment hold and offering-status transition as the edit-deal PUT.
+ * Returns `"INVALID_STAGE"` when the requested stage is not a known lifecycle stage.
+ */
+export async function updateDealStageById(
+  id: string,
+  requestedStage: string,
+): Promise<AddDealFormRow | undefined | "INVALID_STAGE"> {
+  if (normalizeDealStageCanonical(requestedStage) == null) return "INVALID_STAGE";
+  const existing = await getAddDealFormById(id);
+  if (!existing) return undefined;
+
+  const stageHold = resolveDealStageForSaasPaymentHold({
+    requestedStage: normalizeDealStage(requestedStage),
+    existing,
+  });
+  const prevStageCanon = normalizeDealStageCanonical(existing.dealStage);
+  const nextStageCanon = normalizeDealStageCanonical(stageHold.persistStage);
+  const stageChanged =
+    prevStageCanon != null &&
+    nextStageCanon != null &&
+    prevStageCanon !== nextStageCanon;
+  const offeringStatusOnStageChange =
+    stageChanged && nextStageCanon != null
+      ? resolveOfferingStatusForStageChange({
+          nextStage: nextStageCanon,
+          currentStatus: existing.offeringStatus,
+        })
+      : undefined;
+
+  const baseSet = {
+    ...(offeringStatusOnStageChange != null
+      ? { offeringStatus: offeringStatusOnStageChange }
+      : {}),
+    pendingDealStage: stageHold.pendingDealStage,
+  };
+  const candidates = dealStageCandidates(stageHold.persistStage);
+  let lastErr: unknown = null;
+  for (const stage of candidates) {
+    try {
+      const [updated] = await db
+        .update(addDealForm)
+        .set({ ...baseSet, dealStage: stage })
+        .where(eq(addDealForm.id, id))
+        .returning();
+      if (updated) scheduleDealSaasBillingSync(String(updated.id));
+      return updated;
+    } catch (err) {
+      lastErr = err;
+      if (
+        !isDealStageCheckError(err) ||
+        stage === candidates[candidates.length - 1]
+      ) {
+        throw err;
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Update failed");
+}
+
 export async function updateDealArchivedById(
   id: string,
   archived: boolean,
@@ -636,7 +714,13 @@ export async function updateDealArchivedById(
     .set({ archived })
     .where(eq(addDealForm.id, id))
     .returning();
-  if (updated) scheduleDealSaasBillingSync(String(updated.id));
+  if (updated) {
+    if (archived) {
+      await syncDealSaasBillingForDeal(String(updated.id));
+    } else {
+      scheduleDealSaasBillingSync(String(updated.id));
+    }
+  }
   return updated;
 }
 
@@ -948,6 +1032,12 @@ export function sanitizeOfferingOverviewPatch(
       if (!v) {
         out.offeringOverviewClassId = null;
       } else if (!OFFERING_OVERVIEW_CLASS_ID_UUID_RE.test(v)) {
+        if (offeringStatusRequiresInvestorClass(out.offeringStatus)) {
+          return {
+            ok: false,
+            message: "Create a class to change the deal status",
+          };
+        }
         return { ok: false, message: "Invalid offering overview class id." };
       } else {
         out.offeringOverviewClassId = v;
@@ -967,6 +1057,20 @@ export async function updateDealOfferingOverviewById(
   const existing = await getAddDealFormById(id);
   if (!existing) return undefined;
   if (patch.offeringStatus !== undefined) {
+    const nextStatus = normalizeDealStatus(patch.offeringStatus);
+    const prevStatus = normalizeDealStatus(existing.offeringStatus);
+    if (
+      nextStatus &&
+      nextStatus !== prevStatus &&
+      offeringStatusRequiresInvestorClass(nextStatus)
+    ) {
+      const classes = await listInvestorClassesByDealId(id);
+      if (classes.length === 0) {
+        throwOfferingOverviewValidation({
+          offering_status: "Create a class to change the deal status",
+        });
+      }
+    }
     await assertOfferingStatusChangeAllowed({
       dealId: id,
       dealStage: existing.dealStage,
@@ -983,6 +1087,7 @@ export async function updateDealOfferingOverviewById(
   }
 
   let promotedDealStage: string | undefined;
+  let pendingDealStage: string | null | undefined;
   if (patch.offeringStatus !== undefined) {
     const nextStatus = normalizeDealStatus(patch.offeringStatus);
     if (
@@ -996,7 +1101,16 @@ export async function updateDealOfferingOverviewById(
             "Add at least one investor class before opening to investment.",
         });
       }
-      promotedDealStage = normalizeDealStage("capital_raising");
+      const stageHold = resolveDealStageForSaasPaymentHold({
+        requestedStage: normalizeDealStage("capital_raising"),
+        existing,
+      });
+      if (isDealStageDraft(stageHold.persistStage)) {
+        pendingDealStage = stageHold.pendingDealStage;
+      } else {
+        promotedDealStage = stageHold.persistStage;
+        pendingDealStage = null;
+      }
     }
   }
 
@@ -1008,6 +1122,9 @@ export async function updateDealOfferingOverviewById(
         : {}),
       ...(promotedDealStage !== undefined
         ? { dealStage: promotedDealStage }
+        : {}),
+      ...(pendingDealStage !== undefined
+        ? { pendingDealStage }
         : {}),
       ...(patch.offeringVisibility !== undefined
         ? { offeringVisibility: patch.offeringVisibility }
@@ -1227,8 +1344,12 @@ export async function updateAddDealFormById(
       ? { organizationId: options.organizationId }
       : {};
 
+  const stageHold = resolveDealStageForSaasPaymentHold({
+    requestedStage: normalizedInput.dealStage,
+    existing,
+  });
   const prevStageCanon = normalizeDealStageCanonical(existing.dealStage);
-  const nextStageCanon = normalizeDealStageCanonical(normalizedInput.dealStage);
+  const nextStageCanon = normalizeDealStageCanonical(stageHold.persistStage);
   const stageChanged =
     prevStageCanon != null &&
     nextStageCanon != null &&
@@ -1262,8 +1383,9 @@ export async function updateAddDealFormById(
     ...(offeringStatusOnStageChange != null
       ? { offeringStatus: offeringStatusOnStageChange }
       : {}),
+    pendingDealStage: stageHold.pendingDealStage,
   };
-  const candidates = dealStageCandidates(normalizedInput.dealStage);
+  const candidates = dealStageCandidates(stageHold.persistStage);
   let lastErr: unknown = null;
   for (const stage of candidates) {
     try {

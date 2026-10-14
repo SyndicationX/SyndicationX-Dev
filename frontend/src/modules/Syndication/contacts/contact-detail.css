@@ -496,6 +496,12 @@ a.cd_email:hover {
   color: var(--portal-text-muted, #94a3b8);
 }
 
+.cd_deals_panel .um_table_wrap {
+  background: #fff;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: 0.45rem;
+}
+
 .cd_referrals_empty {
   display: flex;
   flex-direction: column;

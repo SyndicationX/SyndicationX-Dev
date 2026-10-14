@@ -1,8 +1,11 @@
 import { normalizeDealGallerySrc } from "@/common/utils/apiBaseUrl"
 import {
+  isAutoManagedDocumentsSection,
+  isInvestorEsignWorkspaceDocument,
   readDealDocumentSectionsForWorkspace,
   sectionDisplayLabel,
   type NestedPreviewDocument,
+  type OfferingPreviewSection,
 } from "../../utils/offeringPreviewDocSections"
 
 export type DealDocumentPickOption = {
@@ -22,10 +25,23 @@ function resolveDealDocumentUrl(doc: NestedPreviewDocument): string {
   return normalizeDealGallerySrc(raw).trim() || raw
 }
 
-/** Any file row on this deal's Documents tab (deal-scoped; enables Deal documents toggle). */
+/**
+ * Auto-managed sections hold investor-completed eSign PDFs and the generated
+ * Funding Information PDF — neither is a valid base document for a template.
+ */
+function isTemplateSourceSection(section: OfferingPreviewSection): boolean {
+  return !isAutoManagedDocumentsSection(section)
+}
+
+function isTemplateSourceDocument(doc: NestedPreviewDocument): boolean {
+  return !isInvestorEsignWorkspaceDocument(doc)
+}
+
+/** Any usable file on this deal's Documents tab (enables the Deal documents toggle). */
 export function dealHasAnySectionDocuments(dealId: string): boolean {
   for (const section of readDealDocumentSectionsForWorkspace(dealId)) {
-    if (section.nestedDocuments.length > 0) return true
+    if (!isTemplateSourceSection(section)) continue
+    if (section.nestedDocuments.some(isTemplateSourceDocument)) return true
   }
   return false
 }
@@ -36,7 +52,8 @@ function pdfFileNameFromDocument(doc: NestedPreviewDocument): string {
 }
 
 /**
- * Every PDF on this deal's Documents tab for eSign template creation (deal-scoped).
+ * PDFs on this deal's Documents tab that can seed an eSign template (deal-scoped).
+ * Investor-signed eSign PDFs and auto-generated section files are left out.
  */
 export function listDealPdfDocumentsForEsignTemplate(
   dealId: string,
@@ -45,9 +62,11 @@ export function listDealPdfDocumentsForEsignTemplate(
   if (!id) return []
   const out: DealDocumentPickOption[] = []
   for (const section of readDealDocumentSectionsForWorkspace(id)) {
+    if (!isTemplateSourceSection(section)) continue
     const sectionLabel = sectionDisplayLabel(section)
     for (const doc of section.nestedDocuments) {
       if (!doc.id?.trim() || !doc.name?.trim()) continue
+      if (!isTemplateSourceDocument(doc)) continue
       const url = resolveDealDocumentUrl(doc)
       if (!url) continue
       if (!isPdfFileName(doc.name) && !url.toLowerCase().includes(".pdf")) continue

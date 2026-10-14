@@ -11,6 +11,7 @@ import {
 } from "./companyCsv"
 import { notifyCompaniesExportAudit } from "./companiesExportNotifyApi"
 import { buildTableExportFilename } from "../../../common/utils/tableExportFilename"
+import { formatCount } from "@/common/utils/formatCount"
 
 interface ExportCompaniesModalProps {
   open: boolean
@@ -224,9 +225,9 @@ export function ExportCompaniesModal({
                   />
                   <span className="deals_export_modal_row_name">{row.name}</span>
                   <span className="deals_export_modal_row_meta">
-                    {String(row.userCount ?? 0)} members ·{" "}
-                    {String(row.dealCount ?? 0)} deals ·{" "}
-                    {String(row.contactCount ?? 0)} contacts
+                    {formatCount(row.userCount ?? 0)} members ·{" "}
+                    {formatCount(row.dealCount ?? 0)} deals ·{" "}
+                    {formatCount(row.contactCount ?? 0)} contacts
                   </span>
                 </label>
               </li>

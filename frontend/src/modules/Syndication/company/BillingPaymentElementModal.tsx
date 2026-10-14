@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   Elements,
   PaymentElement,
@@ -23,7 +23,8 @@ type BillingPaymentElementModalProps = {
   publishableKeyHint?: string | null;
   subscriptionId?: string | null;
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
+  footerInfo?: ReactNode;
   submitLabel?: string;
   onClose: () => void;
   onSuccess: () => void;
@@ -47,6 +48,7 @@ function PaymentForm({
   mode,
   companyId,
   subscriptionId,
+  footerInfo,
   submitLabel,
   onClose,
   onSuccess,
@@ -54,12 +56,14 @@ function PaymentForm({
   mode: BillingPaymentModalMode;
   companyId: string;
   subscriptionId?: string | null;
+  footerInfo?: ReactNode;
   submitLabel: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
   const stripe = useStripe();
   const elements = useElements();
+  const [cardholderName, setCardholderName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -82,13 +86,25 @@ function PaymentForm({
     setInfo("");
     if (!stripe || !elements) return;
 
+    const name = cardholderName.trim();
+    if (!name) {
+      setError("Enter the cardholder name.");
+      return;
+    }
+
     setSubmitting(true);
     try {
+      const confirmParams = {
+        return_url: returnUrl(),
+        payment_method_data: {
+          billing_details: { name },
+        },
+      };
       if (mode === "setup") {
         const { error: confirmError, setupIntent } =
           await stripe.confirmSetup({
             elements,
-            confirmParams: { return_url: returnUrl() },
+            confirmParams,
             redirect: "if_required",
           });
         if (confirmError) {
@@ -114,7 +130,7 @@ function PaymentForm({
       const { error: confirmError, paymentIntent } =
         await stripe.confirmPayment({
           elements,
-          confirmParams: { return_url: returnUrl() },
+          confirmParams,
           redirect: "if_required",
         });
 
@@ -154,9 +170,28 @@ function PaymentForm({
   return (
     <form className="cp_billing_pe_form" onSubmit={(e) => void handleSubmit(e)}>
       <div className="cp_billing_pe_element">
+        <label className="cp_billing_pe_name" htmlFor="cp-billing-cardholder-name">
+          Cardholder name
+          <input
+            id="cp-billing-cardholder-name"
+            className="cp_billing_filter_input"
+            name="cardholderName"
+            autoComplete="cc-name"
+            value={cardholderName}
+            maxLength={255}
+            required
+            disabled={submitting}
+            onChange={(event) => setCardholderName(event.target.value)}
+          />
+        </label>
         <PaymentElement
           options={{
             layout: "tabs",
+            fields: {
+              billingDetails: {
+                name: "never",
+              },
+            },
           }}
         />
       </div>
@@ -183,17 +218,25 @@ function PaymentForm({
         </span>
       </div>
       <div className="um_modal_actions cp_billing_pe_actions">
+        {footerInfo ? (
+          <p className="cp_billing_pe_action_info">{footerInfo}</p>
+        ) : null}
         <button
           type="button"
           className="um_btn_secondary"
           onClick={onClose}
           disabled={submitting}
         >
+          <X size={15} aria-hidden="true" />
           Cancel
         </button>
         <button
           type="submit"
-          className="um_btn_primary"
+          className={
+            mode === "subscription"
+              ? "um_btn_primary cp_billing_pay_btn"
+              : "um_btn_primary"
+          }
           disabled={!stripe || !elements || submitting}
         >
           <LockKeyhole size={15} aria-hidden="true" />
@@ -213,6 +256,7 @@ export function BillingPaymentElementModal({
   subscriptionId,
   title,
   subtitle,
+  footerInfo,
   submitLabel,
   onClose,
   onSuccess,
@@ -361,6 +405,7 @@ export function BillingPaymentElementModal({
                 submitLabel ??
                 (mode === "setup" ? "Save payment method" : "Pay now")
               }
+              footerInfo={footerInfo}
               onClose={onClose}
               onSuccess={onSuccess}
             />

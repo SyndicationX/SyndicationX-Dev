@@ -310,6 +310,9 @@ export async function postDealEsignAddInvestorDataField(
         .map((id) => bodyString(id).trim())
         .filter(Boolean)
     : [];
+  const pageRaw = Number(body.page ?? body.templatePage ?? body.template_page);
+  const page =
+    Number.isFinite(pageRaw) && pageRaw >= 1 ? Math.floor(pageRaw) : undefined;
 
   try {
     const scope = await resolveDealViewerScope(
@@ -341,6 +344,7 @@ export async function postDealEsignAddInvestorDataField(
       fileId,
       fieldKey,
       profileIds,
+      page,
     });
     res.status(200).json(result);
   } catch (err) {

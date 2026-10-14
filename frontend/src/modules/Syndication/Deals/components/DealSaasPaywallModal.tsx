@@ -2,16 +2,19 @@ import {
   BadgeDollarSign,
   CreditCard,
   Loader2,
+  Mail,
   X,
 } from "lucide-react"
 import { useEffect, useId, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
+import { isLpInvestorSessionUser } from "../../../../common/auth/roleUtils"
 import { getSessionOrganizationCompanyId } from "../../../../common/auth/sessionOrganization"
-import { startCompanyBillingCheckout } from "../../company/companyBillingApi"
+import { openCompanyBillingPortal } from "../../company/companyBillingApi"
 import { formatDealListDateDisplay } from "../dealsListDisplay"
 import {
   dealSaasBillingSettingsPath,
+  billingPlanDisplayName,
   type DealSaasPaywallDeal,
 } from "../utils/dealSaasAccess"
 import "./deal-stage-change-modal.css"
@@ -19,13 +22,16 @@ import "./deal-stage-change-modal.css"
 export function DealSaasPaywallModal({
   deal,
   onClose,
+  investorFacing = false,
 }: {
   deal: DealSaasPaywallDeal | null
   onClose: () => void
+  /** Investors should not see billing / payment-due copy. */
+  investorFacing?: boolean
 }) {
   const titleId = useId()
   const navigate = useNavigate()
-  const [paying, setPaying] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -33,65 +39,92 @@ export function DealSaasPaywallModal({
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = "hidden"
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !paying) onClose()
+      if (e.key === "Escape" && !busy) onClose()
     }
     document.addEventListener("keydown", onKey)
     return () => {
       document.body.style.overflow = prevOverflow
       document.removeEventListener("keydown", onKey)
     }
-  }, [deal, paying, onClose])
+  }, [deal, busy, onClose])
 
   useEffect(() => {
-    setPaying(false)
+    setBusy(false)
     setError("")
   }, [deal?.id])
 
   if (!deal) return null
 
   const lockedDeal = deal
+  const isPlanUpgrade = lockedDeal.needsPlanUpgrade === true
+  const suggestedLabel = billingPlanDisplayName(lockedDeal.suggestedPlanId)
+  const currentLabel = billingPlanDisplayName(lockedDeal.billingPlanId)
   const reason = lockedDeal.reason ?? "unpaid"
-  const title =
-    reason === "expired"
-      ? "Billing period ended"
-      : reason === "past_due"
-        ? "Payment past due"
-        : "Upgrade the plan to continue"
+  const subStatus = String(
+    lockedDeal.billingSubscriptionStatus ?? "",
+  )
+    .trim()
+    .toLowerCase()
+  const needsExistingInvoicePay =
+    !isPlanUpgrade &&
+    (reason === "past_due" ||
+    (reason === "expired" &&
+      (subStatus === "active" ||
+        subStatus === "trialing" ||
+        subStatus === "past_due" ||
+        subStatus === "unpaid")))
   const dealLabel = lockedDeal.dealName.trim()
     ? `“${lockedDeal.dealName.trim()}”`
     : "this deal"
-  const description =
-    lockedDeal.message?.trim() ||
-    (reason === "expired"
-      ? `The billing period for ${dealLabel} has ended. Pay monthly SaaS (MRR) to continue.`
-      : reason === "past_due"
-        ? `Monthly SaaS (MRR) for ${dealLabel} is past due. Pay now to continue.`
-        : `Pay monthly SaaS (MRR) for ${dealLabel} to continue.`)
+  const canPayForDeal = lockedDeal.viewerIsLeadSponsor === true
+  const showInvestorCopy =
+    investorFacing || (!canPayForDeal && isLpInvestorSessionUser())
+  const title = showInvestorCopy
+    ? "Contact your sponsor"
+    : isPlanUpgrade
+      ? "Upgrade this deal’s plan"
+      : reason === "expired"
+        ? "Billing period ended"
+        : reason === "past_due"
+          ? "Payment past due"
+          : "Payment is due"
+  const description = showInvestorCopy
+    ? `This deal is not available right now. Contact your sponsor for access to ${dealLabel}.`
+    : !canPayForDeal
+    ? isPlanUpgrade
+      ? `The lead sponsor must upgrade ${dealLabel} to ${suggestedLabel} after the deal size increased.`
+      : `The lead sponsor must pay monthly SaaS for ${dealLabel} before this deal can be opened.`
+    : lockedDeal.message?.trim() ||
+      (isPlanUpgrade
+        ? `The raise for ${dealLabel} is now above the ${currentLabel} plan. SyndicationX selected ${suggestedLabel}. Upgrade so billing matches this deal’s size.`
+        : reason === "expired"
+        ? `The billing period for ${dealLabel} has ended. Pay monthly SaaS (MRR) to continue.`
+        : reason === "past_due"
+          ? `Monthly SaaS (MRR) for ${dealLabel} is past due. Pay now to continue.`
+          : `Pay monthly SaaS (MRR) for ${dealLabel} to continue.`)
   const nextBillingLabel = lockedDeal.nextBillingDate
     ? formatDealListDateDisplay(lockedDeal.nextBillingDate)
     : null
-  const payLabel =
-    reason === "past_due" || reason === "expired" ? "Pay now" : "Pay MRR"
+  const payLabel = "Pay"
+
+  function goToFirstPayment() {
+    navigate(dealSaasBillingSettingsPath(lockedDeal.id, lockedDeal.dealName))
+  }
 
   async function handlePay() {
     setError("")
-    const companyId = getSessionOrganizationCompanyId()?.trim() ?? ""
-    if (!companyId) {
-      navigate(dealSaasBillingSettingsPath(lockedDeal.id))
+    if (!needsExistingInvoicePay) {
+      goToFirstPayment()
       return
     }
-    const planId = (lockedDeal.billingPlanId || "starter").trim().toLowerCase()
-    const allowed = new Set(["starter", "running", "growth"])
-    const plan = allowed.has(planId) ? planId : "starter"
-    setPaying(true)
-    const result = await startCompanyBillingCheckout(
-      companyId,
-      plan,
-      "monthly",
-      "5",
-      lockedDeal.id,
-    )
-    setPaying(false)
+    const companyId = getSessionOrganizationCompanyId()?.trim() ?? ""
+    if (!companyId) {
+      goToFirstPayment()
+      return
+    }
+    setBusy(true)
+    const result = await openCompanyBillingPortal(companyId)
+    setBusy(false)
     if (!result.ok) {
       setError(result.message)
       return
@@ -99,16 +132,12 @@ export function DealSaasPaywallModal({
     window.location.assign(result.url)
   }
 
-  function handleChoosePlan() {
-    navigate(dealSaasBillingSettingsPath(lockedDeal.id))
-  }
-
   return createPortal(
     <div
       className="deal_stage_modal_overlay portal_modal_z_boost"
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !paying) onClose()
+        if (e.target === e.currentTarget && !busy) onClose()
       }}
     >
       <div
@@ -120,10 +149,16 @@ export function DealSaasPaywallModal({
       >
         <header className="deal_stage_modal_head">
           <div className="deal_stage_modal_icon_wrap" aria-hidden>
-            <CreditCard size={22} strokeWidth={2} />
+            {showInvestorCopy ? (
+              <Mail size={22} strokeWidth={2} />
+            ) : (
+              <CreditCard size={22} strokeWidth={2} />
+            )}
           </div>
           <div className="deal_stage_modal_head_text">
-            <p className="deal_stage_modal_eyebrow">Deal billing</p>
+            <p className="deal_stage_modal_eyebrow">
+              {showInvestorCopy ? "Deal access" : "Deal billing"}
+            </p>
             <h2 id={titleId} className="deal_stage_modal_title">
               {title}
             </h2>
@@ -132,7 +167,7 @@ export function DealSaasPaywallModal({
             type="button"
             className="deal_stage_modal_close"
             aria-label="Close"
-            disabled={paying}
+            disabled={busy}
             onClick={onClose}
           >
             <X size={20} strokeWidth={2} aria-hidden />
@@ -141,14 +176,18 @@ export function DealSaasPaywallModal({
 
         <div className="deal_stage_modal_body">
           <span className="deal_stage_modal_badge">
-            {reason === "expired"
+            {showInvestorCopy
+              ? "Contact sponsor"
+              : isPlanUpgrade
+              ? "Deal size increased"
+              : reason === "expired"
               ? "Billing date passed"
               : reason === "past_due"
                 ? "Past due"
                 : "Payment required"}
           </span>
           <p className="deal_stage_modal_desc">{description}</p>
-          {nextBillingLabel ? (
+          {!showInvestorCopy && nextBillingLabel ? (
             <p className="deal_stage_modal_desc" style={{ marginTop: "0.65rem" }}>
               Billing date: {nextBillingLabel}
             </p>
@@ -164,44 +203,60 @@ export function DealSaasPaywallModal({
           <button
             type="button"
             className="deal_stage_modal_btn deal_stage_modal_btn--cancel"
-            disabled={paying}
+            disabled={busy}
             onClick={onClose}
           >
             <X size={16} strokeWidth={2} aria-hidden />
             Close
           </button>
-          <button
-            type="button"
-            className="deal_stage_modal_btn deal_stage_modal_btn--cancel"
-            disabled={paying}
-            onClick={handleChoosePlan}
-          >
-            <BadgeDollarSign size={16} strokeWidth={2} aria-hidden />
-            Upgrade plan
-          </button>
-          <button
-            type="button"
-            className="deal_stage_modal_btn deal_stage_modal_btn--confirm"
-            disabled={paying}
-            onClick={() => void handlePay()}
-          >
-            {paying ? (
-              <>
-                <Loader2
-                  size={16}
-                  strokeWidth={2}
-                  className="deals_create_btn_spin"
-                  aria-hidden
-                />
-                Redirecting…
-              </>
+          {!showInvestorCopy && canPayForDeal ? (
+            isPlanUpgrade ? (
+              <button
+                type="button"
+                className="deal_stage_modal_btn deal_stage_modal_btn--confirm"
+                disabled={busy}
+                onClick={goToFirstPayment}
+              >
+                <BadgeDollarSign size={16} strokeWidth={2} aria-hidden />
+                Upgrade plan
+              </button>
             ) : (
               <>
-                <CreditCard size={16} strokeWidth={2} aria-hidden />
-                {payLabel}
+                <button
+                  type="button"
+                  className="deal_stage_modal_btn deal_stage_modal_btn--cancel"
+                  disabled={busy}
+                  onClick={goToFirstPayment}
+                >
+                  <BadgeDollarSign size={16} strokeWidth={2} aria-hidden />
+                  Choose plan
+                </button>
+                <button
+                  type="button"
+                  className="deal_stage_modal_btn deal_stage_modal_btn--confirm"
+                  disabled={busy}
+                  onClick={() => void handlePay()}
+                >
+                  {busy ? (
+                    <>
+                      <Loader2
+                        size={16}
+                        strokeWidth={2}
+                        className="deals_create_btn_spin"
+                        aria-hidden
+                      />
+                      Redirecting…
+                    </>
+                  ) : (
+                    <>
+                      <CreditCard size={16} strokeWidth={2} aria-hidden />
+                      {payLabel}
+                    </>
+                  )}
+                </button>
               </>
-            )}
-          </button>
+            )
+          ) : null}
         </footer>
       </div>
     </div>,

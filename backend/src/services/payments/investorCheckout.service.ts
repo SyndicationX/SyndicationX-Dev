@@ -9,6 +9,7 @@ import {
   users,
 } from "../../schema/schema.js";
 import { getStripeClient } from "../billing/companyBilling.service.js";
+import { sendDealFundApprovedNotification } from "../deal/dealFundApprovedEmail.service.js";
 import { readMyInvestNowCommitment } from "../deal/dealLpInvestorMyInvestNowCommitment.read.service.js";
 
 const UUID_RE =
@@ -337,6 +338,30 @@ async function markInvestorPayment(params: {
         .where(eq(dealInvestment.id, payment.investmentId));
     }
   });
+  if (nextStatus === "succeeded" && payment.status !== "succeeded") {
+    try {
+      const [investment] = await db
+        .select({
+          dealId: dealInvestment.dealId,
+          contactId: dealInvestment.contactId,
+          contactDisplayName: dealInvestment.contactDisplayName,
+        })
+        .from(dealInvestment)
+        .where(eq(dealInvestment.id, payment.investmentId))
+        .limit(1);
+      if (investment?.contactId?.trim()) {
+        await sendDealFundApprovedNotification({
+          dealId: investment.dealId,
+          contactId: investment.contactId,
+          contactDisplayName: investment.contactDisplayName,
+        });
+      }
+    } catch (error) {
+      // Stripe funding is already persisted; notification failure must not
+      // make webhook processing retry the successful payment.
+      console.warn("markInvestorPayment: funded notification failed", error);
+    }
+  }
   return true;
 }
 

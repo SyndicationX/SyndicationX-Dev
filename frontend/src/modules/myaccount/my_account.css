@@ -27,12 +27,119 @@
   background: var(--portal-surface, #1a1a1a);
 }
 
+.myaccount_panel_loading {
+  min-height: 18rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  width: 100%;
+  text-align: center;
+}
+
+.myaccount_panel_loading_text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--portal-text-muted, #64748b);
+}
+
 .myaccount_form_body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
   max-width: 36rem;
   min-width: 0;
+}
+
+.myaccount_form_body--grid {
+  max-width: 64rem;
+  width: 100%;
+}
+
+.myaccount_form_body form.myaccount_fields_grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem 1.25rem;
+  align-items: start;
+  min-width: 0;
+  width: 100%;
+}
+
+.myaccount_fields_grid > .um_field,
+.myaccount_fields_grid > .myaccount_actions {
+  min-width: 0;
+}
+
+.myaccount_fields_grid > .um_field input,
+.myaccount_fields_grid > .um_field .um_field_input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.myaccount_fields_grid > .myaccount_fields_grid_fields,
+.myaccount_fields_grid > .myaccount_question_card,
+.myaccount_fields_grid > .myaccount_actions {
+  grid-column: 1 / -1;
+}
+
+.myaccount_fields_grid_fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem 1.25rem;
+  min-width: 0;
+}
+
+.myaccount_fields_grid_fields > .um_field {
+  min-width: 0;
+}
+
+.myaccount_fields_grid_fields > .um_field input,
+.myaccount_fields_grid_fields > .um_field .um_field_input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 640px) {
+  .myaccount_fields_grid_fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.myaccount_question_card {
+  margin: 0;
+  padding: 0.85rem 0.95rem 1rem;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--portal-surface, #ffffff);
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--ui-card-border-radius, 8px);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.myaccount_question_card .um_field_label_row {
+  margin-bottom: 0;
+}
+
+.myaccount_question_card .myaccount_field_hint {
+  margin: 0.3rem 0 0.7rem;
+}
+
+.myaccount_question_card .myaccount_question_fieldset {
+  --portal-binary-radio-max-width: 17rem;
+}
+
+:root[data-theme="dark"] .myaccount_question_card {
+  background: var(--portal-surface, #1a1a1a);
+  border-color: var(--portal-border, #334155);
+  box-shadow: none;
+}
+
+@media (min-width: 640px) {
+  .myaccount_form_body form.myaccount_fields_grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .myaccount_readonly_note {
@@ -48,6 +155,58 @@
 
 .myaccount_form_body .um_field {
   margin-bottom: 0;
+}
+
+.myaccount_field_hint {
+  margin: 0.2rem 0 0.65rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--portal-text-muted, #64748b);
+}
+
+/* Yes / No questions: visibility (Personal details) and syndicating (Company details) */
+.myaccount_question_fieldset {
+  --portal-binary-radio-max-width: 17rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+/* Disabled pills must not look clickable (hover fill + pointer come from the base pill styles) */
+.myaccount_question_fieldset:disabled .radio-pill-label,
+.myaccount_question_fieldset:disabled input[type="radio"] {
+  cursor: not-allowed;
+}
+
+.myaccount_question_fieldset:disabled .radio-btn,
+.myaccount_question_fieldset:disabled
+  input[type="radio"]:not(:checked)
+  + .radio-btn:hover {
+  opacity: 0.6;
+  background-color: var(--portal-surface-muted, #f8fafc);
+  border-color: var(--portal-border, #e2e8f0);
+  color: var(--portal-text-muted, #64748b);
+}
+
+.myaccount_question_fieldset:disabled input[type="radio"]:checked + .radio-btn {
+  background-color: var(--ui-button-background-add);
+  border-color: var(--ui-button-background-add);
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .myaccount_question_fieldset:disabled .radio-btn,
+:root[data-theme="dark"]
+  .myaccount_question_fieldset:disabled
+  input[type="radio"]:not(:checked)
+  + .radio-btn:hover {
+  background-color: color-mix(
+    in srgb,
+    var(--portal-surface, #1a1a1a) 88%,
+    var(--portal-surface-muted, #2a2a2a) 12%
+  );
+  border-color: var(--portal-border, #334155);
+  color: var(--portal-text-muted, #94a3b8);
 }
 
 .myaccount_form_body form {

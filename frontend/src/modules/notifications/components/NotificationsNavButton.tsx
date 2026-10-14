@@ -1,10 +1,10 @@
 import { Bell } from "lucide-react"
-import { useCallback, useRef, useState } from "react"
+import { memo, useCallback, useRef, useState } from "react"
 import { useNotifications } from "../hooks/useNotifications"
 import { NotificationsPopup } from "./NotificationsPopup"
 import "./notifications-nav-button.css"
 
-export function NotificationsNavButton() {
+function NotificationsNavButtonImpl() {
   const anchorRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const { unreadCount } = useNotifications()
@@ -48,3 +48,5 @@ export function NotificationsNavButton() {
     </div>
   )
 }
+
+export const NotificationsNavButton = memo(NotificationsNavButtonImpl)

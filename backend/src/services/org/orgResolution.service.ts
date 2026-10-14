@@ -2,7 +2,10 @@ import { eq } from "drizzle-orm";
 import type { Request } from "express";
 import { db } from "../../database/db.js";
 import { users } from "../../schema/auth.schema/signin.js";
-import { hasUserCompanyMembership } from "../auth/userCompanyMembership.service.js";
+import {
+  hasUserCompanyMembership,
+  listUserCompanyMemberships,
+} from "../auth/userCompanyMembership.service.js";
 
 export interface UserOrgResolutionFields {
   organizationId: string | null;
@@ -81,6 +84,28 @@ export async function resolveOrganizationIdForUserId(
     )[0];
   if (!row) return null;
   return row.organizationId ?? null;
+}
+
+/**
+ * Every company this user belongs to: primary `users.organization_id` plus
+ * `user_company_membership` rows.
+ */
+export async function listOrganizationIdsForUser(
+  userId: string,
+): Promise<string[]> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return [];
+  const primary = normalizeOrganizationUuid(
+    await resolveOrganizationIdForUserId(uid),
+  );
+  const memberships = await listUserCompanyMemberships(uid);
+  const ids = new Set<string>();
+  if (primary) ids.add(primary);
+  for (const membership of memberships) {
+    const id = normalizeOrganizationUuid(membership.companyId);
+    if (id) ids.add(id);
+  }
+  return [...ids];
 }
 
 /** Primary org on the user row or an explicit `user_company_membership` row. */

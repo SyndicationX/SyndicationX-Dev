@@ -19,6 +19,7 @@ import {
   DataTable,
   type DataTableColumn,
 } from "../../../common/components/data-table/DataTable"
+import { DealAvatarIconRing } from "../../../common/components/entity-avatar/EntityAvatarNameCell"
 import { notifyDealsExportAudit } from "../Deals/api/dealsExportNotifyApi"
 import { fetchDealsListForOrganization } from "../Deals/api/dealsApi"
 import { ExportDealsModal } from "../Deals/components/ExportDealsModal"
@@ -218,17 +219,22 @@ export default function CompanyDealsPage() {
       {
         id: "name",
         header: "Deal",
-        colWidth: "18rem",
+        colWidth: "15rem",
         sortValue: (row) => (row.dealName ?? "").toLowerCase(),
         thClassName: "cp_company_deal_name_th",
         tdClassName: "cp_company_deal_name_td",
         cell: (row) => (
-          <Link
-            to={`/deals/${encodeURIComponent(row.id)}`}
-            className="um_user_meta_username cp_company_deal_name_link"
-          >
-            {row.dealName?.trim() || "—"}
-          </Link>
+          <div className="deals_list_name_cell">
+            <DealAvatarIconRing />
+            <div className="deals_list_name_text">
+              <Link
+                to={`/deals/${encodeURIComponent(row.id)}`}
+                className="deals_table_name_link cp_company_deal_name_link"
+              >
+                {row.dealName?.trim() || "—"}
+              </Link>
+            </div>
+          </div>
         ),
       },
       {
@@ -374,15 +380,8 @@ export default function CompanyDealsPage() {
       aria-busy={loading}
     >
       <div className="cp_company_tab_panel_inner">
-        <div className="um_toolbar cp_company_tab_toolbar deal_inv_table_um_toolbar um_toolbar_export_then_search">
-          <p className="cp_company_tab_toolbar_hint">
-            Deals created for{" "}
-            <strong className="cp_company_tab_toolbar_strong">
-              {titleCompany}
-            </strong>
-            . Open a deal for full details.
-          </p>
-          <div className="um_toolbar_actions">
+        <div className="um_toolbar cp_company_tab_toolbar cp_company_deals_toolbar deal_inv_table_um_toolbar um_toolbar_export_then_search">
+          <div className="um_toolbar_actions deal_inv_table_toolbar_actions deals_list_toolbar_actions">
             <button
               type="button"
               className="um_toolbar_export_btn"
@@ -425,7 +424,6 @@ export default function CompanyDealsPage() {
         <div className="cp_company_tab_table_wrap">
           <DataTable
             visualVariant="members"
-            stickyFirstColumn={false}
             membersTableClassName="um_table_members deal_inv_table cp_company_deals_table"
             initialSort={{ columnId: "name", direction: "asc" }}
             columns={columns}

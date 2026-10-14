@@ -193,7 +193,8 @@ export function DealPreviewModal({
             <X size={16} strokeWidth={2} aria-hidden />
             Close
           </button>
-          {listContext === "investing" ? (
+          {listContext === "investing" ||
+          detail?.viewerCanEditDeal === false ? (
             <button
               type="button"
               className="um_btn_primary"

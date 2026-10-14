@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { blockCrossOrgColleagueDealMutations } from "../middleware/crossOrgDealManage.middleware.js";
 // Investor contributions: workflow — Stripe Checkout disabled for now
 // import {
 //   postInvestorInvestmentCheckout,
@@ -16,6 +17,8 @@ import {
 } from "../controllers/payments/investorDistributionPayout.controller.js";
 
 const router = Router();
+
+router.use("/deals/:dealId", blockCrossOrgColleagueDealMutations);
 
 // Investor contributions: workflow — Stripe Checkout disabled for now
 // router.post(

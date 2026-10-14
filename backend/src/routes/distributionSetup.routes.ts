@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { blockCrossOrgColleagueDealMutations } from "../middleware/crossOrgDealManage.middleware.js";
 import {
   deleteDealPriorDistribution,
   getDealDistributionSetup,
@@ -12,6 +13,8 @@ import {
 } from "../controllers/distributionSetup/distributionSetup.controller.js";
 
 const router = Router();
+
+router.use("/deals/:dealId", blockCrossOrgColleagueDealMutations);
 
 router.get("/investing/my-distributions", getMyDistributions);
 router.get(

@@ -149,6 +149,7 @@ export function isInvestorDashboardOpportunityOffering(
   dealStage: string | null | undefined,
   offeringStatus: string | null | undefined,
 ): boolean {
+  if (normalizeDealStageCanonical(dealStage) === "draft") return false;
   const effective = effectiveOfferingStatusForAccess(dealStage, offeringStatus);
   if (!effective) return false;
   const rules = getDealStatusRules(effective);

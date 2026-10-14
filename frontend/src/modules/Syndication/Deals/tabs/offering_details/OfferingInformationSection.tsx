@@ -2369,11 +2369,11 @@ function formatInvestorClassMoneyFields(
 }
 
 function billingRaiseQuotaForSave(form: DealInvestorClassFormValues): string {
-  if (!isRequiredMoneyMissing(form.billingRaiseQuota)) {
-    return blurFormatMoneyInput(form.billingRaiseQuota)
-  }
   if (!isRequiredMoneyMissing(form.offeringSize)) {
     return blurFormatMoneyInput(form.offeringSize)
+  }
+  if (!isRequiredMoneyMissing(form.billingRaiseQuota)) {
+    return blurFormatMoneyInput(form.billingRaiseQuota)
   }
   return "$0"
 }

@@ -11,6 +11,33 @@ import { getAddDealFormById } from "./dealForm.service.js";
 const SENDER_DISPLAY_NAME =
   process.env.SENDER_DISPLAY_NAME?.trim() || "SyndicationX";
 
+function frontendBaseUrl(): string {
+  const candidates = [
+    process.env.FRONTEND_URL,
+    process.env.BASE_URL,
+    process.env.APP_URL,
+    process.env.CLIENT_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.VITE_BASE_URL,
+  ];
+  for (const raw of candidates) {
+    const t = String(raw ?? "").trim();
+    if (t) return t.replace(/\/$/, "");
+  }
+  return "";
+}
+
+function resolvedLoginUrl(): string {
+  const explicit =
+    process.env.SIGNIN_PAGE_URL?.trim() ||
+    process.env.PORTAL_SIGNIN_URL?.trim() ||
+    "";
+  if (explicit) return explicit.replace(/\/$/, "");
+  const origin = frontendBaseUrl();
+  if (!origin) return "";
+  return `${origin}/signin`;
+}
+
 export interface SendDealDocumentSharedEmailParams {
   dealId: string;
   toEmail: string;
@@ -55,15 +82,13 @@ export async function sendDealDocumentSharedEmail(
       memberEmail: to,
       documentNames,
       senderBrand: SENDER_DISPLAY_NAME,
+      loginUrl: resolvedLoginUrl(),
     };
     const subject =
       process.env.DEAL_DOCUMENT_SHARED_SUBJECT?.trim()?.replace(
         /\{dealName\}/g,
         dealName,
-      ) ||
-      (documentNames.length === 1
-        ? `Document shared with you — ${dealName}`
-        : `Documents shared with you — ${dealName}`);
+      ) || `A document has been shared with you — ${dealName}`;
 
     await transporter.sendMail({
       from: {

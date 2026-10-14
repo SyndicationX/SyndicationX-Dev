@@ -1,13 +1,14 @@
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
 import type { DealInvestorRow } from "@/modules/Syndication/Deals/types/deal-investors.types"
 import {
-  investorEsignIsFullyCompletedForRow,
   investorEsignWasSent,
+  investorInvestmentProfileIsComplete,
   investorRowCommittedNumeric,
   investorRowMatchesViewerEmail,
 } from "@/modules/Syndication/Deals/utils/investorEsignStatus"
 import { parseMoneyDigits } from "@/modules/Syndication/Deals/utils/offeringMoneyFormat"
 import {
+  completedInvestNowProgress,
   investNowDraftProgressFromInvestorRow,
   type InvestNowDraftProgress,
 } from "./investNowDraftProgress"
@@ -30,7 +31,7 @@ export function isInvestNowDraftInvestorRow(
 ): boolean {
   if (!investorRowMatchesViewerEmail(row, viewerEmailNorm)) return false
   if (row.investorKind === "lp_roster") return false
-  if (investorEsignIsFullyCompletedForRow(row)) return false
+  if (investorInvestmentProfileIsComplete(row)) return false
   if (investorEsignWasSent(row)) return true
   if (investorRowCommittedNumeric(row) > 0) return true
   if (String(row.userInvestorProfileId ?? "").trim()) return true
@@ -93,8 +94,21 @@ export function dealHasFullyCompletedProfileEsign(
   return investors.some(
     (row) =>
       investorRowMatchesViewerEmail(row, em) &&
-      investorEsignIsFullyCompletedForRow(row),
+      investorInvestmentProfileIsComplete(row),
   )
+}
+
+/** Draft stepper progress, or 100% when every remaining viewer row is already complete. */
+export function investNowProgressForViewer(
+  investors: DealInvestorRow[],
+  viewerEmailNorm?: string,
+): InvestNowDraftProgress | undefined {
+  const draftRow = firstInvestNowDraftRowForViewer(investors, viewerEmailNorm)
+  if (draftRow) return investNowDraftProgressFromInvestorRow(draftRow)
+  if (dealHasFullyCompletedProfileEsign(investors, viewerEmailNorm)) {
+    return completedInvestNowProgress()
+  }
+  return undefined
 }
 
 export function findInvestorRowForInvestNowScope(

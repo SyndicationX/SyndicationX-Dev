@@ -1,10 +1,20 @@
 import { useContext } from "react"
-import { NotificationsContext } from "../context/NotificationsProvider"
+import {
+  NotificationsContext,
+  type NotificationsContextValue,
+} from "../context/notificationsContext"
+
+const EMPTY_NOTIFICATIONS: NotificationsContextValue = {
+  notifications: [],
+  unreadCount: 0,
+  isLoading: false,
+  loadError: null,
+  refresh: async () => {},
+  refreshIfStale: async () => {},
+  markRead: () => {},
+  markAllRead: () => {},
+}
 
 export function useNotifications() {
-  const ctx = useContext(NotificationsContext)
-  if (!ctx) {
-    throw new Error("useNotifications must be used within NotificationsProvider")
-  }
-  return ctx
+  return useContext(NotificationsContext) ?? EMPTY_NOTIFICATIONS
 }

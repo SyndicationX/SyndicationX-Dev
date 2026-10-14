@@ -10,7 +10,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { usePortalMode } from "@/modules/Investing/context/PortalModeContext"
 import { dealInvestNowPath } from "@/modules/Syndication/Deals/utils/dealInvestNowPath"
-import { dealWorkspacePath } from "@/modules/Syndication/Deals/utils/dealWorkspacePath"
 import {
   DealAvatarIconRing,
 } from "@/common/components/entity-avatar/EntityAvatarNameCell"
@@ -84,11 +83,7 @@ function InvestmentDealNameCell({
   const nameLink = dealId ? (
     <Link
       className="deals_table_name_link"
-      to={
-        pendingOnboarding
-          ? dealWorkspacePath(dealId)
-          : `/investing/investments/${encodeURIComponent(dealId)}`
-      }
+      to={`/investing/investments/${encodeURIComponent(dealId)}`}
       onClick={() => switchToInvesting()}
       state={
         pendingOnboarding
@@ -143,6 +138,20 @@ function InvestmentProgressCell({
       </div>
     </div>
   )
+}
+
+function InvestmentsEmptyDash() {
+  return (
+    <span className="investments_empty_dash" aria-hidden>
+      —
+    </span>
+  )
+}
+
+function investmentsTextOrDash(value: string | null | undefined) {
+  const t = String(value ?? "").trim()
+  if (!t || t === "—") return <InvestmentsEmptyDash />
+  return t
 }
 
 type InvestmentsTablePanelProps = {
@@ -237,7 +246,6 @@ function InvestmentsTablePanel({
                 ? "No investments match your search."
                 : emptyMessage
             }
-            initialSort={{ columnId: "dealName", direction: "asc" }}
             pagination={filtered.length > 0 ? pagination : undefined}
           />
         </>
@@ -286,7 +294,7 @@ const INVESTMENTS_TABLE_COL_WIDTH = {
   owningEntity: "9rem",
   startDate: "7.5rem",
   closeDate: "7.5rem",
-  investedAs: "12rem",
+  investedAs: "8rem",
   invested: "7.5rem",
   distributed: "8rem",
   valuation: "8rem",
@@ -542,9 +550,7 @@ export default function InvestmentsPage() {
         tdClassName: "investments_col_progress",
         sortValue: (r) => r.investNowDraftProgress?.percent ?? -1,
         cell: (r) => {
-          if (!r.investNowDraftProgress) {
-            return <span className="um_status_muted">—</span>
-          }
+          if (!r.investNowDraftProgress) return <InvestmentsEmptyDash />
           return <InvestmentProgressCell progress={r.investNowDraftProgress} />
         },
       },
@@ -587,44 +593,35 @@ export default function InvestmentsPage() {
         header: "Sponsor",
         colWidth: INVESTMENTS_TABLE_COL_WIDTH.sponsor,
         sortValue: (r) => (r.dealSponsorName ?? "").toLowerCase(),
-        cell: (r) => {
-          const t = String(r.dealSponsorName ?? "").trim()
-          return t && t !== "—" ? t : "—"
-        },
+        cell: (r) => investmentsTextOrDash(r.dealSponsorName),
       },
       {
         id: "dealType",
         header: "Deal type",
         colWidth: INVESTMENTS_TABLE_COL_WIDTH.dealType,
         sortValue: (r) => (r.dealType ?? "").toLowerCase(),
-        cell: (r) => dealTypeDisplayLabel(r.dealType ?? ""),
+        cell: (r) => investmentsTextOrDash(dealTypeDisplayLabel(r.dealType ?? "")),
       },
       {
         id: "secType",
         header: "SEC type",
         colWidth: INVESTMENTS_TABLE_COL_WIDTH.secType,
         sortValue: (r) => secTypeDisplayLabel(r.secType ?? "").toLowerCase(),
-        cell: (r) => secTypeDisplayLabel(r.secType ?? ""),
+        cell: (r) => investmentsTextOrDash(secTypeDisplayLabel(r.secType ?? "")),
       },
       {
         id: "propertyName",
         header: "Property name",
         colWidth: INVESTMENTS_TABLE_COL_WIDTH.propertyName,
         sortValue: (r) => (r.propertyName ?? "").toLowerCase(),
-        cell: (r) => {
-          const t = String(r.propertyName ?? "").trim()
-          return t || "—"
-        },
+        cell: (r) => investmentsTextOrDash(r.propertyName),
       },
       {
         id: "owningEntity",
         header: "Owning entity",
         colWidth: INVESTMENTS_TABLE_COL_WIDTH.owningEntity,
         sortValue: (r) => (r.owningEntityName ?? "").toLowerCase(),
-        cell: (r) => {
-          const t = String(r.owningEntityName ?? "").trim()
-          return t || "—"
-        },
+        cell: (r) => investmentsTextOrDash(r.owningEntityName),
       },
       {
         id: "start",
@@ -634,7 +631,8 @@ export default function InvestmentsPage() {
         thClassName: "deals_th_align_center investments_col_start_date",
         tdClassName: "investments_col_start_date",
         sortValue: (r) => dateSortValue(r.startDateDisplay),
-        cell: (r) => formatDealListDateDisplay(r.startDateDisplay),
+        cell: (r) =>
+          investmentsTextOrDash(formatDealListDateDisplay(r.startDateDisplay)),
       },
       {
         id: "close",
@@ -644,7 +642,8 @@ export default function InvestmentsPage() {
         thClassName: "deals_th_align_center investments_col_date",
         tdClassName: "investments_col_date",
         sortValue: (r) => dateSortValue(r.dealCloseDate),
-        cell: (r) => formatDealListDateDisplay(r.dealCloseDate),
+        cell: (r) =>
+          investmentsTextOrDash(formatDealListDateDisplay(r.dealCloseDate)),
       },
       {
         id: "investmentProfile",
@@ -653,11 +652,18 @@ export default function InvestmentsPage() {
         thClassName: "investments_col_invested_as",
         tdClassName: "investments_col_invested_as investments_col_profile_name",
         sortValue: (r) => (r.investmentProfile ?? "").toLowerCase(),
-        cell: (r) => (
-          <span className="investments_invested_as_name investments_profile_name_text">
-            {r.investmentProfile?.trim() || "—"}
-          </span>
-        ),
+        cell: (r) => {
+          const investedAs = r.investmentProfile?.trim() || ""
+          if (!investedAs || investedAs === "—") return <InvestmentsEmptyDash />
+          return (
+            <span
+              className="investments_invested_as_name investments_profile_name_text"
+              title={investedAs}
+            >
+              {investedAs}
+            </span>
+          )
+        },
       },
       {
         id: "investedAmount",
@@ -671,7 +677,7 @@ export default function InvestmentsPage() {
           r.investedAmount > 0 ? (
             <TableCompactAmountCell amount={r.investedAmount} />
           ) : (
-            "—"
+            <InvestmentsEmptyDash />
           ),
       },
       {
@@ -686,7 +692,7 @@ export default function InvestmentsPage() {
           r.distributedAmount > 0 ? (
             <TableCompactAmountCell amount={r.distributedAmount} />
           ) : (
-            "—"
+            <InvestmentsEmptyDash />
           ),
       },
       {
@@ -694,7 +700,7 @@ export default function InvestmentsPage() {
         header: "Valuation",
         colWidth: INVESTMENTS_TABLE_COL_WIDTH.valuation,
         sortValue: (r) => (r.currentValuation ?? "").toLowerCase(),
-        cell: (r) => r.currentValuation || "—",
+        cell: (r) => investmentsTextOrDash(r.currentValuation),
       },
       // {
       //   id: "actionRequired",

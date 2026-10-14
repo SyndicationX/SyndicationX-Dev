@@ -130,18 +130,13 @@ export function AddDealAssetPage() {
           setAttrRows(normalizeAssetAttributeMoneyRows(persisted.attrRows))
           const saved = persisted.imagePreviewDataUrls
           const fromSaved = Array.isArray(saved) ? saved : []
-          if (
-            assetId === primaryId &&
-            !Array.isArray(persisted.imagePreviewDataUrls)
-          ) {
+          if (assetId === primaryId) {
             try {
               const detail = await fetchDealById(dealId)
               if (cancelled) return
               const fromApi = assetImagePathsToUrls(detail.assetImagePath)
               setExistingImageUrls(
-                dedupeGalleryUrlsPreserveOrder(
-                  fromSaved.length > 0 ? [...fromSaved] : fromApi,
-                ),
+                dedupeGalleryUrlsPreserveOrder([...fromApi, ...fromSaved]),
               )
             } catch {
               if (!cancelled)

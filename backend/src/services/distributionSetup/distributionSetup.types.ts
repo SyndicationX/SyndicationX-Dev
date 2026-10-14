@@ -41,6 +41,8 @@ export interface InvestorDistributionPayment {
   className: string;
   capital: string;
   percentOfClass: string;
+  /** Investor share of the whole deal (0–100). Optional on older runs. */
+  percentOfDeal?: string;
   payment: string;
 }
 
@@ -64,6 +66,11 @@ export interface PriorDistributionRecord {
   visible?: boolean;
   /** Snapshot of investor payments at complete time. */
   investorPayments?: InvestorDistributionPayment[];
+  /**
+   * Set on GET for co-sponsor viewers when stored lines exist but none
+   * belong to their scoped investors (do not rebuild from full cash).
+   */
+  investorPaymentsHiddenForViewer?: boolean;
 }
 
 export interface DistributionSetupBundle {

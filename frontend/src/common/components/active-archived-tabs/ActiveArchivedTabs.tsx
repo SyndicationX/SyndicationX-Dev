@@ -1,5 +1,6 @@
 import { Archive, Activity, type LucideIcon } from "lucide-react"
 import { TabsScrollStrip } from "@/common/components/tabs-scroll-strip/TabsScrollStrip"
+import { formatCount } from "@/common/utils/formatCount"
 import "./active-archived-tabs.css"
 
 export type ActiveArchivedTab = "active" | "archived"
@@ -53,7 +54,7 @@ export function ActiveArchivedTabs({
             role="tab"
             aria-selected={value === "active"}
             aria-controls={activePanelId}
-            aria-label={`Active, ${activeCount}`}
+            aria-label={`Active, ${formatCount(activeCount)}`}
             className={`um_members_tab deals_tabs_tab um_segmented_tab${
               value === "active" ? " um_members_tab_active" : ""
             }`}
@@ -67,7 +68,7 @@ export function ActiveArchivedTabs({
             />
             <span className="deals_tabs_label um_segmented_tab_label">Active</span>
             <span className="deals_tabs_count" aria-hidden>
-              ({activeCount})
+              ({formatCount(activeCount)})
             </span>
           </button>
           <button
@@ -76,7 +77,7 @@ export function ActiveArchivedTabs({
             role="tab"
             aria-selected={value === "archived"}
             aria-controls={archivedPanelId}
-            aria-label={`Archived, ${archivedCount}`}
+            aria-label={`Archived, ${formatCount(archivedCount)}`}
             className={`um_members_tab deals_tabs_tab um_segmented_tab${
               value === "archived" ? " um_members_tab_active" : ""
             }`}
@@ -90,7 +91,7 @@ export function ActiveArchivedTabs({
             />
             <span className="deals_tabs_label um_segmented_tab_label">Archived</span>
             <span className="deals_tabs_count" aria-hidden>
-              ({archivedCount})
+              ({formatCount(archivedCount)})
             </span>
           </button>
         </div>

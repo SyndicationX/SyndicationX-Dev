@@ -18,8 +18,13 @@ function pickIconForRoleLabel(label: string) {
   if (raw === "lead sponsor") return Award
   if (raw === "admin sponsor") return ClipboardList
   if (raw === "co-sponsor") return UserCircle
-  if (raw === "general partner" || raw === "general partners") return Handshake
-  if (raw === "deal member") return Shield
+  if (raw === "team member" || raw === "team members") return Handshake
+  if (
+    raw === "general partner" ||
+    raw === "general partners" ||
+    raw === "deal member"
+  )
+    return Shield
   return Shield
 }
 

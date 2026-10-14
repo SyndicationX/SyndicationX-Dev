@@ -1,3 +1,4 @@
+import { clearPortalNotificationsCache } from "@/modules/notifications/api/fetchPortalNotifications";
 import { revokeAuthTokens } from "./authTokensApi";
 import { clearLastSessionActivity } from "./idleSession";
 import { clearPortalSessionStorage } from "./sessionKeys";
@@ -11,4 +12,5 @@ export async function performPortalLogout(): Promise<void> {
   await revokeAuthTokens();
   clearPortalSessionStorage();
   clearLastSessionActivity();
+  clearPortalNotificationsCache();
 }

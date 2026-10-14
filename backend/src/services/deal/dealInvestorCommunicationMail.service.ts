@@ -1,15 +1,25 @@
-import { and, desc, eq } from "drizzle-orm";
-import emailConfig, {
-  getEmailBccFromEnv,
-  smtpEnvelopeForSendMail,
-} from "../../functions/emailconfig.js";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { getEmailBccFromEnv } from "../../functions/emailconfig.js";
+import {
+  sendHtmlMailPerRecipient,
+  type MailAttachment,
+} from "../mail/sendHtmlMailPerRecipient.service.js";
+import { contactEmailTemplate } from "../../schema/contact.schema.js";
 import { db } from "../../database/db.js";
 import { users } from "../../schema/auth.schema/signin.js";
 import {
   investorCommunicationLogs,
   type DealInvestorCommunicationRecipient,
+  type DealInvestorCommunicationRecipientsStored,
 } from "../../schema/deal.schema/deal-investor-communication-mail.schema.js";
 import { getUserDisplayNameById } from "../contact/contact.service.js";
+import { applyInvestorCommunicationDeliveryRouting, loadUnredactedDealInvestors } from "./dealInvestorCommunicationRouting.service.js";
+import { getViewerCoSponsorEmailIntercept } from "./dealCoSponsorEmailIntercept.service.js";
+import {
+  isPortalUserCoSponsorOnDeal,
+  isPortalUserLeadOrAdminSponsorOnDeal,
+  listEquivalentPortalUserIdsForUser,
+} from "./dealMemberScope.service.js";
 
 export type DealInvestorCommunicationMailStatus =
   | "sent"
@@ -20,11 +30,14 @@ export interface DealInvestorCommunicationMailApiRow {
   id: string;
   subject: string;
   sendFrom: string;
+  senderId: string;
   sentTo: string;
   recipientCount: number;
   recipientUsers: DealInvestorCommunicationRecipient[];
   sentAt: string;
   status: DealInvestorCommunicationMailStatus;
+  templateId: string | null;
+  heldForCosponsorRelease: boolean;
 }
 
 const UUID_RE =
@@ -36,40 +49,183 @@ function normalizeMailStatus(raw: string): DealInvestorCommunicationMailStatus {
   return "not_sent";
 }
 
-function formatSentToLabel(
+function isUsableSentEmail(raw: unknown): boolean {
+  const email = String(raw ?? "").trim().toLowerCase();
+  if (!email.includes("@")) return false;
+  if (email === "email unavailable") return false;
+  return true;
+}
+
+/** Unique people/addresses that actually received this mail. */
+function uniqueSentEmailCount(
   recipients: DealInvestorCommunicationRecipient[],
-): string {
-  const count = recipients.length;
-  if (count === 0) return "—";
-  if (count === 1) {
-    const name = recipients[0]?.displayName?.trim();
-    return name || "1 recipient";
+): number {
+  const emails = new Set<string>();
+  let hiddenDelivered = 0;
+  for (const r of recipients) {
+    if (r.requiresCosponsorRelease === true) continue;
+    if (isUsableSentEmail(r.email)) {
+      emails.add(String(r.email).trim().toLowerCase());
+      continue;
+    }
+    if (r.heldLpReleasePending === true) continue;
+    if (r.addedByIsCoSponsor === true && r.classKind !== "gp") {
+      hiddenDelivered += 1;
+    }
   }
-  return `${count} recipients`;
+  return emails.size + hiddenDelivered;
+}
+
+function withSentToCount(
+  row: DealInvestorCommunicationMailApiRow,
+): DealInvestorCommunicationMailApiRow {
+  const recipientCount = uniqueSentEmailCount(row.recipientUsers);
+  return {
+    ...row,
+    recipientCount,
+    sentTo: formatSentToLabel(recipientCount),
+  };
+}
+
+function isHeldUnsentCoSponsorLp(
+  r: DealInvestorCommunicationRecipient,
+): boolean {
+  return r.requiresCosponsorRelease === true;
+}
+
+function isCoSponsorLpRecipient(
+  r: DealInvestorCommunicationRecipient,
+  coSponsorAdderIds: Set<string>,
+): boolean {
+  if (r.classKind === "gp") return false;
+  if (r.addedByIsCoSponsor === true) return true;
+  const adder = String(r.addedByUserId ?? "").trim().toLowerCase();
+  return Boolean(adder && coSponsorAdderIds.has(adder));
+}
+
+function redactCoSponsorLpEmails(
+  recipients: DealInvestorCommunicationRecipient[],
+  coSponsorAdderIds: Set<string>,
+): DealInvestorCommunicationRecipient[] {
+  return recipients.map((r) => {
+    if (!isCoSponsorLpRecipient(r, coSponsorAdderIds)) return r;
+    const name = String(r.displayName ?? "").trim();
+    return {
+      ...r,
+      email: "Email unavailable",
+      displayName: name.includes("@") ? "Investor" : name || "Investor",
+    };
+  });
+}
+
+async function coSponsorAdderIdSet(
+  dealId: string,
+  recipients: DealInvestorCommunicationRecipient[],
+): Promise<Set<string>> {
+  const ids = [
+    ...new Set(
+      recipients
+        .map((r) => String(r.addedByUserId ?? "").trim())
+        .filter((id) => UUID_RE.test(id)),
+    ),
+  ];
+  const out = new Set<string>();
+  await Promise.all(
+    ids.map(async (id) => {
+      if (await isPortalUserCoSponsorOnDeal(dealId, id)) {
+        out.add(id.toLowerCase());
+      }
+    }),
+  );
+  return out;
+}
+
+async function presentMailRowToLeadOrAdmin(
+  dealId: string,
+  row: DealInvestorCommunicationMailApiRow,
+): Promise<DealInvestorCommunicationMailApiRow> {
+  const recipientUsers = redactCoSponsorLpEmails(
+    row.recipientUsers.filter((r) => !isHeldUnsentCoSponsorLp(r)),
+    await coSponsorAdderIdSet(dealId, row.recipientUsers),
+  );
+  return {
+    ...row,
+    recipientUsers,
+    recipientCount: uniqueSentEmailCount(recipientUsers),
+    sentTo: formatSentToLabel(uniqueSentEmailCount(recipientUsers)),
+  };
+}
+
+function recipientsVisibleAsSent(
+  recipients: DealInvestorCommunicationRecipient[],
+): DealInvestorCommunicationRecipient[] {
+  return recipients.filter((r) => {
+    if (r.requiresCosponsorRelease === true) return false;
+    if (isUsableSentEmail(r.email) || r.heldLpReleasePending === true) return true;
+    return r.addedByIsCoSponsor === true && r.classKind !== "gp";
+  });
+}
+
+function parseStoredRecipientPayload(raw: unknown): {
+  users: DealInvestorCommunicationRecipient[];
+  deliveryEmails: string[];
+} {
+  if (Array.isArray(raw)) {
+    return { users: raw as DealInvestorCommunicationRecipient[], deliveryEmails: [] };
+  }
+  if (raw && typeof raw === "object") {
+    const o = raw as {
+      users?: unknown;
+      deliveryEmails?: unknown;
+    };
+    const users = Array.isArray(o.users)
+      ? (o.users as DealInvestorCommunicationRecipient[])
+      : [];
+    const deliveryEmails = Array.isArray(o.deliveryEmails)
+      ? o.deliveryEmails
+          .map((e) => String(e ?? "").trim().toLowerCase())
+          .filter((e) => e.includes("@"))
+      : [];
+    return { users, deliveryEmails };
+  }
+  return { users: [], deliveryEmails: [] };
+}
+
+function formatSentToLabel(sentCount: number): string {
+  if (sentCount <= 0) return "—";
+  if (sentCount === 1) return "1 recipient";
+  return `${sentCount} recipients`;
 }
 
 function mapRowToApi(
   row: typeof investorCommunicationLogs.$inferSelect,
 ): DealInvestorCommunicationMailApiRow {
-  const recipients = Array.isArray(row.recipientUsers)
-    ? row.recipientUsers
-    : [];
+  const stored = parseStoredRecipientPayload(row.recipientUsers);
   const senderName = row.senderName?.trim() || "—";
   const sentAt = row.sentAt ?? row.createdAt;
-  return {
+  return withSentToCount({
     id: row.id,
     subject: row.subject?.trim() || "—",
     sendFrom: senderName,
-    sentTo: formatSentToLabel(recipients),
-    recipientCount: recipients.length,
-    recipientUsers: recipients,
+    senderId: String(row.senderId ?? "").trim(),
+    sentTo: "",
+    recipientCount: 0,
+    recipientUsers: recipientsVisibleAsSent(stored.users),
     sentAt: sentAt.toISOString(),
     status: normalizeMailStatus(row.mailStatus),
-  };
+    templateId: row.templateId ? String(row.templateId) : null,
+    heldForCosponsorRelease:
+      stored.users.some(
+        (r) =>
+          r.requiresCosponsorRelease === true ||
+          r.heldLpReleasePending === true,
+      ),
+  });
 }
 
 export async function listDealInvestorCommunicationMails(
   dealId: string,
+  viewerUserId?: string,
 ): Promise<DealInvestorCommunicationMailApiRow[]> {
   const rows = await db
     .select()
@@ -79,7 +235,194 @@ export async function listDealInvestorCommunicationMails(
       desc(investorCommunicationLogs.sentAt),
       desc(investorCommunicationLogs.createdAt),
     );
-  return rows.map(mapRowToApi);
+  const mapped = rows.map(mapRowToApi);
+  const viewer = String(viewerUserId ?? "").trim();
+  if (!viewer) return mapped;
+
+  if (await isPortalUserCoSponsorOnDeal(dealId, viewer)) {
+    return scopeMailsForCoSponsorViewer(dealId, mapped, viewer);
+  }
+
+  const hideCoSponsorLpEmails = await isPortalUserLeadOrAdminSponsorOnDeal(
+    dealId,
+    viewer,
+  );
+  if (!hideCoSponsorLpEmails) return mapped;
+  return Promise.all(
+    mapped.map((row) => presentMailRowToLeadOrAdmin(dealId, row)),
+  );
+}
+
+function recipientOwnedByCoSponsor(
+  r: DealInvestorCommunicationRecipient,
+  ownerIds: Set<string>,
+  ownerEmails: Set<string>,
+  myInvestorIds: Set<string>,
+  myInvestorEmails: Set<string>,
+): boolean {
+  const sid = sourceRowIdFromStoredRecipient(r).toLowerCase();
+  if (sid && myInvestorIds.has(sid)) return true;
+  const uid = String(r.addedByUserId ?? "").trim().toLowerCase();
+  if (uid && ownerIds.has(uid) && r.classKind !== "gp") return true;
+  const sponsor = String(r.sponsorEmail ?? "").trim().toLowerCase();
+  if (sponsor.includes("@") && ownerEmails.has(sponsor) && r.classKind !== "gp") {
+    return true;
+  }
+  const own = usableRecipientEmail(r.email);
+  if (own && myInvestorEmails.has(own) && r.classKind !== "gp") return true;
+  if (
+    own &&
+    ownerEmails.has(own) &&
+    (r.classKind === "gp" || r.heldLpReleasePending === true)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function usableRecipientEmail(raw: unknown): string {
+  const email = String(raw ?? "").trim().toLowerCase();
+  if (!email.includes("@")) return "";
+  if (email === "email unavailable") return "";
+  return email;
+}
+
+function sourceRowIdFromStoredRecipient(
+  r: DealInvestorCommunicationRecipient,
+): string {
+  const explicit = String(r.sourceRowId ?? "").trim();
+  if (explicit) return explicit;
+  const id = String(r.id ?? "").trim();
+  const m = /^(?:investor|member)-([0-9a-f-]{36})/i.exec(id);
+  return m?.[1] ?? "";
+}
+
+function applyInvestorEmailsToRecipients(
+  recipients: DealInvestorCommunicationRecipient[],
+  byId: Map<string, string>,
+  byName: Map<string, string>,
+): DealInvestorCommunicationRecipient[] {
+  if (recipients.length === 0) return recipients;
+  return recipients.map((r) => {
+    if (usableRecipientEmail(r.email)) return r;
+    const rowId = sourceRowIdFromStoredRecipient(r).toLowerCase();
+    const fromId = rowId ? byId.get(rowId) : undefined;
+    const fromName = byName.get(
+      String(r.displayName ?? "").trim().toLowerCase(),
+    );
+    const email = fromId || fromName || "";
+    if (!email) return r;
+    return { ...r, email };
+  });
+}
+
+async function scopeMailsForCoSponsorViewer(
+  dealId: string,
+  mails: DealInvestorCommunicationMailApiRow[],
+  viewerUserId: string,
+): Promise<DealInvestorCommunicationMailApiRow[]> {
+  const equivIds = await listEquivalentPortalUserIdsForUser(viewerUserId);
+  const ownerIds = new Set(
+    equivIds.map((id) => id.trim().toLowerCase()).filter(Boolean),
+  );
+  ownerIds.add(viewerUserId.trim().toLowerCase());
+  const ownerEmails = new Set<string>();
+  const uuidIds = [...ownerIds].filter((id) => UUID_RE.test(id));
+  if (uuidIds.length > 0) {
+    const actors = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(inArray(users.id, uuidIds));
+    for (const actor of actors) {
+      const email = String(actor.email ?? "").trim().toLowerCase();
+      if (email.includes("@")) ownerEmails.add(email);
+    }
+  }
+
+  const investors = await loadUnredactedDealInvestors(dealId, viewerUserId);
+  const intercept = await getViewerCoSponsorEmailIntercept(
+    dealId,
+    viewerUserId,
+  );
+  const investorsHeld = intercept === "no";
+  const emailById = new Map<string, string>();
+  const emailByName = new Map<string, string>();
+  const myInvestorIds = new Set<string>();
+  const myInvestorEmails = new Set<string>();
+  for (const inv of investors) {
+    const adder = String(
+      (inv as { addedByUserId?: string }).addedByUserId ?? "",
+    )
+      .trim()
+      .toLowerCase();
+    const adderEmail = usableRecipientEmail(
+      (inv as { addedByEmail?: string }).addedByEmail,
+    );
+    const ownedByViewer =
+      (adder && ownerIds.has(adder)) ||
+      (adderEmail && ownerEmails.has(adderEmail));
+    const id = String(inv.id ?? "").trim().toLowerCase();
+    const email = usableRecipientEmail(inv.userEmail);
+    if (ownedByViewer) {
+      if (id) myInvestorIds.add(id);
+      if (email) myInvestorEmails.add(email);
+    }
+    if (!email) continue;
+    if (id) emailById.set(id, email);
+    const name = String(inv.displayName ?? inv.userDisplayName ?? "")
+      .trim()
+      .toLowerCase();
+    if (name) emailByName.set(name, email);
+  }
+
+  const out: DealInvestorCommunicationMailApiRow[] = [];
+  for (const row of mails) {
+    const mine = row.recipientUsers.filter((r) =>
+      recipientOwnedByCoSponsor(
+        r,
+        ownerIds,
+        ownerEmails,
+        myInvestorIds,
+        myInvestorEmails,
+      ),
+    );
+    const sentByMe = ownerIds.has(
+      String(row.senderId ?? "").trim().toLowerCase(),
+    );
+    if (mine.length === 0 && !sentByMe && !row.heldForCosponsorRelease) {
+      continue;
+    }
+    const myInvestors = mine.filter((r) => r.classKind !== "gp");
+    const scoped = myInvestors.length > 0
+      ? myInvestors
+      : sentByMe
+        ? row.recipientUsers.filter((r) => r.classKind !== "gp")
+        : mine;
+    const recipientUsers = recipientsVisibleAsSent(
+      applyInvestorEmailsToRecipients(scoped, emailById, emailByName),
+    );
+    const pendingRelease = Boolean(
+      !sentByMe &&
+        (investorsHeld ||
+          recipientUsers.some(
+            (r) =>
+              r.requiresCosponsorRelease === true ||
+              r.heldLpReleasePending === true,
+          )),
+    );
+    const visibleRecipients = pendingRelease ? [] : recipientUsers;
+    out.push(
+      withSentToCount({
+        ...row,
+        recipientUsers: visibleRecipients,
+        recipientCount: 0,
+        sentTo: "",
+        status: pendingRelease ? "not_sent" : row.status,
+        heldForCosponsorRelease: pendingRelease,
+      }),
+    );
+  }
+  return out;
 }
 
 function parseRecipientUsers(
@@ -97,8 +440,19 @@ function parseRecipientUsers(
     const requiresCosponsorRelease =
       o.requiresCosponsorRelease === true ||
       o.requires_cosponsor_release === true;
-    if (!email.includes("@") && !(requiresCosponsorRelease && sponsorEmail.includes("@")))
+    const addedByIsCoSponsor =
+      o.addedByIsCoSponsor === true || o.added_by_is_co_sponsor === true;
+    const sourceRowId = String(o.sourceRowId ?? o.source_row_id ?? "").trim();
+    if (
+      !email.includes("@") &&
+      !sourceRowId &&
+      !(
+        sponsorEmail.includes("@") &&
+        (requiresCosponsorRelease || addedByIsCoSponsor)
+      )
+    ) {
       continue;
+    }
     const groupsRaw = Array.isArray(o.groups) ? o.groups : [];
     const groups = groupsRaw
       .map((g) => String(g).trim())
@@ -106,7 +460,14 @@ function parseRecipientUsers(
         (g): g is "investor" | "deal_member" =>
           g === "investor" || g === "deal_member",
       );
-    const classKindRaw = String(o.classKind ?? o.class_kind ?? "").trim().toLowerCase();
+    const classKindRaw = String(o.classKind ?? o.class_kind ?? "")
+      .trim()
+      .toLowerCase();
+    const sourceKindRaw = String(o.sourceKind ?? o.source_kind ?? "")
+      .trim()
+      .toLowerCase();
+    const addedByUserId = String(o.addedByUserId ?? o.added_by_user_id ?? "")
+      .trim();
     out.push({
       id: String(o.id ?? (email || sponsorEmail)).trim() || email || sponsorEmail,
       displayName: String(o.displayName ?? email).trim() || email || "Investor",
@@ -117,6 +478,13 @@ function parseRecipientUsers(
       requiresCosponsorRelease: requiresCosponsorRelease || undefined,
       sponsorName: String(o.sponsorName ?? o.sponsor_name ?? "").trim() || undefined,
       sponsorEmail: sponsorEmail.includes("@") ? sponsorEmail : undefined,
+      sourceRowId: sourceRowId || undefined,
+      sourceKind:
+        sourceKindRaw === "member" || sourceKindRaw === "investor"
+          ? sourceKindRaw
+          : undefined,
+      addedByUserId: addedByUserId || undefined,
+      addedByIsCoSponsor: addedByIsCoSponsor || undefined,
     });
   }
   const byId = new Map<string, DealInvestorCommunicationRecipient>();
@@ -165,27 +533,58 @@ export interface SendDealInvestorCommunicationMailInput {
   deliveryEmails?: string[];
 }
 
+/** Template attachment is read server-side so the client never re-uploads it. */
+async function resolveTemplateAttachments(
+  templateId: string | null,
+): Promise<MailAttachment[]> {
+  if (!templateId) return [];
+  const [row] = await db
+    .select({ attachment: contactEmailTemplate.attachment })
+    .from(contactEmailTemplate)
+    .where(eq(contactEmailTemplate.id, templateId))
+    .limit(1);
+  const att = row?.attachment;
+  if (!att?.fileName || !att.dataBase64) return [];
+  const content = Buffer.from(att.dataBase64, "base64");
+  if (content.length === 0) return [];
+  return [
+    {
+      filename: att.fileName,
+      content,
+      contentType: att.mimeType || "application/octet-stream",
+    },
+  ];
+}
+
 export async function sendDealInvestorCommunicationMail(
   input: SendDealInvestorCommunicationMailInput,
 ): Promise<
   | { ok: true; row: DealInvestorCommunicationMailApiRow }
   | { ok: false; message: string; row?: DealInvestorCommunicationMailApiRow }
 > {
-  const recipients = parseRecipientUsers(input.recipientUsers);
-  const delivery = normalizeAddressList(input.deliveryEmails);
-  const to =
-    delivery.length > 0
-      ? delivery
-      : [
-          ...new Set(
-            recipients.flatMap((r) => {
-              if (r.requiresCosponsorRelease && r.sponsorEmail?.includes("@"))
-                return [r.sponsorEmail];
-              if (r.email.includes("@")) return [r.email];
-              return [];
-            }),
-          ),
-        ];
+  const parsed = parseRecipientUsers(input.recipientUsers);
+  const routed = await applyInvestorCommunicationDeliveryRouting({
+    dealId: input.dealId,
+    senderId: input.senderId,
+    recipients: parsed,
+  });
+  const recipients = routed.recipients;
+  const clientDelivery = normalizeAddressList(input.deliveryEmails);
+  const deliveryEmails =
+    routed.deliveryEmails.length > 0
+      ? routed.deliveryEmails
+      : clientDelivery.length > 0
+        ? clientDelivery
+        : [
+            ...new Set(
+              recipients.flatMap((r) => {
+                if (r.requiresCosponsorRelease && r.sponsorEmail?.includes("@"))
+                  return [r.sponsorEmail];
+                if (r.email.includes("@")) return [r.email];
+                return [];
+              }),
+            ),
+          ];
   const subject = input.subject.trim();
   const senderEmail = await resolveSenderEmail(input.senderId);
   const senderName = await getUserDisplayNameById(input.senderId);
@@ -206,7 +605,10 @@ export async function sendDealInvestorCommunicationMail(
         senderId: input.senderId,
         senderName: senderName || senderEmail || "—",
         subject: subject || "—",
-        recipientUsers: recipients,
+        recipientUsers: {
+          users: recipients,
+          deliveryEmails,
+        } satisfies DealInvestorCommunicationRecipientsStored,
         mailStatus,
         sentAt: mailStatus === "sent" ? now : null,
       })
@@ -214,7 +616,19 @@ export async function sendDealInvestorCommunicationMail(
     return inserted ? mapRowToApi(inserted) : null;
   }
 
-  if (to.length === 0) {
+  async function presentLoggedRow(
+    row: DealInvestorCommunicationMailApiRow | null,
+  ): Promise<DealInvestorCommunicationMailApiRow | null> {
+    if (!row) return null;
+    if (
+      await isPortalUserLeadOrAdminSponsorOnDeal(input.dealId, input.senderId)
+    ) {
+      return presentMailRowToLeadOrAdmin(input.dealId, row);
+    }
+    return row;
+  }
+
+  if (deliveryEmails.length === 0) {
     return { ok: false, message: "At least one valid recipient is required" };
   }
   if (!subject) {
@@ -241,34 +655,29 @@ export async function sendDealInvestorCommunicationMail(
           .map((x) => x.trim())
           .filter((x) => x.includes("@"))
       : [];
-  const bcc = [...new Set([...envBcc, senderEmail].filter(Boolean))];
+  const bcc = [...new Set([...envBcc, senderEmail].filter((x) => !!x))];
 
   try {
-    const transporter = emailConfig();
-    await transporter.sendMail({
+    await sendHtmlMailPerRecipient({
       from: senderEmail,
-      to,
-      ...(cc.length > 0 ? { cc } : {}),
-      ...(bcc.length > 0 ? { bcc } : {}),
+      to: deliveryEmails,
+      cc,
+      bcc,
       replyTo: senderEmail,
       subject,
       html: input.bodyHtml || "<p></p>",
       text: input.bodyText || "",
-      envelope: smtpEnvelopeForSendMail({
-        fromAddress: configuredSenderAddress,
-        to,
-        ...(cc.length > 0 ? { cc } : {}),
-        ...(bcc.length > 0 ? { bcc } : {}),
-      }),
+      envelopeFrom: configuredSenderAddress,
+      attachments: await resolveTemplateAttachments(templateId),
     });
-    const row = await insertLog("sent");
+    const row = await presentLoggedRow(await insertLog("sent"));
     if (!row) {
       return { ok: false, message: "Email sent but log could not be saved" };
     }
     return { ok: true, row };
   } catch (err) {
     console.error("sendDealInvestorCommunicationMail:", err);
-    const row = await insertLog("failed");
+    const row = await presentLoggedRow(await insertLog("failed"));
     const detail =
       err instanceof Error && err.message.trim()
         ? err.message.trim()

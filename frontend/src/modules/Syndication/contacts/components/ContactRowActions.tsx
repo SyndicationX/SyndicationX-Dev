@@ -2,6 +2,7 @@ import {
   Ban,
   CheckCircle2,
   Eye,
+  Mail,
   MoreHorizontal,
   Pencil,
   Upload,
@@ -23,6 +24,9 @@ interface ContactRowActionsProps {
   onEdit?: () => void
   onSuspend?: () => void
   onExport?: () => void
+  /** Shown when a portal invitation has not been sent yet. */
+  onSendInvitation?: () => void
+  invitationSending?: boolean
   /** Read-only rows (e.g. GoHighLevel) — only show View in the menu. */
   viewOnly?: boolean
 }
@@ -34,6 +38,8 @@ export function ContactRowActions({
   onEdit,
   onSuspend,
   onExport,
+  onSendInvitation,
+  invitationSending = false,
   viewOnly = false,
 }: ContactRowActionsProps) {
   const label = contactLabel.trim() || "contact"
@@ -162,6 +168,25 @@ export function ContactRowActions({
                       aria-hidden
                     />
                     Edit
+                  </button>
+                </li>
+              ) : null}
+              {!viewOnly && onSendInvitation ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="um_kebab_menuitem"
+                    role="menuitem"
+                    disabled={invitationSending}
+                    onClick={() => run(onSendInvitation)}
+                  >
+                    <Mail
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    Send invitation email
                   </button>
                 </li>
               ) : null}

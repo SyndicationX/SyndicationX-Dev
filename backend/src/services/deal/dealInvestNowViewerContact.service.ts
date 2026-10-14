@@ -6,6 +6,7 @@ import {
   type DealLpInvestorRow,
 } from "../../schema/deal.schema/deal-lp-investor.schema.js";
 import { resolveEmailForContactMemberId } from "./dealMemberInvitationEmail.service.js";
+import { findInviteAttributedContactId } from "../contact/investorInviteLink.service.js";
 
 export type ResolveInvestNowViewerContactResult = {
   lpInvestorRow: DealLpInvestorRow | undefined;
@@ -93,6 +94,14 @@ export async function resolveInvestNowViewerContactOnDeal(params: {
         }
       }
     }
+  }
+
+  if (!contactMemberId && viewerUserId && email.includes("@")) {
+    const referredContactId = await findInviteAttributedContactId({
+      viewerUserId,
+      emailNorm: email,
+    });
+    if (referredContactId) contactMemberId = referredContactId;
   }
 
   if (!contactMemberId && viewerUserId) {

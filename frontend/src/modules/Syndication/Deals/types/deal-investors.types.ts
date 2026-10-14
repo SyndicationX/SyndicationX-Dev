@@ -92,6 +92,8 @@ export interface DealInvestorRow {
   /** Portal user who added this investor (`deal_lp_investor` / `deal_member.added_by`). */
   /** Sponsor / Co-sponsor display name for this investor on the deal (Sponsor name column). */
   addedByDisplayName?: string
+  /** Company the sponsor belongs to (`users.organization_id`). */
+  addedByCompanyName?: string
   /** Email for the Sponsor/Co-sponsor associated with this investor. */
   addedByEmail?: string
   /** Portal `users.id` of the Sponsor/Co-sponsor associated with this investor. */
@@ -100,6 +102,12 @@ export interface DealInvestorRow {
   addedByIsSponsorOnDeal?: boolean
   /** True when that sponsor user is a Co-sponsor on this deal (lead/admin email redaction). */
   addedByIsCoSponsorOnDeal?: boolean
+  /**
+   * Co-sponsor’s deal-scoped intercept preference (`yes` / `no`).
+   * `yes` (default): lead-sponsor mail goes to this co-sponsor and their LPs.
+   * `no`: those emails go to the co-sponsor only; they can later send the same template.
+   */
+  addedByCoSponsorEmailIntercept?: "yes" | "no"
   /**
    * Deal Members “Investors added”: sum of Investors-tab Committed amounts for
    * investors whose Sponsor name is this member on this deal (excludes own).
@@ -111,8 +119,8 @@ export interface DealInvestorRow {
    * When true, the kebab action is “Re-send invitation mail”.
    */
   invitationMailSent?: boolean
-  /** `lp_roster` = row from `deal_lp_investor` only (no `deal_investment`). */
-  investorKind?: "investment" | "lp_roster"
+  /** Roster-only rows have no backing `deal_investment` id. */
+  investorKind?: "investment" | "lp_roster" | "member_roster"
 }
 
 export interface DealInvestorEsignDocumentRef {
@@ -160,6 +168,12 @@ export interface DealMembersPayload {
   /** When `referring_sponsor_ref` is sent on GET members, the linked sponsor name. */
   referringSponsorDisplayName?: string
   referringSponsorRef?: string
+  /** Company from the investor's Invite Investor link, for onboarding Sponsor name. */
+  inviteSponsorCompanyName?: string
+  /** Sponsor on this deal who belongs to the signed-in investor's organization. */
+  sameOrganizationSponsorDisplayName?: string
+  /** Outside-org sponsor, otherwise the user who invited this investor to the deal. */
+  onboardingSponsorDisplayName?: string
 }
 
 export function emptyDealMembersPayload(): DealMembersPayload {

@@ -70,6 +70,7 @@ type SignFlowEmbedMessage = {
   canSaveTemplate?: boolean
   documentId?: string
   title?: string
+  currentPage?: number
 }
 
 function requestSignFlowEmbedSave(iframe: HTMLIFrameElement | null): void {
@@ -80,9 +81,33 @@ function requestSignFlowEmbedSave(iframe: HTMLIFrameElement | null): void {
   target.postMessage({ ...payload, event: "request-save-template" }, "*")
 }
 
-function buildSignFlowReloadSrc(url: string, nonce: number): string {
-  if (nonce <= 0) return url
-  return `${url}${url.includes("?") ? "&" : "?"}sfReload=${nonce}`
+function requestSignFlowEmbedPage(target: Window | null, page: number): void {
+  if (!target || page < 2) return
+  const payload = { source: "signflow-parent", event: "set-page", page }
+  target.postMessage(payload, "*")
+  target.postMessage({ ...payload, event: "set-current-page" }, "*")
+}
+
+/** Ask the open builder to reload fields without remounting the PDF viewer. */
+function requestSignFlowEmbedRefresh(target: Window | null): void {
+  if (!target) return
+  target.postMessage(
+    { source: "signflow-parent", event: "refresh-document" },
+    "*",
+  )
+}
+
+function buildSignFlowReloadSrc(
+  url: string,
+  nonce: number,
+  page?: number,
+): string {
+  const params = new URLSearchParams()
+  if (nonce > 0) params.set("sfReload", String(nonce))
+  if (page && page > 1) params.set("page", String(Math.floor(page)))
+  const query = params.toString()
+  if (!query) return url
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`
 }
 
 export function SignFlowEmbeddedEditor({
@@ -125,6 +150,12 @@ export function SignFlowEmbeddedEditor({
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>(() => [
     ...ESIGN_ENTITY_PROFILE_IDS,
   ])
+  const [builderCurrentPage, setBuilderCurrentPage] = useState(1)
+  /** Page the next field-add refresh should reopen. Page 1 is the embed default. */
+  const embedOpenPageRef = useRef(1)
+  /** Kept on the iframe address so acknowledging the page does not reload it. */
+  const reloadPageRef = useRef(1)
+  const ignorePageOneUntilRef = useRef(0)
   const [addingField, setAddingField] = useState(false)
   const fieldSelectId = useId()
   const profileGroupId = useId()
@@ -179,6 +210,10 @@ export function SignFlowEmbeddedEditor({
     setSaving(false)
     setViewNonce(0)
     setPreloadNonce(null)
+    setBuilderCurrentPage(1)
+    embedOpenPageRef.current = 1
+    reloadPageRef.current = 1
+    ignorePageOneUntilRef.current = 0
   }, [url, docId])
 
   useEffect(() => {
@@ -240,7 +275,26 @@ export function SignFlowEmbeddedEditor({
     const onMessage = (event: MessageEvent) => {
       const data = event.data as SignFlowEmbedMessage | undefined
       if (!data || data.source !== "signflow-embed") return
+      if (Number.isFinite(data.currentPage) && Number(data.currentPage) >= 1) {
+        const reported = Math.floor(Number(data.currentPage))
+        const stayOn = embedOpenPageRef.current
+        const ignoreOpeningPageOne =
+          stayOn > 1 &&
+          reported === 1 &&
+          Date.now() < ignorePageOneUntilRef.current
+        if (!ignoreOpeningPageOne) {
+          setBuilderCurrentPage(reported)
+          if (stayOn > 1 && reported === stayOn) {
+            embedOpenPageRef.current = 1
+            ignorePageOneUntilRef.current = 0
+          }
+        }
+      }
       if (data.event === "builder-ready" || data.event === "builder-document-loaded") {
+        const stayOn = embedOpenPageRef.current
+        if (stayOn > 1 && event.source && "postMessage" in event.source) {
+          requestSignFlowEmbedPage(event.source as Window, stayOn)
+        }
         setBuilderReady(true)
         // Keep Save unlocked across background iframe refreshes after edits.
         if (hasLocalFieldEditsRef.current) {
@@ -386,6 +440,7 @@ export function SignFlowEmbeddedEditor({
         fId,
         key,
         selectedProfileIds,
+        builderCurrentPage,
       )
       if (!result.ok) {
         toast.error("Could not add field", result.message)
@@ -397,8 +452,15 @@ export function SignFlowEmbeddedEditor({
       )
       markTemplateDirty()
       setCanSaveTemplate(true)
-      // Swap in a fresh embed in the background — keep the current PDF visible.
-      setPreloadNonce(viewNonce + 1)
+      const stayOnPage = Math.max(1, builderCurrentPage)
+      embedOpenPageRef.current = stayOnPage
+      reloadPageRef.current = stayOnPage
+      ignorePageOneUntilRef.current = stayOnPage > 1 ? Date.now() + 8_000 : 0
+      const frame = iframeRef.current?.contentWindow ?? null
+      // Refresh fields in the open viewer. Reloading the iframe always
+      // starts the PDF on page 1.
+      requestSignFlowEmbedRefresh(frame)
+      requestSignFlowEmbedPage(frame, stayOnPage)
     } finally {
       setAddingField(false)
     }
@@ -408,9 +470,9 @@ export function SignFlowEmbeddedEditor({
     fileId,
     flushEmbedLayout,
     markTemplateDirty,
+    builderCurrentPage,
     selectedFieldKey,
     selectedProfileIds,
-    viewNonce,
   ])
 
   const saveDisabled =
@@ -434,9 +496,13 @@ export function SignFlowEmbeddedEditor({
   if (!sessionLoading && (!url || !docId)) return null
 
   const showWorkspaceLoading = sessionLoading || !url || (!iframeLoaded && preloadNonce == null)
-  const activeSrc = url ? buildSignFlowReloadSrc(url, viewNonce) : ""
+  const activeSrc = url
+    ? buildSignFlowReloadSrc(url, viewNonce, reloadPageRef.current)
+    : ""
   const preloadSrc =
-    url && preloadNonce != null ? buildSignFlowReloadSrc(url, preloadNonce) : ""
+    url && preloadNonce != null
+      ? buildSignFlowReloadSrc(url, preloadNonce, reloadPageRef.current)
+      : ""
 
   const modal = (
     <div

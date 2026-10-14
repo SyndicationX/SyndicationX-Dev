@@ -19,6 +19,8 @@ export type InvestorDistributionLine = {
    * Prefer stored `percentOfClassDistributions` when set; else capital pro‑rata.
    */
   percentOfClass: number
+  /** Share of the whole deal (0–100). Independent of % of class. */
+  percentOfDeal: number
   payment: number
 }
 
@@ -59,6 +61,43 @@ export function parseStoredClassPercent(
   const n = parseFloat(t)
   if (!Number.isFinite(n) || n < 0) return null
   return Math.min(100, n)
+}
+
+/** % of deal: stored value, else entity ownership, else capital ÷ deal capital. */
+export function resolvePercentOfDeal(params: {
+  storedDealPercent?: string | number | null
+  entityOwnershipPercent?: string | number | null
+  capital: number
+  dealCapital: number
+}): number {
+  const stored = parseStoredClassPercent(
+    params.storedDealPercent == null ? "" : String(params.storedDealPercent),
+  )
+  if (stored != null) return stored
+  const entity = parseStoredClassPercent(
+    params.entityOwnershipPercent == null
+      ? ""
+      : String(params.entityOwnershipPercent),
+  )
+  if (entity != null) return entity
+  const cap = Math.max(0, params.capital)
+  const deal = Math.max(0, params.dealCapital)
+  if (deal > 0 && cap > 0) return Math.min(100, (cap / deal) * 100)
+  return 0
+}
+
+export function applyPercentOfDealEdit(params: {
+  lines: InvestorDistributionLine[]
+  investorId: string
+  nextPercent: number
+}): InvestorDistributionLine[] {
+  const { lines, investorId, nextPercent } = params
+  const target = lines.find((l) => l.investorId === investorId)
+  if (!target) return lines
+  const pct = Math.max(0, Math.min(100, nextPercent))
+  return lines.map((l) =>
+    l.investorId === investorId ? { ...l, percentOfDeal: pct } : l,
+  )
 }
 
 /**
@@ -105,6 +144,7 @@ export function allocateInvestorDistributionLines(params: {
     byClass.set(row.classId, list)
   }
 
+  const dealCapital = matched.reduce((s, m) => s + Math.max(0, m.capital), 0)
   const lines: InvestorDistributionLine[] = []
   for (const [classId, members] of byClass) {
     const classPay = perClass[classId] ?? 0
@@ -140,6 +180,11 @@ export function allocateInvestorDistributionLines(params: {
         className: row.className || classById.get(row.classId)?.name || "—",
         capital: row.capital,
         percentOfClass,
+        percentOfDeal: resolvePercentOfDeal({
+          entityOwnershipPercent: row.investor.entityOwnershipPercent,
+          capital: row.capital,
+          dealCapital,
+        }),
         payment,
       })
     })

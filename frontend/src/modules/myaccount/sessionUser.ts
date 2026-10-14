@@ -1,5 +1,19 @@
 import { SESSION_USER_DETAILS_KEY } from "../../common/auth/sessionKeys"
 
+function visibilityFromApiUser(
+  apiUser: Record<string, unknown>,
+): boolean | undefined {
+  const raw = apiUser.visibleToUsers ?? apiUser.visible_to_users
+  if (typeof raw === "boolean") return raw
+  if (raw === 1 || raw === "1") return true
+  if (raw === 0 || raw === "0") return false
+  if (typeof raw !== "string") return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === "true" || normalized === "yes") return true
+  if (normalized === "false" || normalized === "no") return false
+  return undefined
+}
+
 export function readSessionUser(): Record<string, unknown> | null {
   try {
     const raw = sessionStorage.getItem(SESSION_USER_DETAILS_KEY)
@@ -24,9 +38,16 @@ export function mergeSessionUserDetails(apiUser: Record<string, unknown>): void 
       prev[0] && typeof prev[0] === "object" && !Array.isArray(prev[0])
         ? (prev[0] as Record<string, unknown>)
         : {}
+    const visibility = visibilityFromApiUser(apiUser)
     const merged = {
       ...base,
       ...apiUser,
+      ...(visibility === undefined
+        ? {}
+        : {
+            visibleToUsers: visibility,
+            visible_to_users: visibility,
+          }),
       organization_name:
         (typeof apiUser.organization_name === "string"
           ? apiUser.organization_name

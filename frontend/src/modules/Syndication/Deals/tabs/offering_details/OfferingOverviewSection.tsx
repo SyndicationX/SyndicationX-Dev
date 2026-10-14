@@ -44,6 +44,7 @@ import {
   isInvestmentFlowOpeningTransition,
   normalizeDealStageCanonical,
   normalizeDealStatus,
+  offeringStatusRequiresInvestorClass,
   validateOfferingStatusChange,
 } from "../../constants/deal-lifecycle"
 import {
@@ -52,6 +53,7 @@ import {
   mapLegacyOfferingVisibility,
   offeringStatusFromApi,
   offeringStatusOptionsForOverview,
+  offeringStatusPickerValue,
   OFFERING_VISIBILITY_OPTIONS,
   type OfferingVisibilityValue,
 } from "../../utils/offeringOverviewForm"
@@ -220,10 +222,13 @@ function isMoneyFieldEmpty(raw: string): boolean {
     .trim() === ""
 }
 
-function overviewDraftPricePerUnit(draft: OverviewDraft): string {
+function overviewDraftPricePerUnit(
+  draft: OverviewDraft,
+  raiseAmountDistributions: string,
+): string {
   return computeInvestorClassPricePerUnitFromForm({
     offeringSize: draft.classOfferingSize,
-    raiseAmountDistributions: "",
+    raiseAmountDistributions,
     numberOfUnits: draft.classNumberOfUnits,
   })
 }
@@ -232,12 +237,16 @@ function withOverviewAutoPricePerUnit(
   patch: Partial<OverviewDraft>,
   current: OverviewDraft,
   isLpClass: boolean,
+  raiseAmountDistributions: string,
 ): OverviewDraft {
   const merged = { ...current, ...patch }
   if (!isLpClass) return merged
   return {
     ...merged,
-    classPricePerUnit: overviewDraftPricePerUnit(merged),
+    classPricePerUnit: overviewDraftPricePerUnit(
+      merged,
+      raiseAmountDistributions,
+    ),
   }
 }
 
@@ -354,6 +363,14 @@ export function OfferingOverviewSection({
 
   const tryApplyOfferingStatus = useCallback(
     async (next: string): Promise<boolean> => {
+      if (
+        classes.length === 0 &&
+        next !== draft.offeringStatus &&
+        offeringStatusRequiresInvestorClass(next)
+      ) {
+        toast.error("Create a class to change the deal status")
+        return false
+      }
       let configured = esignTemplatesConfigured
       if (configured === null) {
         configured = await refreshEsignTemplatesConfigured()
@@ -384,6 +401,7 @@ export function OfferingOverviewSection({
       return true
     },
     [
+      classes.length,
       detail.dealStage,
       draft.offeringStatus,
       esignTemplatesConfigured,
@@ -602,6 +620,13 @@ export function OfferingOverviewSection({
 
       if (!overviewBitsEqual) {
         if (draft.offeringStatus !== savedSnapshot.offeringStatus) {
+          if (
+            classes.length === 0 &&
+            offeringStatusRequiresInvestorClass(draft.offeringStatus)
+          ) {
+            toast.error("Create a class to change the deal status")
+            return
+          }
           const statusCheck = validateOfferingStatusChange({
             dealStage: detail.dealStage,
             previousOfferingStatus: detail.offeringStatus,
@@ -656,7 +681,7 @@ export function OfferingOverviewSection({
         form.minimumInvestment = draft.classMinimumInvestment
         form.numberOfUnits = draft.classNumberOfUnits
         form.pricePerUnit = isLpInvestorClass(row)
-          ? overviewDraftPricePerUnit(draft)
+          ? overviewDraftPricePerUnit(draft, form.raiseAmountDistributions)
           : draft.classPricePerUnit
         form.advanced.investmentType = draft.classInvestmentType.trim() || "equity"
         try {
@@ -829,6 +854,9 @@ export function OfferingOverviewSection({
 
   const isSelectedLpClass = isLpInvestorClass(selectedClassRow)
 
+  const selectedClassRaiseAmountDistributions =
+    selectedClassRow?.raiseAmountDistributions ?? ""
+
   const showNumberOfUnitsRow = isSelectedLpClass
 
   const showPricePerUnitRow = isSelectedLpClass
@@ -869,7 +897,7 @@ export function OfferingOverviewSection({
                 {statusFieldEditable ? (
                   <DealOfferingStatusSelect
                     id={`deal-ov-status-${id}`}
-                    value={draft.offeringStatus}
+                    value={offeringStatusPickerValue(draft.offeringStatus)}
                     options={statusOptions}
                     ariaDescribedBy={statusControlDescribedBy}
                     onChange={(next) => {
@@ -881,7 +909,9 @@ export function OfferingOverviewSection({
                     id={`deal-ov-status-${id}`}
                     aria-describedby={statusControlDescribedBy}
                   >
-                    <DealOfferingStatusReadonly value={detail.offeringStatus} />
+                    <DealOfferingStatusReadonly
+                      value={offeringStatusPickerValue(detail.offeringStatus)}
+                    />
                   </div>
                 )}
                 {statusFieldLockedHint ? (
@@ -1343,6 +1373,7 @@ export function OfferingOverviewSection({
                         },
                         d,
                         isSelectedLpClass,
+                        selectedClassRaiseAmountDistributions,
                       ),
                     )
                   }}
@@ -1354,6 +1385,7 @@ export function OfferingOverviewSection({
                         },
                         d,
                         isSelectedLpClass,
+                        selectedClassRaiseAmountDistributions,
                       ),
                     )
                   }
@@ -1401,6 +1433,7 @@ export function OfferingOverviewSection({
                           },
                           d,
                           isSelectedLpClass,
+                          selectedClassRaiseAmountDistributions,
                         ),
                       )
                     }
@@ -1414,6 +1447,7 @@ export function OfferingOverviewSection({
                           },
                           d,
                           isSelectedLpClass,
+                          selectedClassRaiseAmountDistributions,
                         ),
                       )
                     }

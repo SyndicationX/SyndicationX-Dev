@@ -1,10 +1,18 @@
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
+import { getSessionUserId } from "@/common/auth/sessionUserId"
 import {
+  canAccessFeedback,
   getLpInvestorDealIdsFromSession,
   isLpInvestorSessionUser,
   isPlatformAdmin,
 } from "@/common/auth/roleUtils"
 import { fetchPlatformSignupNotifications } from "./fetchPlatformSignupNotifications"
+import { getSessionOrganizationCompanyId } from "@/common/auth/sessionOrganization"
+import {
+  fetchCompanyBillingDeals,
+  fetchPlatformBillingStartDate,
+} from "@/modules/Syndication/company/companyBillingApi"
+import { formatDealListDateDisplay } from "@/modules/Syndication/Deals/dealsListDisplay"
 import { getMergedInvestmentListRows } from "@/modules/Investing/pages/investments/investmentsRuntimeData"
 import {
   fetchDealInvestors,
@@ -15,6 +23,16 @@ import {
 import { esignCategoryLabel } from "@/modules/Syndication/Deals/utils/esignTemplateCategories"
 import { investorRowIsFundApproved } from "@/modules/Syndication/Deals/utils/dealInvestorTableDisplay"
 import type { DealInvestorRow } from "@/modules/Syndication/Deals/types/deal-investors.types"
+import type { DealListRow } from "@/modules/Syndication/Deals/types/deals.types"
+import {
+  dealSaasBillingSettingsPath,
+  billingPlanDisplayName,
+  isDealListRowSaasLocked,
+} from "@/modules/Syndication/Deals/utils/dealSaasAccess"
+import {
+  dealSaasBillingHasStarted,
+  formatSaasBillingStartIsoDisplay,
+} from "@/modules/Syndication/Deals/utils/saasBillingStartDate"
 import {
   dealRowSupportsRosterApiPrefetch,
   filterDealListRowsVisibleToInvestors,
@@ -31,8 +49,23 @@ import {
   investorEsignWasSent,
 } from "@/modules/Syndication/Deals/utils/investorEsignStatus"
 import { parseMoneyDigits } from "@/modules/Syndication/Deals/utils/offeringMoneyFormat"
+import { refreshInvestmentDealDocumentsPreview } from "@/modules/Investing/pages/investments/utils/refreshInvestmentDealDocumentsPreview"
+import { buildInvestmentDocumentAudience } from "@/modules/Investing/pages/investments/utils/buildInvestmentDocumentAudience"
+import {
+  filterInvestorOfferingDocumentSectionGroups,
+  listInvestmentDetailDocumentSectionGroups,
+} from "@/modules/Investing/pages/investments/utils/investmentDetailDocuments"
+import { fetchMyFeedbackAlerts } from "@/modules/feedback"
+import { feedbackLocationLabel } from "@/modules/feedback/feedbackLocation"
+import type { FeedbackAlertKind, FeedbackItem } from "@/modules/feedback/types"
 import type { PortalNotification } from "../types/notification.types"
 import { mapWithConcurrency } from "../utils/mapWithConcurrency"
+import {
+  dealHasOfferingDocsBaseline,
+  getOfferingDocsBaselineIds,
+  rememberOfferingDocsBaseline,
+  sharedOfferingDocumentNotificationId,
+} from "../utils/sharedOfferingDocumentNotification"
 
 function capitalizeFirst(value: string): string {
   const trimmed = value.trim()
@@ -244,6 +277,67 @@ async function collectLpInvestorNotifications(
   })
 }
 
+/**
+ * Investor inbox: sponsor-shared offering documents that appeared after this
+ * login first saw the deal (same visibility rules as Offering Documents).
+ */
+async function collectLpDocumentSharedNotifications(
+  out: NotificationDraft[],
+): Promise<void> {
+  const viewerEmail = getSessionUserEmail().trim().toLowerCase()
+  if (!viewerEmail) return
+
+  const investments = await getMergedInvestmentListRows()
+  const dealMeta = new Map<string, { name: string }>()
+  for (const row of investments.filter((r) => !r.archived)) {
+    const dealId = (row.dealId ?? row.id ?? "").trim()
+    if (!dealId) continue
+    dealMeta.set(dealId, {
+      name: row.investmentName?.trim() || row.offeringName?.trim() || "Investment",
+    })
+  }
+
+  const dealIds = [...dealMeta.keys()].slice(0, 24)
+  if (dealIds.length === 0) return
+
+  await mapWithConcurrency(dealIds, 4, async (dealId) => {
+    const dealName = dealMeta.get(dealId)?.name ?? "Investment"
+    try {
+      await refreshInvestmentDealDocumentsPreview(dealId)
+      const audience = await buildInvestmentDocumentAudience(dealId)
+      const visible = filterInvestorOfferingDocumentSectionGroups(
+        listInvestmentDetailDocumentSectionGroups(dealId, audience),
+        "",
+      ).flatMap((section) => section.documents)
+
+      const visibleIds = visible.map((doc) => doc.id)
+      if (!dealHasOfferingDocsBaseline(dealId)) {
+        rememberOfferingDocsBaseline(dealId, visibleIds)
+        return
+      }
+
+      const baseline = getOfferingDocsBaselineIds(dealId)
+      for (const doc of visible) {
+        if (baseline.has(doc.id)) continue
+        const docLabel = capitalizeFirst(doc.name.trim() || "Document")
+        const sectionLabel = doc.sectionLabel.trim()
+        out.push({
+          id: sharedOfferingDocumentNotificationId(dealId, doc.id),
+          title: "New document shared with you",
+          message: sectionLabel
+            ? `${docLabel} was shared on ${dealName} (${sectionLabel}). Open Offering Documents to view it.`
+            : `${docLabel} was shared on ${dealName}. Open Offering Documents to view it.`,
+          category: "document",
+          createdAt: isoOrNow(doc.dateAdded),
+          href: `/investing/investments/${encodeURIComponent(dealId)}?tab=documents`,
+        })
+      }
+    } catch {
+      /* skip this deal if preview or audience fails */
+    }
+  })
+}
+
 function formatInvestorWhoPhrase(investors: { displayName?: string | null }[]): string {
   const names = investors
     .map((inv) => inv.displayName?.trim())
@@ -257,12 +351,230 @@ function formatInvestorWhoPhrase(investors: { displayName?: string | null }[]): 
   return names.join(" and ")
 }
 
+function pushLeadSponsorBillingAlert(
+  out: NotificationDraft[],
+  row: {
+    id: string
+    dealName: string
+    nextBillingDate?: string | null
+    saasBillingStartsAt?: string | null
+    billed?: boolean
+    billable?: boolean
+    needsPlanUpgrade?: boolean
+    planId?: string | null
+    billingPlanId?: string | null
+    suggestedPlanId?: string | null
+    billingAccessLocked?: boolean
+    dealStage?: string
+    viewerIsLeadSponsor?: boolean
+    billingSubscriptionStatus?: string
+  },
+): void {
+  const dealId = row.id.trim()
+  if (!dealId) return
+  const dealName = row.dealName?.trim() || "this deal"
+  const currentPlan = billingPlanDisplayName(
+    row.planId ?? row.billingPlanId,
+  )
+  const nextPlan = billingPlanDisplayName(row.suggestedPlanId)
+
+  if (row.needsPlanUpgrade === true) {
+    out.push({
+      id: `deal-billing-upgrade:${dealId}`,
+      title: "Deal plan upgrade needed",
+      message: `The raise for ${dealName} is above ${currentPlan}. SyndicationX selected ${nextPlan}. Upgrade billing for this deal.`,
+      category: "deal",
+      createdAt: isoOrNow(row.nextBillingDate),
+      href: dealSaasBillingSettingsPath(dealId, row.dealName, {
+        billing: "upgrade",
+      }),
+    })
+    return
+  }
+
+  const href = dealSaasBillingSettingsPath(dealId, row.dealName)
+
+  const locked =
+    row.billingAccessLocked === true ||
+    isDealListRowSaasLocked(row as DealListRow)
+  const billable =
+    row.billable === true ||
+    (() => {
+      const stage = String(row.dealStage ?? "").trim().toLowerCase().replace(/\s+/g, "_")
+      return (
+        stage === "capital_raising" ||
+        stage === "raising_capital" ||
+        stage === "asset_managing" ||
+        stage === "managing_asset"
+      )
+    })()
+  const status = String(row.billingSubscriptionStatus ?? "")
+    .trim()
+    .toLowerCase()
+  const paid = row.billed === true || status === "active" || status === "trialing"
+  const startIso =
+    row.saasBillingStartsAt?.trim() || row.nextBillingDate?.trim() || ""
+
+  if (locked) {
+    out.push({
+      id: `deal-billing-started:${dealId}`,
+      title: "Payment is due",
+      message: `Monthly SaaS for ${dealName} is due. Pay now so this deal stays open to view and edit.`,
+      category: "deal",
+      createdAt: isoOrNow(row.nextBillingDate || startIso),
+      href,
+    })
+    return
+  }
+
+  if (!billable || paid) return
+  if (!startIso) return
+
+  const complimentary = !dealSaasBillingHasStarted(startIso)
+  if (complimentary) {
+    out.push({
+      id: `deal-billing-upcoming:${dealId}`,
+      title: "Billing coming up",
+      message: `SaaS billing for ${dealName} is complimentary until ${formatSaasBillingStartIsoDisplay(startIso)}. Pay before then so this deal stays open.`,
+      category: "deal",
+      createdAt: isoOrNow(startIso),
+      href,
+    })
+    return
+  }
+
+  out.push({
+    id: `deal-billing-started:${dealId}`,
+    title: "Payment is due",
+    message: `Monthly SaaS for ${dealName} is due. Pay now so this deal stays open to view and edit.`,
+    category: "deal",
+    createdAt: isoOrNow(row.nextBillingDate || startIso),
+    href,
+  })
+}
+
+/**
+ * Lead sponsors: payment due, upcoming SaaS charge, and plan upgrades
+ * when deal size outgrows the paid plan.
+ */
+async function collectLeadSponsorBillingNotifications(
+  deals: DealListRow[],
+  out: NotificationDraft[],
+  platformBilling?: {
+    saasBillingStartsAt: string | null
+    updatedAt: string | null
+  },
+): Promise<void> {
+  const leadDeals = deals.filter(
+    (deal) => deal.viewerIsLeadSponsor === true && !deal.archived,
+  )
+  const companyId = getSessionOrganizationCompanyId()?.trim() ?? ""
+  let billedFromCompany = false
+  if (companyId) {
+    const billing = await fetchCompanyBillingDeals(companyId)
+    if (billing.ok && billing.canPay) {
+      billedFromCompany = true
+      const payDeal = billing.deals.find((d) => !d.archived) ?? billing.deals[0]
+      if (platformBilling?.saasBillingStartsAt?.trim() && payDeal) {
+        const platformStart = platformBilling.saasBillingStartsAt.trim()
+        out.push({
+          id: `platform-billing-start:${platformStart.slice(0, 10)}`,
+          title: "Billing start date updated",
+          message: `SyndicationX billing starts on ${formatDealListDateDisplay(platformStart)}. Review billing for your deals so they stay open after that date.`,
+          category: "deal",
+          createdAt: isoOrNow(platformBilling.updatedAt || platformStart),
+          href: dealSaasBillingSettingsPath(payDeal.id, payDeal.dealName),
+        })
+      }
+      for (const row of billing.deals) {
+        if (row.archived) continue
+        const isLeadDeal =
+          billing.viewerScope === "lead_sponsor" ||
+          leadDeals.some(
+            (d) => d.id.trim().toLowerCase() === row.id.trim().toLowerCase(),
+          )
+        if (!isLeadDeal) continue
+        pushLeadSponsorBillingAlert(out, {
+          id: row.id,
+          dealName: row.dealName,
+          nextBillingDate: row.nextBillingDate,
+          saasBillingStartsAt: row.saasBillingStartsAt,
+          billed: row.billed,
+          billable: row.billable,
+          needsPlanUpgrade: row.needsPlanUpgrade,
+          planId: row.planId,
+          suggestedPlanId: row.suggestedPlanId,
+          billingSubscriptionStatus: row.subscriptionStatus,
+        })
+      }
+    }
+  }
+
+  if (!billedFromCompany) {
+    const platformStart = platformBilling?.saasBillingStartsAt?.trim() ?? ""
+    if (platformStart && leadDeals.length > 0) {
+      const payDeal = leadDeals[0]
+      out.push({
+        id: `platform-billing-start:${platformStart.slice(0, 10)}`,
+        title: "Billing start date updated",
+        message: `SyndicationX billing starts on ${formatDealListDateDisplay(platformStart)}. Review billing for your deals so they stay open after that date.`,
+        category: "deal",
+        createdAt: isoOrNow(platformBilling?.updatedAt || platformStart),
+        href: dealSaasBillingSettingsPath(payDeal.id, payDeal.dealName),
+      })
+    }
+  }
+
+  for (const deal of leadDeals) {
+    if (billedFromCompany) {
+      const already = out.some(
+        (n) =>
+          n.id === `deal-billing-upgrade:${deal.id.trim()}` ||
+          n.id === `deal-billing-started:${deal.id.trim()}` ||
+          n.id === `deal-billing-upcoming:${deal.id.trim()}`,
+      )
+      if (already) continue
+    }
+    pushLeadSponsorBillingAlert(out, deal)
+  }
+}
+
+/**
+ * Reads are otherwise uncapped, but the bell fans out one request per deal in the
+ * background. Bounding them keeps a stalled deal from holding a connection open
+ * indefinitely for a count nobody is waiting on.
+ */
+const NOTIFICATIONS_FETCH_TIMEOUT_MS = 15_000
+
 async function collectSponsorNotifications(
   out: NotificationDraft[],
 ): Promise<void> {
-  const deals = (await fetchDealsList({ includeParticipantDeals: true }))
-    .filter((d) => !d.archived)
-    .slice(0, 20)
+  const [listed, workspaceDeals, platformBilling] = await Promise.all([
+    fetchDealsList({ includeParticipantDeals: true }),
+    fetchDealsList(),
+    fetchPlatformBillingStartDate(),
+  ])
+  const byId = new Map<string, DealListRow>()
+  for (const deal of [...workspaceDeals, ...listed]) {
+    if (deal.archived) continue
+    const key = deal.id.trim().toLowerCase()
+    if (!key) continue
+    const prev = byId.get(key)
+    if (!prev || deal.viewerIsLeadSponsor === true) byId.set(key, deal)
+  }
+  await collectLeadSponsorBillingNotifications(
+    [...byId.values()],
+    out,
+    platformBilling.ok
+      ? {
+          saasBillingStartsAt: platformBilling.saasBillingStartsAt,
+          updatedAt: platformBilling.updatedAt,
+        }
+      : undefined,
+  )
+
+  const dealsListed = listed.filter((d) => !d.archived)
+  const deals = dealsListed.slice(0, 20)
 
   if (deals.length === 0) return
 
@@ -270,7 +582,9 @@ async function collectSponsorNotifications(
     const dealId = deal.id.trim()
     if (!dealId) return
     const dealName = deal.dealName?.trim() || "Deal"
-    const payload = await fetchDealInvestors(dealId)
+    const payload = await fetchDealInvestors(dealId, {
+      timeoutMs: NOTIFICATIONS_FETCH_TIMEOUT_MS,
+    })
     const investors = payload.investors
 
     const allInvestorsSigned = allInvestorsInvestorPhaseComplete(investors)
@@ -355,15 +669,96 @@ function viewerHasLpNotificationScope(): boolean {
   return getLpInvestorDealIdsFromSession().length > 0
 }
 
-export async function fetchPortalNotifications(): Promise<NotificationDraft[]> {
+function feedbackViewHref(id: string): string {
+  return `/feedback?view=${encodeURIComponent(id)}`
+}
+
+function feedbackAlertKinds(item: FeedbackItem): FeedbackAlertKind[] {
+  if (item.alertKinds?.length) return item.alertKinds
+  const kinds: FeedbackAlertKind[] = []
+  if (item.viewerIsSubmitter && item.status === "Reviewed") {
+    kinds.push("submitter_reviewed")
+  }
+  if (item.viewerIsSubmitter && item.status === "Resolved") {
+    kinds.push("submitter_resolved")
+  }
+  return kinds
+}
+
+async function collectFeedbackReviewNotifications(
+  out: NotificationDraft[],
+): Promise<void> {
+  if (!canAccessFeedback()) return
+  const items = await fetchMyFeedbackAlerts()
+  for (const item of items) {
+    const location = feedbackLocationLabel(item)
+    const who = item.username.trim() || item.userEmail.trim() || "a user"
+    const href = feedbackViewHref(item.id)
+    for (const kind of feedbackAlertKinds(item)) {
+      if (kind === "submitter_reviewed") {
+        out.push({
+          id: `feedback-reviewed:${item.id}`,
+          title: "Feedback Reviewed",
+          message: `Your feedback regarding ${location} has been reviewed by the Platform Admin.`,
+          category: "system",
+          createdAt: isoOrNow(item.reviewedAt ?? item.createdAt),
+          href,
+          actionLabel: "View feedback",
+        })
+      }
+      if (kind === "submitter_resolved") {
+        const response = item.adminResponse?.trim()
+        out.push({
+          id: `feedback-resolved:${item.id}`,
+          title: "Feedback Resolved",
+          message: response
+            ? `Your feedback regarding ${location} has been resolved. Review Comments: ${response}`
+            : `Your feedback regarding ${location} has been resolved.`,
+          category: "system",
+          createdAt: isoOrNow(item.resolvedAt ?? item.reviewedAt ?? item.createdAt),
+          href,
+          actionLabel: "View feedback",
+        })
+      }
+      if (kind === "admin_new") {
+        out.push({
+          id: `feedback-new:${item.id}`,
+          title: "New Feedback Received",
+          message: `${who} submitted feedback for ${location}.`,
+          category: "system",
+          createdAt: isoOrNow(item.createdAt),
+          href,
+          actionLabel: "View feedback",
+        })
+      }
+      if (kind === "admin_updated") {
+        out.push({
+          id: `feedback-admin-updated:${item.id}:${item.status.toLowerCase()}`,
+          title: "Feedback Updated",
+          message: `Feedback submitted by ${who} has been marked as ${item.status}.`,
+          category: "system",
+          createdAt: isoOrNow(
+            item.resolvedAt ?? item.reviewedAt ?? item.createdAt,
+          ),
+          href,
+          actionLabel: "View feedback",
+        })
+      }
+    }
+  }
+}
+
+async function buildPortalNotifications(): Promise<NotificationDraft[]> {
   const out: NotificationDraft[] = []
   const isLpOnly = isLpInvestorSessionUser()
 
   await collectDealInvitationNotifications(out)
+  await collectFeedbackReviewNotifications(out)
 
   if (isLpOnly) {
     await Promise.all([
       collectLpInvestorNotifications(out),
+      collectLpDocumentSharedNotifications(out),
       collectPlatformAdminSignupNotifications(out),
     ])
   } else {
@@ -373,6 +768,7 @@ export async function fetchPortalNotifications(): Promise<NotificationDraft[]> {
     ]
     if (viewerHasLpNotificationScope()) {
       tasks.push(collectLpInvestorNotifications(out))
+      tasks.push(collectLpDocumentSharedNotifications(out))
     }
     await Promise.all(tasks)
   }
@@ -385,4 +781,50 @@ export async function fetchPortalNotifications(): Promise<NotificationDraft[]> {
   return [...byId.values()].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   )
+}
+
+/** How long a built notification set stays good enough to reuse. */
+const NOTIFICATIONS_TTL_MS = 60_000
+
+let cachedNotifications: {
+  at: number
+  userId: string
+  data: NotificationDraft[]
+} | null = null
+let notificationsInFlight: Promise<NotificationDraft[]> | null = null
+
+/** Drop the cache so the next read rebuilds (sign-out, or after an action changes state). */
+export function clearPortalNotificationsCache(): void {
+  cachedNotifications = null
+  notificationsInFlight = null
+}
+
+/**
+ * Notifications aggregate the deals list plus investor rosters for up to 20 deals, so a
+ * rebuild is expensive. The provider refreshes on every window focus and each mount, which
+ * previously re-ran that whole fan-out; this serves a recent result instead and collapses
+ * concurrent callers onto one in-flight build.
+ */
+export async function fetchPortalNotifications(options?: {
+  force?: boolean
+}): Promise<NotificationDraft[]> {
+  /* Keyed by session user: a cached set must never survive into another account. */
+  const userId = getSessionUserId()
+  if (!options?.force && cachedNotifications?.userId === userId) {
+    if (Date.now() - cachedNotifications.at < NOTIFICATIONS_TTL_MS) {
+      return cachedNotifications.data
+    }
+  }
+  if (notificationsInFlight) return notificationsInFlight
+
+  notificationsInFlight = buildPortalNotifications()
+    .then((data) => {
+      cachedNotifications = { at: Date.now(), userId, data }
+      return data
+    })
+    .finally(() => {
+      notificationsInFlight = null
+    })
+
+  return notificationsInFlight
 }

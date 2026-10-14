@@ -5,6 +5,7 @@ import {
 } from "../../../../../common/components/dropdown-select"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import { useHorizontalScrollRegion } from "../../../../../common/hooks/useHorizontalScrollRegion"
+import { FloatingTableHScroll } from "../../../../../common/components/data-table/FloatingTableHScroll"
 import {
   blurFormatMoneyInput,
   formatCurrencyTableDisplay,
@@ -494,7 +495,7 @@ export function DistributionSimPanel({
 
       <div className="ds_sim_section">
         <p className="ds_eyebrow">How the cash flows</p>
-        <div className="ds_flow_wrap" ref={flowScrollRef}>
+        <div className="ds_flow_wrap data_table_scroll_region--floating-hscroll" ref={flowScrollRef}>
           <table className="ds_flow_table">
             <thead>
               <tr>
@@ -630,6 +631,10 @@ export function DistributionSimPanel({
             </tbody>
           </table>
         </div>
+        <FloatingTableHScroll
+          scrollerRef={flowScrollRef}
+          ariaLabel="Cash flow columns"
+        />
         {sim.leftover > 0.5 ? (
           <p className="ds_leftover">
             <AlertTriangle size={14} strokeWidth={2} aria-hidden />

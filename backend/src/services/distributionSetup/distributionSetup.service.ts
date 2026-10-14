@@ -5,6 +5,7 @@
  */
 
 import { and, eq, inArray } from "drizzle-orm";
+import { mapWithConcurrency } from "../../common/mapWithConcurrency.js";
 import { db } from "../../database/db.js";
 import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
 import { dealLpInvestor } from "../../schema/deal.schema/deal-lp-investor.schema.js";
@@ -764,15 +765,17 @@ async function buildFeeClassScopedPayments(
 }
 
 /**
- * Edit an investor's % of class and/or payment on a completed distribution.
+ * Edit an investor's % of class, % of deal, and/or payment on a completed distribution.
  * Manual values are stored as entered — editing one field does not derive the other.
- * Syncs % onto `deal_lp_investor.percent_of_class_distributions` only when % is edited.
+ * Syncs % of class onto `deal_lp_investor.percent_of_class_distributions` when that field is edited.
+ * Syncs % of deal onto `deal_lp_investor.entity_ownership_percent` when that field is edited.
  */
 export async function updatePriorDistributionInvestorPercent(params: {
   dealId: string;
   distributionId: string;
   investorId: string;
   percentOfClass?: number;
+  percentOfDeal?: number;
   payment?: number;
   /** Sponsor / admin who made the edit (required for distribution_logs). */
   actorUserId?: string | null;
@@ -798,14 +801,15 @@ export async function updatePriorDistributionInvestorPercent(params: {
   const distId = String(params.distributionId ?? "").trim();
   const investorId = String(params.investorId ?? "").trim();
   const hasPct = Number.isFinite(params.percentOfClass);
+  const hasDealPct = Number.isFinite(params.percentOfDeal);
   const hasPay = Number.isFinite(params.payment);
   if (!distId || !investorId) {
     return { bundle: existing, error: "Missing distribution or investor id" };
   }
-  if (!hasPct && !hasPay) {
+  if (!hasPct && !hasPay && !hasDealPct) {
     return {
       bundle: existing,
-      error: "Provide percentOfClass and/or payment",
+      error: "Provide percentOfClass, percentOfDeal, and/or payment",
     };
   }
 
@@ -830,12 +834,16 @@ export async function updatePriorDistributionInvestorPercent(params: {
   }
 
   const oldPct = Math.max(0, Number(target.percentOfClass) || 0);
+  const oldDealPct = Math.max(0, Number(target.percentOfDeal) || 0);
   const oldPay = Math.max(0, Number(target.payment) || 0);
 
   // Persist each field as provided; leave the unedited field unchanged.
   const nextPct = hasPct
     ? Math.max(0, Math.min(100, Number(params.percentOfClass)))
     : oldPct;
+  const nextDealPct = hasDealPct
+    ? Math.max(0, Math.min(100, Number(params.percentOfDeal)))
+    : oldDealPct;
   const nextPayment = hasPay
     ? Math.round(Math.max(0, Number(params.payment)) * 100) / 100
     : oldPay;
@@ -847,6 +855,7 @@ export async function updatePriorDistributionInvestorPercent(params: {
     return {
       ...l,
       percentOfClass: String(Math.round(nextPct * 1000) / 1000),
+      percentOfDeal: String(Math.round(nextDealPct * 1000) / 1000),
       payment: String(nextPayment),
     };
   });
@@ -879,8 +888,9 @@ export async function updatePriorDistributionInvestorPercent(params: {
   const actorUserId = String(params.actorUserId ?? "").trim();
   if (actorUserId) {
     const pctChanged = Math.abs(oldPct - nextPct) > 0.0005;
+    const dealPctChanged = Math.abs(oldDealPct - nextDealPct) > 0.0005;
     const payChanged = Math.abs(oldPay - nextPayment) > 0.005;
-    if (pctChanged || payChanged) {
+    if (pctChanged || dealPctChanged || payChanged) {
       await db.insert(distributionLogs).values({
         dealId: params.dealId,
         distributionId: distId,
@@ -897,25 +907,41 @@ export async function updatePriorDistributionInvestorPercent(params: {
             from: Math.round(oldPct * 1000) / 1000,
             to: Math.round(nextPct * 1000) / 1000,
           },
+          percentOfDeal: {
+            from: Math.round(oldDealPct * 1000) / 1000,
+            to: Math.round(nextDealPct * 1000) / 1000,
+          },
           payment: {
             from: Math.round(oldPay * 100) / 100,
             to: Math.round(nextPayment * 100) / 100,
           },
           editSource:
-            hasPay && !hasPct
-              ? "payment"
-              : hasPct && !hasPay
-                ? "percent_of_class"
-                : "both",
+            hasDealPct && !hasPct && !hasPay
+              ? "percent_of_deal"
+              : hasPay && !hasPct && !hasDealPct
+                ? "payment"
+                : hasPct && !hasPay && !hasDealPct
+                  ? "percent_of_class"
+                  : "mixed",
         },
       });
     }
   }
 
-  // Only sync roster % when the user explicitly edited % of class.
-  if (hasPct) {
+  // Sync roster % only for fields the user explicitly edited.
+  if (hasPct || hasDealPct) {
     const contactId = String(target.contactId ?? "").trim();
-    const pctLabel = `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`;
+    const rosterPatch: {
+      updatedAt: Date;
+      percentOfClassDistributions?: string;
+      entityOwnershipPercent?: string;
+    } = { updatedAt: new Date() };
+    if (hasPct) {
+      rosterPatch.percentOfClassDistributions = `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`;
+    }
+    if (hasDealPct) {
+      rosterPatch.entityOwnershipPercent = `${(Math.round(nextDealPct * 100) / 100).toFixed(2)}%`;
+    }
     const roster = await db
       .select({
         id: dealLpInvestor.id,
@@ -951,10 +977,7 @@ export async function updatePriorDistributionInvestorPercent(params: {
     if (matchedLpIds.length > 0) {
       await db
         .update(dealLpInvestor)
-        .set({
-          percentOfClassDistributions: pctLabel,
-          updatedAt: new Date(),
-        })
+        .set(rosterPatch)
         .where(
           and(
             eq(dealLpInvestor.dealId, params.dealId),
@@ -964,10 +987,7 @@ export async function updatePriorDistributionInvestorPercent(params: {
     } else if (contactId) {
       await db
         .update(dealLpInvestor)
-        .set({
-          percentOfClassDistributions: pctLabel,
-          updatedAt: new Date(),
-        })
+        .set(rosterPatch)
         .where(
           and(
             eq(dealLpInvestor.dealId, params.dealId),
@@ -977,10 +997,7 @@ export async function updatePriorDistributionInvestorPercent(params: {
     } else {
       await db
         .update(dealLpInvestor)
-        .set({
-          percentOfClassDistributions: pctLabel,
-          updatedAt: new Date(),
-        })
+        .set(rosterPatch)
         .where(
           and(
             eq(dealLpInvestor.dealId, params.dealId),
@@ -1203,13 +1220,15 @@ export async function listMyDistributionsForViewer(params: {
   distributions: MyDistributionPaymentRow[];
   totalPayment: string;
 }> {
-  const all: MyDistributionPaymentRow[] = [];
-  for (const dealId of params.dealIds) {
-    const pack = await getMyDistributionsForDeal({
+  const packs = await mapWithConcurrency(params.dealIds, 6, (dealId) =>
+    getMyDistributionsForDeal({
       dealId,
       scope: params.scope,
       emailNorm: params.emailNorm,
-    });
+    }),
+  );
+  const all: MyDistributionPaymentRow[] = [];
+  for (const pack of packs) {
     if (pack?.distributions.length) all.push(...pack.distributions);
   }
   all.sort((a, b) => b.date.localeCompare(a.date) || a.dealName.localeCompare(b.dealName));

@@ -520,7 +520,7 @@ export function InvestmentDetailDocumentsTab({
                 aria-hidden
               />
               <span className="deals_tabs_label um_segmented_tab_label">
-                Offering Documents
+                Documents
                 {offeringDocuments.length > 0 ? (
                   <span className="investment_detail_docs_tab_count">
                     {offeringDocuments.length}
@@ -564,6 +564,7 @@ export function InvestmentDetailDocumentsTab({
             </p>
           ) : activeSubTab === "offering" ? (
             <OfferingDocumentsPanel
+              dealId={dealId}
               showAudienceGate={showAudienceGate}
               previewSyncFailed={previewSyncFailed}
               hasSectionsOnDeal={
@@ -623,6 +624,7 @@ export function InvestmentDetailDocumentsTab({
 }
 
 function OfferingDocumentsPanel({
+  dealId,
   showAudienceGate,
   previewSyncFailed,
   hasSectionsOnDeal,
@@ -631,6 +633,7 @@ function OfferingDocumentsPanel({
   searchQuery,
   onSearchQueryChange,
 }: {
+  dealId: string
   showAudienceGate: boolean
   previewSyncFailed: boolean
   hasSectionsOnDeal: boolean
@@ -708,7 +711,10 @@ function OfferingDocumentsPanel({
           ) : null}
 
           {showOfferingList ? (
-            <InvestorOfferingDocumentsList sections={filteredOfferingSections} />
+            <InvestorOfferingDocumentsList
+              dealId={dealId}
+              sections={filteredOfferingSections}
+            />
           ) : null}
         </div>
       </div>

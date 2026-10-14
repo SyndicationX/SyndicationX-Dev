@@ -33,7 +33,6 @@ export interface InvestNowEsignaturesStepProps {
   esignScope?: DealMyEsignScopeQuery
   esignCategoryId: string
   profileTemplate: DealEsignTemplateFileRecord | undefined
-  profileLabel: string
   /** Commitment profile id — scopes unified template field visibility. */
   commitmentProfileId?: string
   /** When false, this profile's e-sign template does not include a questionnaire. */
@@ -76,7 +75,6 @@ export function InvestNowEsignaturesStep({
   esignScope,
   esignCategoryId,
   profileTemplate,
-  profileLabel,
   commitmentProfileId,
   investorDisplayName,
   sendError,
@@ -201,6 +199,9 @@ export function InvestNowEsignaturesStep({
           ]
         : []
 
+  const showMissingDocumentsInfo =
+    !esignLoading && !esignCompleted && displayDocuments.length === 0
+
   function docCanSign(doc: InvestNowEsignDocRow): boolean {
     if (doc.status === "signed" || esignCompleted || disabled) return false
     const sigId =
@@ -228,6 +229,17 @@ export function InvestNowEsignaturesStep({
             <RefreshCw size={16} strokeWidth={2} aria-hidden />
             Retry preparing documents
           </button>
+        </div>
+      ) : null}
+
+      {showMissingDocumentsInfo ? (
+        <div className="deals_create_hint invest_now_step_desc_warn" role="status">
+          <p>Click Finish to save your soft commitment!</p>
+          <p>
+            No documents are uploaded for this deal yet. You can contact your
+            Sponsor & they will let you know when it is ready to complete the
+            investment.
+          </p>
         </div>
       ) : null}
 
@@ -295,27 +307,6 @@ export function InvestNowEsignaturesStep({
             your signature.
           </p>
         </div>
-      ) : null}
-
-      {!profileTemplate && !esignLoading ? (
-        <p className="deals_create_hint invest_now_step_desc_warn">
-          No eSign template is configured for this deal yet. Contact your sponsor to
-          complete setup on the eSign Templates tab
-          {profileLabel && profileLabel !== "—"
-            ? ` (fields for ${profileLabel} are placed on the shared template).`
-            : "."}
-        </p>
-      ) : null}
-
-      {profileTemplate &&
-      !profileReady &&
-      !esignPending &&
-      !esignCompleted &&
-      !sendError ? (
-        <p className="deals_create_hint invest_now_step_desc_warn">
-          The subscription document for this deal is not ready for signing yet. Your
-          sponsor must finish eSign setup on the eSign Templates tab.
-        </p>
       ) : null}
 
       {displayDocuments.length > 0 ? (

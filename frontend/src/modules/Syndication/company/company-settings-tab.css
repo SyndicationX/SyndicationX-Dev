@@ -237,6 +237,13 @@
   max-width: 420px;
 }
 
+.cp_settings_name_error {
+  margin: 0.45rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--portal-danger, #b91c1c);
+}
+
 .cp_settings_field_input {
   box-sizing: border-box;
   display: block;

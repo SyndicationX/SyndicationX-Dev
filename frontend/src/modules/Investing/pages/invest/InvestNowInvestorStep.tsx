@@ -101,7 +101,7 @@ export function InvestNowInvestorStep({
       </InvestNowFormField>
 
       <InvestNowReadonlyField
-        label="Sponsor"
+        label="Sponsor name"
         required
         value={sponsorLabel}
         emphasis

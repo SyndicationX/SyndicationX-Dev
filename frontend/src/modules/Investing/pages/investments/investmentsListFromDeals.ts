@@ -24,15 +24,16 @@ import {
 import {
   dealHasInvestNowDraftForViewer,
   firstInvestNowDraftRowForViewer,
+  investNowProgressForViewer,
   isInvestNowDraftInvestorRow,
 } from "@/modules/Investing/pages/invest/investNowDraftUtils"
-import { investNowDraftProgressFromInvestorRow } from "@/modules/Investing/pages/invest/investNowDraftProgress"
 import {
   fetchDealById,
   fetchDealInvestors,
   fetchDealMembers,
   fetchDealsList,
 } from "@/modules/Syndication/Deals/api/dealsApi"
+import { isDealSaasPaymentRequiredError } from "@/modules/Syndication/Deals/utils/dealSaasAccess"
 import type { DealDetailApi } from "@/modules/Syndication/Deals/api/dealsApi"
 import {
   fetchMyDealDistributions,
@@ -110,8 +111,9 @@ function splitListInvestmentProfile(combined: string): {
 }
 
 /**
- * Viewer rows for the Profile and investment tab: completed/visible commitments plus
- * in-progress Invest Now drafts (profile saved, e-sign pending, etc.).
+ * Viewer rows for the Profile and investment tab: one line per commitment,
+ * including a second investment on the same profile and an in-progress
+ * Invest now row that already has a saved profile.
  */
 function viewerRowsForProfileBreakdown(
   investors: DealInvestorRow[],
@@ -126,11 +128,10 @@ function viewerRowsForProfileBreakdown(
       if (seen.has(rowId)) continue
       seen.add(rowId)
     }
-    if (isInvestNowDraftInvestorRow(inv, viewerEmailNorm)) {
-      out.push(inv)
-      continue
-    }
-    if (investorRowCommittedAmountNumeric(inv) <= 0) continue
+    const hasProfile = Boolean(String(inv.userInvestorProfileId ?? "").trim())
+    const hasAmount = investorRowCommittedAmountNumeric(inv) > 0
+    const draft = isInvestNowDraftInvestorRow(inv, viewerEmailNorm)
+    if (!hasProfile && !hasAmount && !draft) continue
     out.push(inv)
   }
   return out
@@ -239,6 +240,15 @@ function listRowFromDealAndInvestors(
   const draftRow = hasDraft
     ? firstInvestNowDraftRowForViewer(investors, viewerEmailNorm)
     : undefined
+  const latestInvestedAtIso =
+    investors
+      .filter((row) => investorRowMatchesViewerEmail(row, viewerEmailNorm))
+      .map((row) => String(row.investedAtIso ?? "").trim())
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          new Date(b).getTime() - new Date(a).getTime(),
+      )[0] ?? ""
   return {
     id: investmentRuntimeIdForDeal(dealId),
     dealId,
@@ -270,10 +280,12 @@ function listRowFromDealAndInvestors(
           profileId: String(draftRow.profileId ?? "").trim() || undefined,
         }
       : undefined,
-    investNowDraftProgress: draftRow
-      ? investNowDraftProgressFromInvestorRow(draftRow)
-      : undefined,
+    investNowDraftProgress: investNowProgressForViewer(
+      investors,
+      viewerEmailNorm,
+    ),
     archived: Boolean(listRow.archived),
+    latestInvestedAtIso: latestInvestedAtIso || undefined,
     dealType: listRow.dealType,
     secType: listRow.secType,
     propertyName: listRow.propertyName,
@@ -472,7 +484,8 @@ export async function loadInvestmentDetailFromDeal(
     payload = payloadRow
     members = membersResult.members
     leadSponsorDisplayName = membersResult.leadSponsorDisplayName
-  } catch {
+  } catch (err) {
+    if (isDealSaasPaymentRequiredError(err)) throw err
     const resolvedDealId = await resolveDealIdFromInvestmentRowId(did)
     if (!resolvedDealId) return undefined
     did = resolvedDealId
@@ -486,7 +499,8 @@ export async function loadInvestmentDetailFromDeal(
       payload = payloadRow
       members = membersResult.members
       leadSponsorDisplayName = membersResult.leadSponsorDisplayName
-    } catch {
+    } catch (retryErr) {
+      if (isDealSaasPaymentRequiredError(retryErr)) throw retryErr
       return undefined
     }
   }

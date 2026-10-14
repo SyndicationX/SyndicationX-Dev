@@ -26,6 +26,8 @@ import {
 
   postDeal,
 
+  postDealOfferingDocumentUploads,
+
   postDealOfferingGalleryUploads,
 
   putDeal,
@@ -40,17 +42,24 @@ import {
 
 } from "./middleware/dealAssetImageUpload.middleware.js";
 
+import { uploadDealOfferingDocumentFiles } from "./middleware/dealOfferingDocumentUpload.middleware.js";
+
 import { uploadDealEsignTemplateFiles } from "./middleware/dealEsignTemplateUpload.middleware.js";
 
 import { uploadCompanySettingsBranding } from "./middleware/companySettingsBrandingUpload.middleware.js";
 
 import { socHttpAuditMiddleware } from "./middleware/socHttpAudit.middleware.js";
 
+import { requestBudgetMiddleware } from "./middleware/requestBudget.middleware.js";
+
 import { protectedUploadsMiddleware } from "./middleware/protectedUploads.middleware.js";
+
+import { requireApiAuth, requireAuth } from "./middleware/requireAuth.js";
 
 import { signflowWebhookBodyParser } from "./middleware/signflowWebhook.middleware.js";
 
 import { stripeWebhookBodyParser } from "./middleware/stripeWebhook.middleware.js";
+import { processDueDealSaasBillingFromSavedMethods } from "./services/billing/companyBilling.service.js";
 
 // import {
 //
@@ -91,6 +100,8 @@ import esignTemplateRoutes from "./routes/esignTemplate.routes.js";
 import investingProfileBookRoutes from "./routes/investingProfileBook.routes.js";
 
 import platformRoutes from "./routes/platformRoutes.routes.js";
+
+import feedbackRoutes from "./routes/feedback.routes.js";
 
 import ghlRoutes from "./routes/ghl.routes.js";
 
@@ -145,6 +156,9 @@ app.use((req, res, next) => {
   next();
 
 });
+
+/* Latency budget observer — mounted before uploads so every /api/v1 call is measured. */
+app.use("/api/v1", requestBudgetMiddleware);
 
 
 
@@ -232,6 +246,8 @@ app.post(
 
   socHttpAuditMiddleware,
 
+  requireAuth,
+
   uploadCompanySettingsBranding,
 
   postCompanySettingsBranding,
@@ -243,6 +259,8 @@ app.post(
   "/api/v1/deals",
 
   socHttpAuditMiddleware,
+
+  requireAuth,
 
   uploadDealCreateOrUpdateAssetImages,
 
@@ -256,6 +274,8 @@ app.put(
 
   socHttpAuditMiddleware,
 
+  requireAuth,
+
   uploadDealCreateOrUpdateAssetImages,
 
   putDeal,
@@ -268,6 +288,8 @@ app.post(
 
   socHttpAuditMiddleware,
 
+  requireAuth,
+
   uploadDealOfferingGalleryFile,
 
   postDealOfferingGalleryUploads,
@@ -276,7 +298,23 @@ app.post(
 
 app.post(
 
+  "/api/v1/deals/:dealId/offering-document-uploads",
+
+  socHttpAuditMiddleware,
+
+  requireAuth,
+
+  uploadDealOfferingDocumentFiles,
+
+  postDealOfferingDocumentUploads,
+
+);
+
+app.post(
+
   "/api/v1/deals/:dealId/esign-template-uploads",
+
+  requireAuth,
 
   uploadDealEsignTemplateFiles,
 
@@ -286,14 +324,15 @@ app.post(
 
 
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "50mb" }));
 
-app.use(express.urlencoded({ limit: "10mb", extended: true }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 /** Direct mount so Complete is reachable even if nested routers miss the path. */
 app.post(
   "/api/v1/deals/:dealId/distribution-setup/complete",
   socHttpAuditMiddleware,
+  requireAuth,
   postDealDistributionComplete,
 );
 
@@ -320,6 +359,8 @@ app.use("/api/v1", (req, res, next) => {
 });
 
 app.use("/api/v1", portalModeContextMiddleware);
+
+app.use("/api/v1", requireApiAuth);
 
 
 
@@ -354,6 +395,8 @@ app.use("/api/v1", [
   investmentSignatureRoutes,
 
   platformRoutes,
+
+  feedbackRoutes,
 
   ghlRoutes,
 
@@ -552,7 +595,15 @@ async function ensureDealSaasBillingColumns(): Promise<void> {
       ADD COLUMN IF NOT EXISTS stripe_subscription_status varchar(64) NOT NULL DEFAULT 'none',
       ADD COLUMN IF NOT EXISTS stripe_price_id varchar(255),
       ADD COLUMN IF NOT EXISTS stripe_current_period_end timestamp with time zone,
-      ADD COLUMN IF NOT EXISTS saas_billing_starts_at timestamp with time zone
+      ADD COLUMN IF NOT EXISTS saas_billing_starts_at timestamp with time zone,
+      ADD COLUMN IF NOT EXISTS extra_company_users_paid integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS extra_company_users_last_payment_ref varchar(255)
+  `);
+  await pool.query(`
+    ALTER TABLE companies DROP COLUMN IF EXISTS saas_billing_starts_at
+  `);
+  await pool.query(`
+    DROP TABLE IF EXISTS platform_settings
   `);
 }
 
@@ -574,6 +625,53 @@ async function runMigrations(): Promise<void> {
 
   console.log("Database migrations applied.");
 
+}
+
+const automaticDealSaasBillingIntervalMs = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.DEAL_SAAS_BILLING_INTERVAL_MS ?? "") || 60 * 60 * 1000,
+);
+let automaticDealSaasBillingStarted = false;
+let automaticDealSaasBillingInFlight = false;
+
+function runAutomaticDealSaasBillingJob(reason: string): void {
+  if (automaticDealSaasBillingInFlight) return;
+  automaticDealSaasBillingInFlight = true;
+  void processDueDealSaasBillingFromSavedMethods()
+    .then((result) => {
+      if (result.started > 0 || result.failed > 0) {
+        console.log(
+          `Automatic deal SaaS billing (${reason}) checked=${result.checked} started=${result.started} skipped=${result.skipped} failed=${result.failed}`,
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn("Automatic deal SaaS billing failed:", err);
+    })
+    .finally(() => {
+      automaticDealSaasBillingInFlight = false;
+    });
+}
+
+function startAutomaticDealSaasBillingJob(): void {
+  if (
+    automaticDealSaasBillingStarted ||
+    process.env.DISABLE_AUTO_DEAL_SAAS_BILLING === "1"
+  ) {
+    return;
+  }
+  automaticDealSaasBillingStarted = true;
+  runAutomaticDealSaasBillingJob("startup");
+  const timer = setInterval(
+    () => runAutomaticDealSaasBillingJob("interval"),
+    automaticDealSaasBillingIntervalMs,
+  );
+  timer.unref?.();
+  console.log(
+    `Automatic deal SaaS billing job enabled every ${Math.round(
+      automaticDealSaasBillingIntervalMs / 60000,
+    )} minute(s).`,
+  );
 }
 
 
@@ -605,6 +703,8 @@ async function initDatabaseAfterListen(): Promise<void> {
       await runMigrations();
 
     }
+
+    startAutomaticDealSaasBillingJob();
 
   } catch (err) {
 

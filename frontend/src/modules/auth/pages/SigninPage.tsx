@@ -2,6 +2,7 @@ import AuthLayout from "../../../common/layout/AuthLayout";
 import SigninForm from "../components/SigninForm";
 import { useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
+import { showExclusiveBrowserLogoutToastIfNeeded } from "../../../common/auth/exclusiveBrowserSession";
 import { showIdleSessionTimeoutToastIfNeeded } from "../../../common/auth/idleSession";
 // import "./signin.css";
 
@@ -10,6 +11,7 @@ const SigninPage = () => {
 
   useLayoutEffect(() => {
     showIdleSessionTimeoutToastIfNeeded(location.state?.idleLogout === true);
+    showExclusiveBrowserLogoutToastIfNeeded();
   }, [location.key, location.state?.idleLogout]);
 
   return (

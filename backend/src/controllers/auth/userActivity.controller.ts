@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { getValidJwtUser } from "../../middleware/jwtUser.js";
 import {
+  endOpenPortalSessionsForUser,
   endUserPortalSession,
   ensureUserPortalSession,
   recordUserPageNavigation,
@@ -59,13 +60,13 @@ export async function postActivityLogout(
 
   const body = req.body as SessionBody;
   const sessionId = parseSessionId(body.activitySessionId);
-  if (!sessionId) {
-    res.status(200).json({ ok: true });
-    return;
-  }
 
   try {
-    await endUserPortalSession(sessionId, jwtUser.id);
+    if (sessionId) {
+      await endUserPortalSession(sessionId, jwtUser.id);
+    } else {
+      await endOpenPortalSessionsForUser(jwtUser.id);
+    }
     res.status(200).json({ ok: true });
   } catch (err) {
     console.error("postActivityLogout:", err);

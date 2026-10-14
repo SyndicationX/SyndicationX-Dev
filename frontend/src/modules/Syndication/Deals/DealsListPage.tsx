@@ -22,10 +22,15 @@ import {
   readDealsSearchQuery,
 } from "@/common/deals/dealsSearchQuery"
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
-import { isSponsorWorkspaceInvestingViewer } from "@/common/auth/roleUtils"
+import {
+  isDealSponsorSessionUser,
+  isSponsorWorkspaceInvestingViewer,
+} from "@/common/auth/roleUtils"
 import { usePortalMode } from "@/modules/Investing/context/PortalModeContext"
+import { formatCount } from "@/common/utils/formatCount"
 import {
   dealRowSupportsRosterApiPrefetch,
+  filterDealListRowsVisibleToInvestors,
   filterDealListToInvestingDealsPage,
   formatViewerInvestingDealRolesLabel,
   resolveViewerInvestingDealRoles,
@@ -37,6 +42,7 @@ import {
 import { TabsScrollStrip } from "../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { toast } from "../../../common/components/Toast"
 import {
+  areRequiredDealListRowFieldsIncomplete,
   deleteDeal,
   fetchDealInvestorClasses,
   fetchDealInvestors,
@@ -75,10 +81,16 @@ import { TableCompactAmountCell } from "../../../common/components/card-compact-
 import {
   committedSortValue,
   dateSortValue,
+  dealFieldsMatchSearch,
   dealTypeDisplayLabel,
   formatDealListDateDisplay,
   secTypeDisplayLabel,
 } from "./dealsListDisplay"
+import { resolveInvestmentStatusSelectValue } from "./constants/investment-status"
+import {
+  displayInvestorCommittedAmount,
+  parseMoneyDigits,
+} from "./utils/offeringMoneyFormat"
 // import { DealInvestorRoleBadge } from "./tabs/investors/DealInvestorRoleBadge"
 import "../usermanagement/user_management.css"
 import "./tabs/deal_members/add-investment/add_deal_modal.css"
@@ -364,6 +376,7 @@ export function DealsListPage({
       string,
       {
         committedRaw: string
+        softCommittedRaw: string
         fundedRaw: string
         remainingRaw: string
         investorCount: number
@@ -386,12 +399,11 @@ export function DealsListPage({
     void (async () => {
       setLoading(true)
       let list = await loadDealsList()
-      if (
-        dealsListContext === "investing" &&
-        list.length > 0 &&
-        !isSponsorWorkspaceInvestingViewer()
-      ) {
-        list = await filterDealListToInvestingDealsPage(list)
+      if (dealsListContext === "investing" && list.length > 0) {
+        if (isDealSponsorSessionUser())
+          list = filterDealListRowsVisibleToInvestors(list)
+        else if (!isSponsorWorkspaceInvestingViewer())
+          list = await filterDealListToInvestingDealsPage(list)
       }
       if (!cancelled) {
         setRows(list)
@@ -420,12 +432,11 @@ export function DealsListPage({
     function onDealsRefetch() {
       void (async () => {
         let list = await loadDealsList()
-        if (
-          dealsListContext === "investing" &&
-          list.length > 0 &&
-          !isSponsorWorkspaceInvestingViewer()
-        ) {
-          list = await filterDealListToInvestingDealsPage(list)
+        if (dealsListContext === "investing" && list.length > 0) {
+          if (isDealSponsorSessionUser())
+            list = filterDealListRowsVisibleToInvestors(list)
+          else if (!isSponsorWorkspaceInvestingViewer())
+            list = await filterDealListToInvestingDealsPage(list)
         }
         setRows(list)
       })()
@@ -479,7 +490,15 @@ export function DealsListPage({
     const q = query.trim().toLowerCase()
     if (!q) return [...rowsForTab]
     return rowsForTab.filter((r) =>
-      (r.dealName ?? "").toLowerCase().includes(q),
+      dealFieldsMatchSearch(
+        {
+          name: r.dealName,
+          dealType: r.dealType,
+          secType: r.secType,
+          location: r.locationDisplay,
+        },
+        q,
+      ),
     )
   }, [query, rowsForTab])
 
@@ -509,6 +528,7 @@ export function DealsListPage({
               id,
               {
                 committedRaw: "—",
+                softCommittedRaw: "—",
                 fundedRaw: "—",
                 remainingRaw: "—",
                 investorCount: 0,
@@ -545,10 +565,25 @@ export function DealsListPage({
                     ),
                   )
                 : "—"
+            const softCommittedTotal = investors
+              .filter(
+                (investor) =>
+                  resolveInvestmentStatusSelectValue(investor.status) ===
+                  "Soft committed",
+              )
+              .reduce((sum, investor) => {
+                const amount = parseMoneyDigits(
+                  displayInvestorCommittedAmount(investor),
+                )
+                return sum + (Number.isFinite(amount) ? amount : 0)
+              }, 0)
             return [
               id,
               {
                 committedRaw: kpis.committed,
+                softCommittedRaw: String(
+                  Math.round(softCommittedTotal * 100) / 100,
+                ),
                 fundedRaw: kpis.totalFunded,
                 remainingRaw: kpis.remaining,
                 investorCount: investors.length,
@@ -561,6 +596,7 @@ export function DealsListPage({
               id,
               {
                 committedRaw: "—",
+                softCommittedRaw: "—",
                 fundedRaw: "—",
                 remainingRaw: "—",
                 investorCount: 0,
@@ -599,7 +635,15 @@ export function DealsListPage({
     const q = query.trim().toLowerCase()
     if (
       q &&
-      !(sessionCreateDealDraftRow.dealName ?? "").toLowerCase().includes(q)
+      !dealFieldsMatchSearch(
+        {
+          name: sessionCreateDealDraftRow.dealName,
+          dealType: sessionCreateDealDraftRow.dealType,
+          secType: sessionCreateDealDraftRow.secType,
+          location: sessionCreateDealDraftRow.locationDisplay,
+        },
+        q,
+      )
     )
       return base
     return [...base, sessionCreateDealDraftRow]
@@ -676,17 +720,9 @@ export function DealsListPage({
 
   const openSyndicatingDeal = useCallback(
     (row: DealListRow) => {
-      if (dealsListContext === "investing") {
-        navigate(`/deals/${encodeURIComponent(row.id)}`)
-        return
-      }
-      if (isDealListRowSaasLocked(row)) {
-        setSaasPaywallDeal(dealSaasPaywallFromListRow(row))
-        return
-      }
       navigate(`/deals/${encodeURIComponent(row.id)}`)
     },
-    [dealsListContext, navigate],
+    [navigate],
   )
 
   const columns: DataTableColumn<DealListRow>[] = useMemo(() => {
@@ -817,7 +853,7 @@ export function DealsListPage({
       header: (
         <DealTableColumnHeader
           label="Next billing"
-          hint="This month every deal stays fully accessible. SaaS billing starts on the 1st of next month. Draft, archived, and liquidated deals are not billed."
+          hint="Until the platform billing start date the deal stays fully accessible. After you pay, this is the next Stripe renewal. Draft, archived, and liquidated deals are not billed."
           headerAlign="center"
         />
       ),
@@ -970,8 +1006,17 @@ export function DealsListPage({
         colWidth: "10.75rem",
         thClassName: "deals_th_align_right",
         tdClassName: "um_td_numeric deals_td_align_right",
-        sortValue: (row) => committedSortValue(row.totalInProgress),
-        cell: (row) => <TableCompactAmountCell amount={row.totalInProgress} />,
+        sortValue: (row) =>
+          committedSortValue(
+            investorMetricsByDealId[row.id]?.softCommittedRaw ?? "—",
+          ),
+        cell: (row) => (
+          <TableCompactAmountCell
+            amount={
+              investorMetricsByDealId[row.id]?.softCommittedRaw ?? "—"
+            }
+          />
+        ),
       },
       {
         id: "funded",
@@ -1068,7 +1113,15 @@ export function DealsListPage({
           <div className="deal_members_actions_cell">
             <DealRowActions
               draftRow={row.id === CREATE_DEAL_DRAFT_ROW_ID}
+              requiredFieldsIncomplete={areRequiredDealListRowFieldsIncomplete(
+                row,
+              )}
               readOnlyActions={dealsListContext === "investing"}
+              viewOnlySyndication={
+                dealsListContext !== "investing" &&
+                row.viewerCanManageDeal === false
+              }
+              canEditDeal={row.viewerCanEditDeal !== false}
               dealId={row.id}
               dealName={row.dealName}
               dealStage={row.dealStage}
@@ -1261,6 +1314,7 @@ export function DealsListPage({
         />
         <DealSaasPaywallModal
           deal={saasPaywallDeal}
+          investorFacing={dealsListContext === "investing"}
           onClose={() => setSaasPaywallDeal(null)}
         />
       </>
@@ -1316,7 +1370,7 @@ export function DealsListPage({
                   aria-hidden
                 />
                 <span className="deals_tabs_label um_segmented_tab_label">Deals</span>
-                <span className="deals_tabs_count">({activeDealsCount})</span>
+                <span className="deals_tabs_count">({formatCount(activeDealsCount)})</span>
               </button>
               <button
                 type="button"
@@ -1336,7 +1390,7 @@ export function DealsListPage({
                   aria-hidden
                 />
                 <span className="deals_tabs_label um_segmented_tab_label">Archives</span>
-                <span className="deals_tabs_count">({archivedDealsCount})</span>
+                <span className="deals_tabs_count">({formatCount(archivedDealsCount)})</span>
               </button>
             </div>
           </TabsScrollStrip>
@@ -1359,6 +1413,7 @@ export function DealsListPage({
 
       <DealSaasPaywallModal
         deal={saasPaywallDeal}
+        investorFacing={dealsListContext === "investing"}
         onClose={() => setSaasPaywallDeal(null)}
       />
 

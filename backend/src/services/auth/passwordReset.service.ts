@@ -8,7 +8,10 @@ import emailConfig, {
   outgoingMailCcBcc,
   smtpEnvelopeForSendMail,
 } from "../../functions/emailconfig.js";
-import { buildResetPasswordEmailHtml } from "../../functions/resetPasswordEmail.template.js";
+import {
+  buildResetPasswordEmailHtml,
+  buildResetPasswordEmailText,
+} from "../../functions/resetPasswordEmail.template.js";
 import { revokeAllUserAuthTokens } from "./token.service.js";
 
 const BCRYPT_ROUNDS = 10;
@@ -24,11 +27,18 @@ function resetTokenExpiry(): SignOptions["expiresIn"] {
 }
 
 function frontendBaseUrl(): string {
-  const raw =
-    process.env.FRONTEND_URL?.trim() ||
-    process.env.BASE_URL?.trim() ||
-    "";
-  return raw.replace(/\/$/, "");
+  const candidates = [
+    process.env.FRONTEND_URL,
+    process.env.BASE_URL,
+    process.env.APP_URL,
+    process.env.CLIENT_URL,
+    process.env.PUBLIC_APP_URL,
+  ];
+  for (const raw of candidates) {
+    const t = String(raw ?? "").trim();
+    if (t) return t.replace(/\/$/, "");
+  }
+  return "";
 }
 
 const SENDER_DISPLAY_NAME =
@@ -66,16 +76,30 @@ export async function requestPasswordResetWithEmail(
     const appOrigin = frontendBaseUrl();
     if (!appOrigin) {
       console.error(
-        "Forgot password: set FRONTEND_URL (or BASE_URL) to the SPA origin so reset links work.",
+        "Forgot password: set FRONTEND_URL (or BASE_URL / APP_URL / CLIENT_URL / PUBLIC_APP_URL) to the SPA origin so reset links work.",
       );
-      return { message: GENERIC_FORGOT_MESSAGE };
+      return {
+        message:
+          "Password reset email is not configured. Please contact support.",
+        http500: true,
+      };
     }
 
     const resetLink = `${appOrigin}/resetPassword?token=${encodeURIComponent(resetToken)}`;
+    const fromAddress = process.env.SENDER_EMAIL_ID?.trim() || "";
+    if (!fromAddress) {
+      console.error(
+        "Forgot password: SENDER_EMAIL_ID must be set before reset emails can be sent.",
+      );
+      return {
+        message:
+          "Password reset email is not configured. Please contact support.",
+        http500: true,
+      };
+    }
 
     try {
       const transporter = emailConfig();
-      const fromAddress = process.env.SENDER_EMAIL_ID?.trim() || "";
       const ccBcc = outgoingMailCcBcc();
       await transporter.sendMail({
         from: {
@@ -91,10 +115,16 @@ export async function requestPasswordResetWithEmail(
           bcc: ccBcc.bcc,
         }),
         subject: "Reset your SyndicationX password",
+        text: buildResetPasswordEmailText(resetLink),
         html: buildResetPasswordEmailHtml(resetLink),
       });
     } catch (emailErr: unknown) {
       console.error("Forgot password: email send failed", emailErr);
+      return {
+        message:
+          "Could not send password reset email. Please try again later.",
+        http500: true,
+      };
     }
 
     return { message: GENERIC_FORGOT_MESSAGE };

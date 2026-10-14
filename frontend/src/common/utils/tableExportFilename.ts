@@ -57,8 +57,28 @@ export function buildTableExportFilename(
   return stamp ? `${base}-${stamp}.${ext}` : `${base}.${ext}`
 }
 
-export function downloadTableExportCsv(content: string, filename: string): void {
-  const blob = new Blob([content], { type: TABLE_EXPORT_CSV_MIME })
+export const TABLE_EXPORT_XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+/** Copy into a standalone ArrayBuffer so Blob accepts the bytes under TS 5.9+. */
+function arrayBufferFromBytes(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(copy).set(bytes)
+  return copy
+}
+
+export function downloadTableExportBytes(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+): void {
+  downloadTableExportBlob(
+    new Blob([arrayBufferFromBytes(bytes)], { type: mime }),
+    filename,
+  )
+}
+
+export function downloadTableExportBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url
@@ -68,4 +88,11 @@ export function downloadTableExportCsv(content: string, filename: string): void 
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+export function downloadTableExportCsv(content: string, filename: string): void {
+  downloadTableExportBlob(
+    new Blob([content], { type: TABLE_EXPORT_CSV_MIME }),
+    filename,
+  )
 }

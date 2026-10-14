@@ -152,8 +152,11 @@ export function InvestNowQuestionnaireField({
           ) : null}
         </legend>
         <div className="invest_now_questionnaire_options">
-          {options.map((option) => (
-            <label key={option} className="invest_now_questionnaire_option">
+          {options.map((option, optionIndex) => (
+            <label
+              key={`${option}-${optionIndex}`}
+              className="invest_now_questionnaire_option"
+            >
               <input
                 type="radio"
                 name={fieldId}
@@ -191,8 +194,11 @@ export function InvestNowQuestionnaireField({
           ) : null}
         </legend>
         <div className="invest_now_questionnaire_options">
-          {options.map((option) => (
-            <label key={option} className="invest_now_questionnaire_option">
+          {options.map((option, optionIndex) => (
+            <label
+              key={`${option}-${optionIndex}`}
+              className="invest_now_questionnaire_option"
+            >
               <input
                 type="checkbox"
                 checked={selected.includes(option)}

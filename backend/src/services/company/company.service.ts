@@ -1,5 +1,6 @@
 import { and, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db, pool } from "../../database/db.js";
+import { users } from "../../schema/auth.schema/signin.js";
 import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
 import {
   companies,
@@ -38,12 +39,41 @@ export type CompanyWithStats = {
   updatedAt: Date;
   userCount: number;
   dealCount: number;
-  /** Rows in `contact` with `organization_id` = company id. */
+  /**
+   * Company CRM contacts: `organization_id` matches, plus legacy rows with no
+   * organization whose creator belongs to the company. Platform-only contacts
+   * are excluded.
+   */
   contactCount: number;
 };
 
+export const COMPANY_NAME_TAKEN_MESSAGE =
+  "A company with this name already exists";
+
 function normalizeCompanyNameKey(name: string): string {
   return name.trim().toLowerCase();
+}
+
+/** Case-insensitive, trimmed match against `companies.name`. */
+export async function isCompanyNameTaken(
+  rawName: string,
+  excludeCompanyId?: string,
+): Promise<boolean> {
+  const norm = normalizeCompanyNameKey(rawName);
+  if (!norm) return false;
+  const [row] = await db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(
+      excludeCompanyId
+        ? and(
+            sql`lower(trim(${companies.name})) = ${norm}`,
+            ne(companies.id, excludeCompanyId),
+          )
+        : sql`lower(trim(${companies.name})) = ${norm}`,
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 function isMissingMembershipTableError(err: unknown): boolean {
@@ -160,8 +190,14 @@ export async function listCompanies(): Promise<CompanyWithStats[]> {
    * `GET /deals?organizationId=…`.
    * Legacy deals may still be keyed by `owning_entity_name` when `organization_id` is null.
    */
-  const [rows, byOrgId, orgDealCounts, legacyDealNameCounts, orgContactCounts] =
-    await Promise.all([
+  const [
+    rows,
+    byOrgId,
+    orgDealCounts,
+    legacyDealNameCounts,
+    orgContactCounts,
+    legacyMemberContactCounts,
+  ] = await Promise.all([
     db
       .select({
         id: companies.id,
@@ -199,8 +235,28 @@ export async function listCompanies(): Promise<CompanyWithStats[]> {
         cnt: sql<number>`count(*)::int`,
       })
       .from(contact)
-      .where(isNotNull(contact.organizationId))
+      .where(
+        and(
+          isNotNull(contact.organizationId),
+          eq(contact.platformAdminOnly, false),
+        ),
+      )
       .groupBy(contact.organizationId),
+    db
+      .select({
+        organizationId: users.organizationId,
+        cnt: sql<number>`count(*)::int`,
+      })
+      .from(contact)
+      .innerJoin(users, eq(users.id, contact.createdBy))
+      .where(
+        and(
+          isNull(contact.organizationId),
+          eq(contact.platformAdminOnly, false),
+          isNotNull(users.organizationId),
+        ),
+      )
+      .groupBy(users.organizationId),
   ]);
 
   const byDealOrgId = new Map<string, number>();
@@ -219,6 +275,11 @@ export async function listCompanies(): Promise<CompanyWithStats[]> {
   for (const r of orgContactCounts) {
     const id = r.organizationId;
     if (id) byOrgContact.set(id, Number(r.cnt));
+  }
+  for (const r of legacyMemberContactCounts) {
+    const id = r.organizationId;
+    if (!id) continue;
+    byOrgContact.set(id, (byOrgContact.get(id) ?? 0) + Number(r.cnt));
   }
 
   return rows.map((r) => {
@@ -245,17 +306,11 @@ export async function createCompany(name: string) {
   if (!trimmed) {
     return { ok: false as const, status: 400, message: "Company name is required" };
   }
-  const norm = trimmed.toLowerCase();
-  const [nameDup] = await db
-    .select({ id: companies.id })
-    .from(companies)
-    .where(sql`lower(trim(${companies.name})) = ${norm}`)
-    .limit(1);
-  if (nameDup) {
+  if (await isCompanyNameTaken(trimmed)) {
     return {
       ok: false as const,
       status: 409,
-      message: "A company with this name already exists",
+      message: COMPANY_NAME_TAKEN_MESSAGE,
     };
   }
   try {
@@ -306,7 +361,7 @@ export async function createCompany(name: string) {
       return {
         ok: false as const,
         status: 409,
-        message: "A company with this name already exists",
+        message: COMPANY_NAME_TAKEN_MESSAGE,
       };
     }
     console.error("createCompany:", err);
@@ -346,22 +401,11 @@ export async function updateCompany(
       return { ok: false, status: 400, message: "Company name is required" };
     }
     nextName = trimmed;
-    const norm = nextName.toLowerCase();
-    const [nameDup] = await db
-      .select({ id: companies.id })
-      .from(companies)
-      .where(
-        and(
-          sql`lower(trim(${companies.name})) = ${norm}`,
-          ne(companies.id, id),
-        ),
-      )
-      .limit(1);
-    if (nameDup) {
+    if (await isCompanyNameTaken(nextName, id)) {
       return {
         ok: false,
         status: 409,
-        message: "A company with this name already exists",
+        message: COMPANY_NAME_TAKEN_MESSAGE,
       };
     }
   }
@@ -438,8 +482,71 @@ export async function updateCompany(
     if (err instanceof Error && err.message === "update_returned_no_row") {
       return { ok: false, status: 404, message: "Company not found" };
     }
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: string }).code ?? "")
+        : "";
+    if (code === "23505") {
+      return { ok: false, status: 409, message: COMPANY_NAME_TAKEN_MESSAGE };
+    }
     console.error("updateCompany:", err);
     return { ok: false, status: 500, message: "Could not update company" };
+  }
+}
+
+/**
+ * Workspace rename (company admin / workspace editor). No audit reason.
+ * Rejects names already used by another company (case-insensitive).
+ */
+export async function renameCompanyDisplayName(
+  id: string,
+  rawName: string,
+): Promise<
+  | { ok: true; company: CompanyRow; changed: boolean }
+  | { ok: false; status: number; message: string }
+> {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return { ok: false, status: 400, message: "Company name is required" };
+  }
+  const [current] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, id))
+    .limit(1);
+  if (!current) {
+    return { ok: false, status: 404, message: "Company not found" };
+  }
+  if (current.name === trimmed) {
+    return { ok: true, company: current, changed: false };
+  }
+  if (await isCompanyNameTaken(trimmed, id)) {
+    return {
+      ok: false,
+      status: 409,
+      message: COMPANY_NAME_TAKEN_MESSAGE,
+    };
+  }
+  try {
+    const [updated] = await db
+      .update(companies)
+      .set({ name: trimmed, updatedAt: new Date() })
+      .where(eq(companies.id, id))
+      .returning();
+    if (!updated) {
+      return { ok: false, status: 404, message: "Company not found" };
+    }
+    return { ok: true, company: updated, changed: true };
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: string }).code ?? "")
+        : "";
+    if (code === "23505") {
+      return { ok: false, status: 409, message: COMPANY_NAME_TAKEN_MESSAGE };
+    }
+    console.error("renameCompanyDisplayName:", err);
+    return { ok: false, status: 500, message: "Could not update company name" };
   }
 }
 

@@ -1,4 +1,11 @@
-import { pgTable, text, timestamp, uuid, unique } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  unique,
+} from "drizzle-orm/pg-core";
 import { users } from "../auth.schema/signin.js";
 import { userInvestorProfiles } from "../investing.schema/userProfileBook.schema.js";
 import { addDealForm } from "./add-deal-form.schema.js";
@@ -46,6 +53,11 @@ export const dealLpInvestor = pgTable(
       .notNull()
       .default(""),
     sendInvitationMail: text("send_invitation_mail").notNull().default("no"),
+    /**
+     * Debounced autosave from the Add Investor modal. Draft rows are excluded from
+     * roster lists, gates, counts and billing until an explicit Save clears the flag.
+     */
+    isDraft: boolean("is_draft").notNull().default(false),
     committed_amount: text("committed_amount").notNull().default(""),
     /** Calendar date when signed, or `pending` after eSign is sent. */
     docSignedDate: text("doc_signed_date"),

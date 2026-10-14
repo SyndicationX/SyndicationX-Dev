@@ -64,6 +64,7 @@ type DistributionsSubTab = "distributions" | "bank_account" | "distribution_fee"
 type DistributionsTabProps = {
   dealId: string
   dealName?: string
+  viewOnly?: boolean
 }
 
 type CompletedDistributionRow = PriorDistributionRecord & {
@@ -136,7 +137,11 @@ function formatDealBankDetails(
 /**
  * Deal Detail → Distributions: portal-style list (Woodland Ridge reference).
  */
-export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
+export function DistributionsTab({
+  dealId,
+  dealName,
+  viewOnly = false,
+}: DistributionsTabProps) {
   const id = dealId.trim()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -415,10 +420,12 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       downloadDistributionsExportCsv({
         rows: selected,
         dealName: resolvedDealName || dealName,
+        setupClasses: classes,
+        investors,
       })
       setExportOpen(false)
     },
-    [filtered, resolvedDealName, dealName],
+    [filtered, resolvedDealName, dealName, classes, investors],
   )
 
   // const handleClearAll = useCallback(async () => {
@@ -463,10 +470,12 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       downloadDistributionsExportCsv({
         rows: [row],
         dealName: resolvedDealName || dealName,
+        setupClasses: classes,
+        investors,
       })
       toast.success("Exported", `“${distributionDisplayName(row)}” downloaded.`)
     },
-    [resolvedDealName, dealName],
+    [resolvedDealName, dealName, classes, investors],
   )
 
   const handleDeleteOne = useCallback((row: PriorDistributionRecord) => {
@@ -503,17 +512,33 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       saved: DistributionSetupBundle,
       investorId: string,
       nextPct?: number,
+      nextDealPct?: number,
     ) => {
       setPriorDistributions(
         sanitizePriorDistributions(saved.priorDistributions ?? []),
       )
       if (saved.classes?.length) setClasses(saved.classes)
-      if (nextPct == null) return
-      const pctLabel = `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`
+      if (nextPct == null && nextDealPct == null) return
+      const pctLabel =
+        nextPct != null
+          ? `${(Math.round(nextPct * 100) / 100).toFixed(2)}%`
+          : null
+      const dealPctLabel =
+        nextDealPct != null
+          ? `${(Math.round(nextDealPct * 100) / 100).toFixed(2)}%`
+          : null
       setInvestors((prev) =>
         prev.map((inv) =>
           inv.id === investorId
-            ? { ...inv, percentOfClassDistributions: pctLabel }
+            ? {
+                ...inv,
+                ...(pctLabel
+                  ? { percentOfClassDistributions: pctLabel }
+                  : {}),
+                ...(dealPctLabel
+                  ? { entityOwnershipPercent: dealPctLabel }
+                  : {}),
+              }
             : inv,
         ),
       )
@@ -678,7 +703,7 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
         colWidth: "5.5rem",
         thClassName: "um_th_actions deal_dist_th_actions",
         tdClassName: "um_td_actions deal_inv_td_actions deal_dist_td_actions",
-        cell: (row) => (
+        cell: (row) => viewOnly ? null : (
           <DistributionRowActions
             rowLabel={distributionDisplayName(row)}
             onEdit={() => openEditSetup(row)}
@@ -699,6 +724,7 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
       openEditSetup,
       handleExportOne,
       handleDeleteOne,
+      viewOnly,
     ],
   )
 
@@ -830,7 +856,7 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
                     </p>
                   </div>
                 </div>
-                {dealFunding?.canManage ? (
+                {dealFunding?.canManage && !viewOnly ? (
                   <button
                     type="button"
                     className={
@@ -954,6 +980,8 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
                   <h2 className="deal_dist_heading">Distributions</h2>
                 </div>
                 <div className="um_toolbar_actions deal_dist_toolbar_actions">
+                  {viewOnly ? null : (
+                    <>
                   {/* <button
                     type="button"
                     className="um_toolbar_export_btn"
@@ -989,6 +1017,8 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
                     Distribution Setup
                     <ArrowRight size={16} strokeWidth={2} aria-hidden />
                   </Link>
+                    </>
+                  )}
                 </div>
                 <div className="um_search_wrap deal_dist_search">
                   <Search className="um_search_icon" size={18} aria-hidden />
@@ -1047,7 +1077,7 @@ export function DistributionsTab({ dealId, dealName }: DistributionsTabProps) {
               open={exportOpen}
               onClose={() => setExportOpen(false)}
               title="Export distributions"
-              hint="Choose which completed distribution runs to include in the Excel/CSV file."
+              hint="Choose which completed distribution runs to include. Each run is a sheet named after the distribution, with class and investor tables."
               searchPlaceholder="Search runs…"
               searchAriaLabel="Search export rows"
               listAriaLabel="Distributions to export"

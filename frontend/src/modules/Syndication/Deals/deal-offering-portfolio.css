@@ -1306,6 +1306,42 @@ html.deal_offer_pf_sticky_scroll body {
 .deal_offer_pf_documents_section {
   margin-top: 0;
   padding-top: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.deal_offer_pf_documents_section.deal_offer_pf_bento_full .deal_offer_pf_documents_item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  gap: 0.65rem 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--portal-border, #e2e8f0) 85%, transparent);
+}
+
+.deal_offer_pf_documents_section .deal_offer_pf_documents_item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.deal_offer_pf_documents_section.deal_offer_pf_bento_full .deal_offer_pf_documents_item_body {
+  display: contents;
+}
+
+.deal_offer_pf_documents_section .deal_offer_pf_documents_icon {
+  margin-top: 0;
+}
+
+.deal_offer_pf_documents_section .deal_offer_pf_documents_name {
+  min-width: 0;
+}
+
+.deal_offer_pf_documents_section .deal_offer_pf_documents_actions {
+  margin-top: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
 }
 
 .deal_offer_pf_documents_list {

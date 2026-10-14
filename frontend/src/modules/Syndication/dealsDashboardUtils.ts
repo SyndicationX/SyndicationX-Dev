@@ -255,13 +255,8 @@ export function mergeDealRecordWithInvestorsAndClasses(
   const remaining = Math.max(0, targetNum - acceptedNum)
   const totalInProgress = remaining === 0 ? "$0" : formatUsdDashboardAmount(remaining)
 
-  const rawInv = String(listRow.investors ?? "").trim()
-  const countFromList =
-    rawInv && rawInv !== "—"
-      ? rawInv.replace(/[^\d]/g, "")
-      : ""
   const investorCountDisplay = formatInvestorCountDisplay(
-    countFromList !== "" ? countFromList : String(payload.investors.length),
+    String(payload.investors.length),
   )
 
   return {

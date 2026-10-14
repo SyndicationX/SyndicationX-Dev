@@ -53,6 +53,8 @@ export type InvestmentListRow = {
   investNowDraftProgress?: InvestNowDraftProgress
   /** When true, row appears under Archives tab (same pattern as deals list). */
   archived?: boolean
+  /** Latest commitment row timestamp for default newest-first list ordering. */
+  latestInvestedAtIso?: string
   /** Former Deals tab columns (from `DealListRow`). */
   dealType?: string
   secType?: string

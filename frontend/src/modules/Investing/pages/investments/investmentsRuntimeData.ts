@@ -23,6 +23,25 @@ function dealKeyForRow(r: InvestmentListRow): string {
   return (r.id ?? "").trim().toLowerCase()
 }
 
+function latestInvestmentIso(rows: InvestmentListRow[]): string | undefined {
+  return rows
+    .map((row) => String(row.latestInvestedAtIso ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
+}
+
+function investmentRecencySort(
+  a: InvestmentListRow,
+  b: InvestmentListRow,
+): number {
+  const at = new Date(String(a.latestInvestedAtIso ?? "")).getTime()
+  const bt = new Date(String(b.latestInvestedAtIso ?? "")).getTime()
+  const av = Number.isFinite(at) ? at : 0
+  const bv = Number.isFinite(bt) ? bt : 0
+  if (bv !== av) return bv - av
+  return (a.investmentName || "").localeCompare(b.investmentName || "", "en")
+}
+
 /**
  * API rows fill the list when the server shows a commitment. Rows from
  * `upsertRuntimeInvestmentRow` (deal “add investment” / LP invest flow) take
@@ -62,6 +81,7 @@ function mergeRowsSameDeal(group: InvestmentListRow[]): InvestmentListRow {
     investedAmount: invSum,
     distributedAmount: distSum,
     currentValuation: val,
+    latestInvestedAtIso: latestInvestmentIso(group),
   }
 }
 
@@ -105,9 +125,10 @@ function mergeInvestmentLists(
         (l.id ?? existing.id ?? "").trim(),
       investedAmount,
       onboardingBucket:
-        investedAmount > 0
+        l.onboardingBucket ??
+        (investedAmount > 0
           ? "in_progress"
-          : (l.onboardingBucket ?? existing.onboardingBucket),
+          : existing.onboardingBucket),
       investmentName: l.investmentName,
       offeringName: l.offeringName,
       investmentProfile: l.investmentProfile,
@@ -127,11 +148,10 @@ function mergeInvestmentLists(
           ? l.currentValuation
           : existing.currentValuation,
       actionRequired: l.actionRequired || existing.actionRequired,
+      latestInvestedAtIso: latestInvestmentIso([existing, l]),
     })
   }
-  return Array.from(byKey.values()).sort((a, b) =>
-    (a.investmentName || "").localeCompare(b.investmentName || "", "en"),
-  )
+  return Array.from(byKey.values()).sort(investmentRecencySort)
 }
 
 /**
@@ -176,9 +196,7 @@ function collapseInvestmentsListRowsByDeal(
       commitmentProfileId: undefined,
     })
   }
-  return out.sort((a, b) =>
-    (a.investmentName || "").localeCompare(b.investmentName || "", "en"),
-  )
+  return out.sort(investmentRecencySort)
 }
 
 export async function getMergedInvestmentListRows(): Promise<InvestmentListRow[]> {

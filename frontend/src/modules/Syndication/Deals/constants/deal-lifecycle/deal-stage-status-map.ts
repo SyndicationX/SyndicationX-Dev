@@ -6,17 +6,20 @@ import type { DealStatus } from "./deal-status"
 export const CAPITAL_RAISING_FUNDRAISING_STATUSES: readonly DealStatus[] = [
   "coming_soon",
   "open_soft_commitment",
-  "open_hard_commitment",
+  // "open_hard_commitment",
   "open_investment",
   "waitlist",
   "closed",
 ]
 
-/** Draft stage may use hidden + all fundraising statuses (investor access stays off until live). */
-export const DRAFT_OFFERING_STATUSES: readonly DealStatus[] = [
-  "draft_hidden",
-  ...CAPITAL_RAISING_FUNDRAISING_STATUSES,
-]
+/**
+ * Draft stage uses the fundraising statuses and starts at `coming_soon`.
+ * Investor access stays off regardless — `canInvestorAccessPublicOffering`
+ * blocks the draft stage and investor listings exclude it.
+ * `draft_hidden` is legacy only; existing rows resolve to the stage default.
+ */
+export const DRAFT_OFFERING_STATUSES: readonly DealStatus[] =
+  CAPITAL_RAISING_FUNDRAISING_STATUSES
 
 /** Allowed offering statuses per canonical deal stage (`offering_status` in DB). */
 export const DEAL_STAGE_STATUS_MAP: Readonly<
@@ -26,7 +29,7 @@ export const DEAL_STAGE_STATUS_MAP: Readonly<
   capital_raising: [
     "coming_soon",
     "open_soft_commitment",
-    "open_hard_commitment",
+    // "open_hard_commitment",
     "open_investment",
     "waitlist",
     "closed",

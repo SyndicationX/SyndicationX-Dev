@@ -3,6 +3,7 @@ import {
   type AssetStepDraft,
   type DealStepDraft,
 } from "./types/deals.types"
+import { invalidateDealsListCache } from "./api/dealsApi"
 
 /**
  * GET /deals/:id does not return street / state / zip (not stored on `add_deal_form`).
@@ -56,6 +57,7 @@ export const DEALS_LIST_REFETCH_EVENT = "investor-portal:deals-list-refetch"
 
 export function notifyDealsListRefetch(): void {
   if (typeof window === "undefined") return
+  invalidateDealsListCache()
   window.dispatchEvent(new CustomEvent(DEALS_LIST_REFETCH_EVENT))
 }
 

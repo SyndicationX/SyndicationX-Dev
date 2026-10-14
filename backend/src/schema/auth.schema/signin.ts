@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   pgTable,
   uuid,
   varchar,
@@ -23,6 +24,16 @@ export const users = pgTable("users", {
   firstName: varchar("first_name", { length: 100 }).notNull().default(""),
   lastName: varchar("last_name", { length: 100 }).notNull().default(""),
   phone: varchar("phone", { length: 32 }).notNull().default(""),
+  /** Sponsor whose investor invite link was used at signup; null for direct signups. */
+  referredByUserId: uuid("referred_by_user_id").references(
+    (): AnyPgColumn => users.id,
+    { onDelete: "set null" },
+  ),
+  /** Company on that invite link. Not a company membership — investors stay out of the org. */
+  referredByCompanyId: uuid("referred_by_company_id").references(
+    () => companies.id,
+    { onDelete: "set null" },
+  ),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

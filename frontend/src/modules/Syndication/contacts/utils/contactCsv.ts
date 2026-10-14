@@ -1,5 +1,6 @@
 import { formatDateDdMmmYyyy } from "@/common/utils/formatDateDisplay"
 import type { ContactRow } from "../types/contact.types"
+import { CONTACT_RELATIONSHIP_506B_OPTIONS } from "../types/contact.types"
 
 /** Table / UI / CSV: **DD-MMM-YYYY** (application standard). */
 export function formatContactSinceLabel(iso: string | undefined): string {
@@ -31,17 +32,61 @@ export function exportAuditLinesForContacts(rows: ContactRow[]): string[] {
   })
 }
 
-export function buildContactsCsv(rows: ContactRow[]): string {
+export function buildPlatformContactsCsv(
+  rows: ContactRow[],
+  opts?: { includeVisibility?: boolean },
+): string {
+  const includeVisibility = opts?.includeVisibility === true
+  const headers = [
+    "First name",
+    "Last name",
+    "Email",
+    "Phone",
+    "Accreditation Status",
+    // "Invited by",
+    ...(includeVisibility ? ["Visible on platform"] : []),
+    "Joined",
+  ]
+  const lines = [headers.map(escapeCsvCell).join(",")]
+  for (const row of rows) {
+    const status = (row.accreditationStatus ?? "").trim()
+    const cells = [
+      row.firstName,
+      row.lastName,
+      row.email,
+      row.phone,
+      status || "N/A",
+      // row.invitedByDisplayName?.trim() ?? "",
+      ...(includeVisibility
+        ? [row.visibleToUsers === true ? "Yes" : "No"]
+        : []),
+      sinceForCsv(row),
+    ]
+    lines.push(cells.map((c) => escapeCsvCell(String(c))).join(","))
+  }
+  return `\uFEFF${lines.join("\r\n")}`
+}
+
+export function buildContactsCsv(
+  rows: ContactRow[],
+  opts?: { includeVisibility?: boolean; includeOrganization?: boolean },
+): string {
+  const includeVisibility = opts?.includeVisibility === true
+  const includeOrganization = opts?.includeOrganization === true
   const headers = [
     "First name",
     "Last name",
     "Email",
     "Phone",
     "Deals",
+    "Relationship",
     "Note",
     "Contact tags",
     "Lists",
     "Owners",
+    ...(includeOrganization ? ["Organization"] : []),
+    "Invited by",
+    ...(includeVisibility ? ["Visible on platform"] : []),
     "Added by",
     "Since",
   ]
@@ -54,10 +99,18 @@ export function buildContactsCsv(rows: ContactRow[]): string {
         row.email,
         row.phone,
         String(row.dealCount ?? 0),
+        CONTACT_RELATIONSHIP_506B_OPTIONS.find(
+          (o) => o.value === (row.relationship506b === "YES" ? "YES" : "NO"),
+        )?.label ?? "506(b) No",
         row.note,
         joinMulti(row.tags),
         joinMulti(row.lists),
         joinMulti(row.owners),
+        ...(includeOrganization ? [row.organizationName?.trim() ?? ""] : []),
+        row.invitedByDisplayName?.trim() ?? "",
+        ...(includeVisibility
+          ? [row.visibleToUsers === true ? "Yes" : "No"]
+          : []),
         row.createdByDisplayName ?? "",
         sinceForCsv(row),
       ]

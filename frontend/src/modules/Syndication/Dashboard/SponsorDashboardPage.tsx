@@ -10,6 +10,7 @@ import {
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { ToolStyleCard } from "../../../common/components/tool-style-card/ToolStyleCard"
+import { formatCount } from "@/common/utils/formatCount"
 import { cardCompactAmountOrDash } from "../../../common/components/card-compact-amount/CardCompactAmount"
 import { usePortalMode } from "@/modules/Investing/context/PortalModeContext"
 import { InvestingDashboardPage } from "@/modules/Investing/pages/dashboard"
@@ -85,7 +86,7 @@ function SyndicatingDashboard() {
           title="# of investors"
           loading={loading}
           description={
-            summary != null ? String(summary.totalInvestorRows) : "—"
+            summary != null ? formatCount(summary.totalInvestorRows) : "—"
           }
           hintTitle="Sum of investors on each deal (same as the row count on the deal Investors tab), added across all your deals."
         />
@@ -95,9 +96,9 @@ function SyndicatingDashboard() {
           title="# of contacts"
           loading={loading}
           description={
-            summary != null ? String(summary.contactsCount) : "—"
+            summary != null ? formatCount(summary.contactsCount) : "—"
           }
-          hintTitle="Contacts added under your company (same list as Add contacts / CRM)."
+          hintTitle="Same list as the Contacts page for your account."
         />
         <ToolStyleCard
           variant="metric"

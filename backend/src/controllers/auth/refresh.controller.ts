@@ -10,6 +10,7 @@ import {
   revokeAccessTokenByJti,
   revokeRefreshToken,
 } from "../../services/auth/token.service.js";
+import { endOpenPortalSessionsForUser } from "../../services/platform/userActivity.service.js";
 
 type RefreshBody = {
   refreshToken?: unknown;
@@ -48,6 +49,14 @@ export async function postAuthLogout(
 ): Promise<void> {
   const jwtUser = await getValidJwtUser(req);
   const refreshToken = readRefreshTokenFromRequest(req);
+
+  if (jwtUser?.id) {
+    try {
+      await endOpenPortalSessionsForUser(jwtUser.id);
+    } catch (err) {
+      console.error("postAuthLogout close portal session:", err);
+    }
+  }
 
   if (jwtUser?.jti) {
     try {

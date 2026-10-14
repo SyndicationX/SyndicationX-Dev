@@ -100,11 +100,20 @@ function decodeHtmlEntities(input: string): string {
   return textarea.value
 }
 
+/** Matches the stored email-template attachment shape. */
+export type SendMailAttachment = {
+  fileName: string
+  mimeType: string
+  size: number
+  dataBase64: string
+}
+
 export async function openSendMailDraft(params: {
   to: string[]
   ccRaw?: string
   templateSubject?: string
   templateBodyHtml?: string
+  templateAttachment?: SendMailAttachment | null
   senderEmail?: string
 }): Promise<{ ok: true } | { ok: false; message: string }> {
   const base = getApiV1Base()
@@ -139,6 +148,7 @@ export async function openSendMailDraft(params: {
         subject,
         bodyHtml: params.templateBodyHtml ?? "",
         bodyText,
+        attachment: params.templateAttachment ?? null,
         senderEmail: params.senderEmail || getCurrentSessionUserEmail(),
       }),
     })

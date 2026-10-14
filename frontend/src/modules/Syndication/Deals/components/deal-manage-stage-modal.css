@@ -1,0 +1,65 @@
+/* Stage picker inside the “Manage deal stage” modal (shares deal_stage_modal chrome) */
+
+.deal_manage_stage_body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.deal_manage_stage_field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.deal_manage_stage_label_row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.deal_manage_stage_label {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--portal-text-muted, #64748b);
+}
+
+.deal_manage_stage_current {
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--portal-text-muted, #64748b);
+}
+
+.deal_manage_stage_pills {
+  margin: 0;
+}
+
+.deal_manage_stage_summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.8rem 0.85rem;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-card-radius, 4px);
+  background: var(--portal-surface-muted, #f8fafc);
+}
+
+.deal_manage_stage_summary_badge {
+  margin-bottom: 0;
+}
+
+.deal_manage_stage_error {
+  margin: 0;
+}
+
+:root[data-theme="dark"] .deal_manage_stage_summary {
+  border-color: var(--portal-border, #334155);
+  background: color-mix(in srgb, #0f172a 35%, transparent);
+}

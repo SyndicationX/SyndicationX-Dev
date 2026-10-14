@@ -105,6 +105,24 @@ export function MyDistributionsTable({
     }
     cols.push(
       {
+        id: "name",
+        header: "Distribution name",
+        colWidth: "14rem",
+        sortValue: (row) => row.name || row.period || "",
+        cell: (row) => {
+          const label = (row.name ?? "").trim() || "—"
+          return (
+            <Link
+              to={detailPath(row, investmentId)}
+              className="deals_table_name_link deal_dist_row_link"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {label}
+            </Link>
+          )
+        },
+      },
+      {
         id: "class",
         header: "Class",
         colWidth: "9rem",

@@ -8,6 +8,11 @@ export interface InvestorCommunicationRecipient {
   email: string
   groups: InvestorCommunicationRecipientGroup[]
   roleLabel: string
+  classKind?: "lp" | "gp"
+  addedByUserId?: string
+  sponsorEmail?: string
+  addedByIsCoSponsor?: boolean
+  requiresCosponsorRelease?: boolean
 }
 
 export interface InvestorCommunicationMailRow {
@@ -22,5 +27,8 @@ export interface InvestorCommunicationMailRow {
   recipientUsers: InvestorCommunicationRecipient[]
   /** ISO timestamp or parseable date string. */
   sentAt: string
+  senderId?: string
   status: InvestorCommunicationMailStatus
+  templateId?: string | null
+  heldForCosponsorRelease?: boolean
 }

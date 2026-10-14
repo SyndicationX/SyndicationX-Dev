@@ -15,6 +15,7 @@ import {
 import { DropboxSignEmbeddedEditor } from "@/common/components/dropbox-sign-embedded"
 import { SignFlowEmbeddedEditor } from "@/common/components/signflow-embedded"
 import { TabsScrollStrip } from "@/common/components/tabs-scroll-strip/TabsScrollStrip"
+import { TableHScrollShell } from "@/common/components/data-table/TableHScrollShell"
 
 import { toast } from "@/common/components/Toast"
 
@@ -120,6 +121,7 @@ function EsignProfilesTableLoader({
 }) {
   return (
     <div className="deal_esign_profiles_table_wrap deal_esign_profiles_table_wrap_loading">
+      <TableHScrollShell active={false} ariaLabel="eSign template columns">
       <table
         className="deal_esign_profiles_table deal_esign_profiles_table_skeleton"
         aria-hidden
@@ -175,6 +177,7 @@ function EsignProfilesTableLoader({
           ))}
         </tbody>
       </table>
+      </TableHScrollShell>
       <div
         className="deal_esign_profiles_table_loading"
         role="status"
@@ -681,6 +684,7 @@ function DealEsignTemplatesProfilesTab({
                 per profile — investors only see fields scoped to their profile when signing.
               </p>
               <div className="deal_esign_profiles_table_wrap">
+                <TableHScrollShell ariaLabel="eSign template columns">
                 <table className="deal_esign_profiles_table">
                   <thead>
                     <tr>
@@ -728,6 +732,7 @@ function DealEsignTemplatesProfilesTab({
                     />
                   </tbody>
                 </table>
+                </TableHScrollShell>
               </div>
             </>
           ) : usesLegacyProfileTemplates ? (
@@ -737,6 +742,7 @@ function DealEsignTemplatesProfilesTab({
                 after removing these, or continue editing profile-specific documents below.
               </p>
               <div className="deal_esign_profiles_table_wrap">
+                <TableHScrollShell ariaLabel="eSign template columns">
                 <table className="deal_esign_profiles_table">
                   <thead>
                     <tr>
@@ -790,6 +796,7 @@ function DealEsignTemplatesProfilesTab({
                     })}
                   </tbody>
                 </table>
+                </TableHScrollShell>
               </div>
             </>
           ) : null}

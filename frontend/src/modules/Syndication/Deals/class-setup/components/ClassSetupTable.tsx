@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
+import { FloatingTableHScroll } from "../../../../../common/components/data-table/FloatingTableHScroll"
 import { attachHorizontalScrollBehavior } from "../../../../../common/utils/horizontalScrollRegion"
 import type { ClassSetupClass, ClassSetupType } from "../types/class-setup.types"
 import { CLASS_TYPE_META } from "../types/class-setup.types"
@@ -155,7 +156,7 @@ export function ClassSetupTable({
       </div>
 
       <div
-        className={`cs_table_scroll${canScrollLeft ? " has-left" : ""}${canScrollRight ? " has-right" : ""}`}
+        className={`cs_table_scroll data_table_scroll_region--floating-hscroll${canScrollLeft ? " has-left" : ""}${canScrollRight ? " has-right" : ""}`}
         ref={scrollerRef}
       >
         <table className="cs_classes_table">
@@ -241,6 +242,11 @@ export function ClassSetupTable({
           </tfoot>
         </table>
       </div>
+      <FloatingTableHScroll
+        scrollerRef={scrollerRef}
+        active={classes.length > 0}
+        ariaLabel="Class setup columns"
+      />
     </section>
   )
 }
@@ -735,23 +741,30 @@ function PromoteSplitsCell({
       <div className="cs_promote_splits_inputs">
         {Array.from({ length: stages }, (_, s) => {
           const label = stageLabels[s] ?? `Stage ${s + 1}`
+          const tip = (
+            <FormTooltip
+              label={`About ${label}`}
+              placement="top"
+              panelAlign="start"
+              content={
+                <p className="cs_promote_stage_tip">
+                  {promoteStageTooltip(s, label)}
+                </p>
+              }
+            />
+          )
           return (
             <span key={s} className="cs_promote_stage_field">
               {s > 0 ? (
-                <span className="cs_promote_arrow" aria-hidden>
-                  →
+                <span className="cs_promote_arrow_stack">
+                  {tip}
+                  <span className="cs_promote_arrow" aria-hidden>
+                    →
+                  </span>
                 </span>
-              ) : null}
-              <FormTooltip
-                label={`About ${label}`}
-                placement="top"
-                panelAlign="start"
-                content={
-                  <p className="cs_promote_stage_tip">
-                    {promoteStageTooltip(s, label)}
-                  </p>
-                }
-              />
+              ) : (
+                tip
+              )}
               <input
                 className="cs_pct_in"
                 type="number"

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Code2, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import { formatDateDdMmmYyyy } from "../../../common/utils/formatDateDisplay";
 import { DataTablePagination } from "../../../common/components/DataTablePagination/DataTablePagination";
+import { TableHScrollShell } from "../../../common/components/data-table/TableHScrollShell";
 import { toast } from "../../../common/components/Toast";
 import { fetchWorkspaceTabSettings } from "./companyWorkspaceSettingsApi";
 import { useDebouncedWorkspaceTabPersist } from "./useWorkspaceTabPersistence";
@@ -294,6 +295,7 @@ export function CompanyOfferingsPageTab(props: Props) {
         ) : null}
 
         <div className="um_table_wrap cp_offerings_table_wrap">
+          <TableHScrollShell ariaLabel="Offerings columns">
           <table className="um_table cp_offerings_table">
             <thead>
               <tr>
@@ -349,6 +351,7 @@ export function CompanyOfferingsPageTab(props: Props) {
               ))}
             </tbody>
           </table>
+          </TableHScrollShell>
         </div>
 
         <DataTablePagination

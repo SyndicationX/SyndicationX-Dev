@@ -7,6 +7,8 @@ export type ProfilePatchBody = Partial<{
   phone: string
   companyName: string
   username: string
+  visibleToUsers: boolean
+  startSyndicating: boolean
 }>
 
 function authJsonHeaders(): HeadersInit {
@@ -79,9 +81,13 @@ function errorMessageFromResponse(
   return `Request failed (${res.status} ${res.statusText || ""})`.trim()
 }
 
-export async function patchMyProfile(
-  body: ProfilePatchBody,
-): Promise<{ user: Record<string, unknown> }> {
+export async function patchMyProfile(body: ProfilePatchBody): Promise<{
+  user: Record<string, unknown>
+  /** `companyName` matched an existing company instead of creating a new one. */
+  joinedExistingCompany: boolean
+  /** Investor account was upgraded to a company role, so syndicating is now available. */
+  startedSyndicating: boolean
+}> {
   const base = getApiV1Base()
   if (!base) throw new Error("API base URL is not configured (VITE_BASE_URL).")
   const res = await fetch(`${base}/auth/me`, {
@@ -95,7 +101,11 @@ export async function patchMyProfile(
   if (!user || typeof user !== "object" || Array.isArray(user)) {
     throw new Error("Invalid response from server.")
   }
-  return { user: user as Record<string, unknown> }
+  return {
+    user: user as Record<string, unknown>,
+    joinedExistingCompany: data.joinedExistingCompany === true,
+    startedSyndicating: data.startedSyndicating === true,
+  }
 }
 
 export async function postChangePassword(body: {

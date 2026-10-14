@@ -215,6 +215,10 @@
 
 }
 
+.invest_now_step_desc_warn p + p {
+  margin-top: 0.5rem;
+}
+
 
 
 .invest_now_w9_name_field .invest_now_w9_name_row {

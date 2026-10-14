@@ -1,6 +1,13 @@
 import type { AddDealFormRow } from "../../schema/deal.schema/add-deal-form.schema.js";
-import { sumCommittedAmountForDeal } from "./dealInvestment.service.js";
-import { listInvestorClassesByDealId } from "./dealInvestorClass.service.js";
+import type { DealInvestorClassRow } from "../../schema/deal.schema/deal-investor-class.schema.js";
+import {
+  sumCommittedAmountByDealIds,
+  sumCommittedAmountForDeal,
+} from "./dealInvestment.service.js";
+import {
+  listInvestorClassesByDealId,
+  mapInvestorClassesByDealIds,
+} from "./dealInvestorClass.service.js";
 
 function parseMoneyDigits(raw: string): number {
   const n = Number.parseFloat(String(raw ?? "").replace(/[^0-9.-]/g, ""));
@@ -30,17 +37,15 @@ export type EnrichedDealListRowFields = {
  * Total accepted = sum of investment commitment amounts.
  * Total in-progress = max(0, offering total − accepted) as remaining raise.
  */
-export async function enrichDealListRowForApi(
-  row: AddDealFormRow,
-): Promise<EnrichedDealListRowFields> {
-  const dealId = String(row.id);
-  const classes = await listInvestorClassesByDealId(dealId);
+function enrichedFieldsFrom(
+  classes: readonly DealInvestorClassRow[],
+  sumCommitted: number,
+): EnrichedDealListRowFields {
   let sumOffering = 0;
   for (const c of classes) {
     sumOffering += parseMoneyDigits(String(c.offeringSize ?? ""));
   }
 
-  const sumCommitted = await sumCommittedAmountForDeal(dealId);
   const remaining = Math.max(0, sumOffering - sumCommitted);
 
   let investmentType = "";
@@ -70,4 +75,44 @@ export async function enrichDealListRowForApi(
     investmentType: investmentType || "—",
     propertyType: propertyType || "—",
   };
+}
+
+export async function enrichDealListRowForApi(
+  row: AddDealFormRow,
+): Promise<EnrichedDealListRowFields> {
+  const dealId = String(row.id);
+  const [classes, sumCommitted] = await Promise.all([
+    listInvestorClassesByDealId(dealId),
+    sumCommittedAmountForDeal(dealId),
+  ]);
+  return enrichedFieldsFrom(classes, sumCommitted);
+}
+
+/**
+ * Same fields as `enrichDealListRowForApi` for a whole list, using two queries instead of
+ * two per deal. The deals list previously issued 2N queries here, so its response time grew
+ * linearly with the number of deals in the workspace.
+ */
+export async function mapDealListEnrichmentByDealId(
+  rows: readonly AddDealFormRow[],
+): Promise<Map<string, EnrichedDealListRowFields>> {
+  const byDealId = new Map<string, EnrichedDealListRowFields>();
+  const dealIds = rows.map((r) => String(r.id));
+  if (dealIds.length === 0) return byDealId;
+
+  const [classesByDealId, committedByDealId] = await Promise.all([
+    mapInvestorClassesByDealIds(dealIds),
+    sumCommittedAmountByDealIds(dealIds),
+  ]);
+
+  for (const dealId of dealIds) {
+    byDealId.set(
+      dealId,
+      enrichedFieldsFrom(
+        classesByDealId.get(dealId) ?? [],
+        committedByDealId.get(dealId) ?? 0,
+      ),
+    );
+  }
+  return byDealId;
 }

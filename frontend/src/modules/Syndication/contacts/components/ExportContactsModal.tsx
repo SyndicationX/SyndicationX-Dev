@@ -6,6 +6,7 @@ import { notifyContactsExportAudit } from "../api/contactsApi"
 import type { ContactRow } from "../types/contact.types"
 import {
   buildContactsCsv,
+  buildPlatformContactsCsv,
   downloadContactsCsv,
   exportAuditLinesForContacts,
   formatContactSinceLabel,
@@ -18,7 +19,9 @@ interface ExportContactsModalProps {
   onClose: () => void
   contacts: ContactRow[]
   /** Which list is being exported (affects title and download filename). */
-  listKind?: "active" | "archived"
+  listKind?: "active" | "archived" | "platform"
+  /** Platform-admin CSV includes Visible on platform. */
+  includePlatformVisibility?: boolean
 }
 
 function contactDisplayName(c: ContactRow): string {
@@ -31,6 +34,7 @@ export function ExportContactsModal({
   onClose,
   contacts,
   listKind = "active",
+  includePlatformVisibility = false,
 }: ExportContactsModalProps) {
   const [modalQuery, setModalQuery] = useState("")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -58,6 +62,9 @@ export function ExportContactsModal({
           ...r.lists,
           ...r.owners,
           r.createdByDisplayName ?? "",
+          r.invitedByDisplayName ?? "",
+          r.organizationName ?? "",
+          r.visibleToUsers === true ? "yes" : "no",
           r.createdAt ?? "",
           formatContactSinceLabel(r.createdAt),
         ]
@@ -128,9 +135,22 @@ export function ExportContactsModal({
   function handleExportExcel() {
     const chosen = contacts.filter((r) => selectedIds.has(r.id))
     if (chosen.length === 0) return
-    const csv = buildContactsCsv(chosen)
+    const csv =
+      listKind === "platform"
+        ? buildPlatformContactsCsv(chosen, {
+            includeVisibility: includePlatformVisibility,
+          })
+        : buildContactsCsv(chosen, {
+            includeVisibility: includePlatformVisibility,
+            includeOrganization: true,
+          })
     const filename = buildTableExportFilename({
-      tableSlug: listKind === "archived" ? "contacts-archived" : "contacts",
+      tableSlug:
+        listKind === "archived"
+          ? "contacts-archived"
+          : listKind === "platform"
+            ? "platform-contacts"
+            : "contacts",
       includeDateStamp: true,
     })
     downloadContactsCsv(csv, filename)
@@ -159,7 +179,9 @@ export function ExportContactsModal({
           <h2 id="contacts-export-modal-title" className="deals_export_modal_title">
             {listKind === "archived"
               ? "Export archived contacts"
-              : "Export contacts"}
+              : listKind === "platform"
+                ? "Export platform contacts"
+                : "Export contacts"}
           </h2>
           <button
             type="button"
@@ -174,14 +196,20 @@ export function ExportContactsModal({
         <p className="deals_export_modal_hint">
           {listKind === "archived"
             ? "Search and select archived contacts, then export to Excel (CSV format)."
-            : "Search and select active contacts, then export to Excel (CSV format)."}
+            : listKind === "platform"
+              ? "Search and select platform contacts, then export to Excel (CSV format)."
+              : "Search and select active contacts, then export to Excel (CSV format)."}
         </p>
 
         <div className="deals_export_modal_search">
           <input
             type="search"
             className="deals_export_modal_search_input"
-            placeholder="Search contacts…"
+            placeholder={
+              listKind === "platform"
+                ? "Search platform contacts…"
+                : "Search contacts…"
+            }
             value={modalQuery}
             onChange={(e) => setModalQuery(e.target.value)}
             aria-label="Search contacts in export list"
@@ -219,7 +247,9 @@ export function ExportContactsModal({
         >
           {visibleContacts.length === 0 ? (
             <li className="deals_export_modal_empty">
-              No contacts match your search.
+              {listKind === "platform"
+                ? "No platform contacts match your search."
+                : "No contacts match your search."}
             </li>
           ) : (
             visibleContacts.map((row) => (

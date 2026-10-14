@@ -6,6 +6,11 @@ import {
 } from "./authTokensApi"
 import { getApiV1Base } from "../utils/apiBaseUrl"
 import {
+  PORTAL_TIMEOUT_HEADER,
+  resolveRequestTimeoutMs,
+  withRequestTimeout,
+} from "../utils/requestTimeout"
+import {
   clearLastSessionActivity,
   markIdleSessionTimeoutNotice,
   touchSessionActivity,
@@ -76,6 +81,7 @@ function shouldOmitActiveOrganization(init?: RequestInit): boolean {
 
 function mergeFreshAuthHeaders(init?: RequestInit): Headers {
   const headers = new Headers(init?.headers)
+  headers.delete(PORTAL_TIMEOUT_HEADER)
   const omitActiveOrganization = shouldOmitActiveOrganization(init)
   if (omitActiveOrganization) {
     headers.delete(PORTAL_OMIT_ACTIVE_ORG_HEADER)
@@ -104,7 +110,8 @@ function markRetried(init: RequestInit): RequestInit {
 }
 
 /**
- * Fetch wrapper: attaches portal auth headers and retries once after refresh on 401.
+ * Fetch wrapper: attaches portal auth headers, enforces the per-request time budget,
+ * and retries once after refresh on 401.
  */
 export async function portalFetch(
   input: RequestInfo | URL,
@@ -112,12 +119,16 @@ export async function portalFetch(
 ): Promise<Response> {
   const url = resolveRequestUrl(input)
   const isApi = isPortalApiV1Request(url)
+  const timeoutMs = resolveRequestTimeoutMs(input, init)
 
-  const response = await nativeFetch(input, {
-    ...init,
-    headers: isApi ? mergeFreshAuthHeaders(init) : init?.headers,
-    credentials: init?.credentials ?? "include",
-  })
+  const response = await withRequestTimeout(url, timeoutMs, init?.signal, (signal) =>
+    nativeFetch(input, {
+      ...init,
+      headers: isApi ? mergeFreshAuthHeaders(init) : init?.headers,
+      credentials: init?.credentials ?? "include",
+      signal,
+    }),
+  )
 
   if (isApi && !isAuthExemptUrl(url) && response.ok) {
     touchSessionActivity();
@@ -139,11 +150,18 @@ export async function portalFetch(
   }
 
   const retryInit = markRetried({ ...(init ?? {}) })
-  const retryResponse = await nativeFetch(input, {
-    ...retryInit,
-    headers: mergeFreshAuthHeaders(retryInit),
-    credentials: retryInit.credentials ?? "include",
-  })
+  const retryResponse = await withRequestTimeout(
+    url,
+    timeoutMs,
+    retryInit.signal,
+    (signal) =>
+      nativeFetch(input, {
+        ...retryInit,
+        headers: mergeFreshAuthHeaders(retryInit),
+        credentials: retryInit.credentials ?? "include",
+        signal,
+      }),
+  )
   if (isApi && !isAuthExemptUrl(url) && retryResponse.ok) {
     touchSessionActivity();
   }

@@ -4,6 +4,7 @@ import {
   Copy,
   ExternalLink,
   Eye,
+  Info,
   Loader2,
   LogIn,
   Send,
@@ -19,7 +20,8 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom"
-import { AUTH_RETURN_NEXT_KEY, SESSION_BEARER_KEY } from "../../../common/auth/sessionKeys"
+import { isLpInvestorSessionUser } from "../../../common/auth/roleUtils"
+import { AUTH_RETURN_NEXT_KEY, SESSION_BEARER_KEY, SESSION_USER_DETAILS_KEY } from "../../../common/auth/sessionKeys"
 import { FormHeadingWithInfo } from "../../../common/components/form-heading/FormHeadingWithInfo"
 import { FormTooltip } from "../../../common/components/form-tooltip/FormTooltip"
 import { usePortalMode } from "@/modules/Investing/context/PortalModeContext"
@@ -45,6 +47,11 @@ import {
   isDealUuidForOfferingPreview,
 } from "./dealOfferingPreviewShared"
 import { DealOfferingPreviewInner } from "./DealOfferingPreviewInner"
+import { DealSaasPaywallModal } from "./components/DealSaasPaywallModal"
+import {
+  isDealSaasPaymentRequiredError,
+  type DealSaasPaywallDeal,
+} from "./utils/dealSaasAccess"
 import {
   canInvestorAccessPublicOffering,
   effectiveOfferingStatusForAccess,
@@ -54,6 +61,7 @@ import { dealStageLabel } from "../dealsDashboardUtils"
 import { isDealStageOfferingShareBlocked } from "./constants/deal-lifecycle/deal-stage"
 import { writePendingRecentlyViewedDeal } from "@/modules/Investing/pages/dashboard/recentlyViewedDeals"
 import {
+  claimOfferingPortfolioAccess,
   dealOfferingPortfolioPath,
   writeOfferingPortfolioAuthIntent,
 } from "./utils/offeringPortfolioAuthIntent"
@@ -102,6 +110,13 @@ export function DealOfferingPortfolioPage() {
     location.pathname,
   )
 
+  /**
+   * Share preview is sponsor-side only. Investors who signed in from a shared
+   * preview link open this same workspace route, so keep it hidden for them.
+   */
+  const sessionCanShareOfferingPreview =
+    !isPublicOfferingRoute && mode !== "investing" && !isLpInvestorSessionUser()
+
   /** Public route: encrypted token (or legacy UUID) from `?preview=`. */
   const previewQueryValue = useMemo(() => {
     if (!isPublicOfferingRoute) return undefined
@@ -142,13 +157,17 @@ export function DealOfferingPortfolioPage() {
     useState<DealInvestorsPayload>(EMPTY_INVESTORS_PAYLOAD)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [saasPaywallDeal, setSaasPaywallDeal] =
+    useState<DealSaasPaywallDeal | null>(null)
+  const canShareOfferingPreview =
+    sessionCanShareOfferingPreview && detail?.viewerCanManageDeal !== false
 
   const [lpShareToken, setLpShareToken] = useState<string | null>(null)
   const [lpShareSponsorRef, setLpShareSponsorRef] = useState<string | null>(null)
   const [lpShareTokenError, setLpShareTokenError] = useState(false)
 
   useEffect(() => {
-    if (isPublicOfferingRoute || !dealIdFromRoute?.trim()) {
+    if (!canShareOfferingPreview || !dealIdFromRoute?.trim()) {
       setLpShareToken(null)
       setLpShareSponsorRef(null)
       setLpShareTokenError(false)
@@ -180,10 +199,10 @@ export function DealOfferingPortfolioPage() {
     return () => {
       cancelled = true
     }
-  }, [dealIdFromRoute, isPublicOfferingRoute, detail?.archived])
+  }, [dealIdFromRoute, canShareOfferingPreview, detail?.archived])
 
   const shareLinkLoading =
-    !isPublicOfferingRoute &&
+    canShareOfferingPreview &&
     Boolean(dealIdFromRoute?.trim()) &&
     lpShareToken === null &&
     !lpShareTokenError
@@ -294,7 +313,11 @@ export function DealOfferingPortfolioPage() {
   function persistSharedOfferingAuthIntent(dealId: string) {
     const id = dealId.trim()
     if (!id) return
-    writeOfferingPortfolioAuthIntent(id)
+    writeOfferingPortfolioAuthIntent(
+      id,
+      previewQueryValue,
+      sponsorRefQueryValue,
+    )
     if (sponsorRefQueryValue) {
       writeOfferingPreviewSponsorAttribution({
         dealId: id,
@@ -314,7 +337,58 @@ export function DealOfferingPortfolioPage() {
     const id = detail?.id?.trim()
     if (!id || isSessionAuthenticated || !isPublicOfferingRoute) return
     writePendingRecentlyViewedDeal(id)
-  }, [detail?.id, isPublicOfferingRoute, isSessionAuthenticated])
+    writeOfferingPortfolioAuthIntent(
+      id,
+      previewQueryValue,
+      sponsorRefQueryValue,
+    )
+  }, [
+    detail?.id,
+    isPublicOfferingRoute,
+    isSessionAuthenticated,
+    previewQueryValue,
+    sponsorRefQueryValue,
+  ])
+
+  useEffect(() => {
+    const id = detail?.id?.trim()
+    const preview = previewQueryValue?.trim()
+    if (
+      !id ||
+      !preview ||
+      !isPublicOfferingRoute ||
+      !isSessionAuthenticated
+    ) {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const claimed = await claimOfferingPortfolioAccess({
+          dealId: id,
+          previewToken: preview,
+          sponsorRef: sponsorRefQueryValue,
+          createdAt: Date.now(),
+        })
+        if (cancelled || claimed?.userDetails == null) return
+        sessionStorage.setItem(
+          SESSION_USER_DETAILS_KEY,
+          JSON.stringify(claimed.userDetails),
+        )
+      } catch {
+        /* public preview still works; workspace/Invest now stay gated */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    detail?.id,
+    isPublicOfferingRoute,
+    isSessionAuthenticated,
+    previewQueryValue,
+    sponsorRefQueryValue,
+  ])
 
   useEffect(() => {
     if (isInvestorFacingView && isSessionAuthenticated) switchToInvesting()
@@ -451,6 +525,7 @@ export function DealOfferingPortfolioPage() {
     let cancelled = false
     setLoading(true)
     setNotFound(false)
+    setSaasPaywallDeal(null)
     void (async () => {
       try {
         if (isPublicOfferingRoute) {
@@ -497,12 +572,18 @@ export function DealOfferingPortfolioPage() {
               : EMPTY_INVESTORS_PAYLOAD,
           )
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
+          if (isDealSaasPaymentRequiredError(err)) {
+            setSaasPaywallDeal({
+              ...err.payload,
+              id: err.payload.id || effectiveDealId || "",
+            })
+          }
           setDetail(null)
           setClasses([])
           setInvestorsPayload(EMPTY_INVESTORS_PAYLOAD)
-          setNotFound(true)
+          setNotFound(!isDealSaasPaymentRequiredError(err))
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -558,6 +639,27 @@ export function DealOfferingPortfolioPage() {
     )
   }
 
+  if (saasPaywallDeal) {
+    return (
+      <div className="deals_list_page deals_detail_page">
+        <p className="deals_list_not_found">
+          {saasPaywallDeal.dealName.trim()
+            ? `Contact your sponsor for access to “${saasPaywallDeal.dealName.trim()}”.`
+            : "Contact your sponsor for access to this deal."}{" "}
+          <Link to={portfolioBackTo} className="deal_offer_pf_back">
+            <ArrowLeft size={18} strokeWidth={2} aria-hidden />
+            Back
+          </Link>
+        </p>
+        <DealSaasPaywallModal
+          deal={saasPaywallDeal}
+          investorFacing={mode === "investing" || isPublicOfferingRoute}
+          onClose={() => navigate(portfolioBackTo)}
+        />
+      </div>
+    )
+  }
+
   if (investorOfferingBlocked) {
     return (
       <div className="deals_list_page deals_detail_page">
@@ -601,8 +703,28 @@ export function DealOfferingPortfolioPage() {
           <div className="deal_offer_pf_back_row">
             <Link to={portfolioBackTo} className="deal_offer_pf_back">
               <ArrowLeft size={18} strokeWidth={2} aria-hidden />
-              {mode === "investing" ? "Back to opportunities" : "Back to deal"}
+              {mode === "investing"
+                ? "Back to opportunities"
+                : detail.viewerCanManageDeal === false
+                  ? "Back to deals"
+                  : "Back to deal"}
             </Link>
+          </div>
+        ) : null}
+
+        {!isPublicOfferingRoute && detail.viewerCanManageDeal === false ? (
+          <div
+            className="deals_cross_org_view_only_notice"
+            role="status"
+            aria-label="View-only deal access"
+          >
+            <Info size={20} strokeWidth={2.25} aria-hidden />
+            <div>
+              <strong>View-only access</strong>
+              <span>
+                You can view this deal. Only the sponsor can make changes.
+              </span>
+            </div>
           </div>
         ) : null}
 
@@ -650,7 +772,7 @@ export function DealOfferingPortfolioPage() {
           ) : null}
         </header>
 
-        {!isPublicOfferingRoute && detail && !isDealArchived ? (
+        {canShareOfferingPreview && detail && !isDealArchived ? (
           <section className="deal_offer_pf_share_section" aria-label="Share preview">
             <div className="um_panel deal_offer_pf_share">
               <div className="deal_offer_pf_share_header">
@@ -818,7 +940,7 @@ export function DealOfferingPortfolioPage() {
           publicPreviewUploadToken={previewQueryValue}
         />
 
-        {!isPublicOfferingRoute && shareModalOpen
+        {canShareOfferingPreview && shareModalOpen
           ? createPortal(
               <div
                 className="um_modal_overlay deals_add_inv_modal_overlay portal_modal_z_boost"

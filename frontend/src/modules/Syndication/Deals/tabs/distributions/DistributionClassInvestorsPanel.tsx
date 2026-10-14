@@ -41,6 +41,7 @@ type DistributionClassInvestorsPanelProps = {
     saved: DistributionSetupBundle,
     investorId: string,
     nextPct?: number,
+    nextDealPct?: number,
   ) => void
   onReload: () => void
 }
@@ -137,6 +138,9 @@ export function DistributionClassInvestorsPanel({
 }: DistributionClassInvestorsPanelProps) {
   const [query, setQuery] = useState("")
   const [pctDrafts, setPctDrafts] = useState<Record<string, string>>({})
+  const [dealPctDrafts, setDealPctDrafts] = useState<Record<string, string>>(
+    {},
+  )
   const [paymentDrafts, setPaymentDrafts] = useState<Record<string, string>>(
     {},
   )
@@ -156,7 +160,7 @@ export function DistributionClassInvestorsPanel({
       rows
         .map(
           (row) =>
-            `${row.id}:${row.percentOfClass}:${row.payment}:${row.required}`,
+            `${row.id}:${row.percentOfClass}:${row.percentOfDeal}:${row.payment}:${row.required}`,
         )
         .join("|"),
     [rows],
@@ -164,16 +168,21 @@ export function DistributionClassInvestorsPanel({
 
   useEffect(() => {
     const pctNext: Record<string, string> = {}
+    const dealPctNext: Record<string, string> = {}
     const payNext: Record<string, string> = {}
     for (const row of rowsRef.current) {
       pctNext[row.id] = Number.isFinite(row.percentOfClass)
         ? `${(Math.round(row.percentOfClass * 100) / 100).toFixed(2)}`
+        : ""
+      dealPctNext[row.id] = Number.isFinite(row.percentOfDeal)
+        ? `${(Math.round(row.percentOfDeal * 100) / 100).toFixed(2)}`
         : ""
       payNext[row.id] = Number.isFinite(row.payment)
         ? moneyAmountOnBlur(String(Math.round(row.payment * 100) / 100))
         : ""
     }
     setPctDrafts(pctNext)
+    setDealPctDrafts(dealPctNext)
     setPaymentDrafts(payNext)
   }, [rowsKey])
 
@@ -191,6 +200,7 @@ export function DistributionClassInvestorsPanel({
         row.email,
         String(row.capital),
         String(row.percentOfClass),
+        String(row.percentOfDeal),
         String(row.payment),
       ]
         .join(" ")
@@ -232,7 +242,11 @@ export function DistributionClassInvestorsPanel({
   const persistShare = useCallback(
     async (
       investorId: string,
-      payload: { percentOfClass?: number; payment?: number },
+      payload: {
+        percentOfClass?: number
+        percentOfDeal?: number
+        payment?: number
+      },
     ) => {
       if (!dealId || !distributionId) return
       setSavingInvestorId(investorId)
@@ -242,14 +256,27 @@ export function DistributionClassInvestorsPanel({
           distributionId,
           { investorId, ...payload },
         )
-        onSaved(saved, investorId, payload.percentOfClass)
+        onSaved(
+          saved,
+          investorId,
+          payload.percentOfClass,
+          payload.percentOfDeal,
+        )
         toast.success(
           "Saved",
-          payload.payment != null && payload.percentOfClass == null
-            ? "Payment saved as entered. Change is logged."
-            : payload.percentOfClass != null && payload.payment == null
-              ? "Percent of class saved as entered. Change is logged."
-              : "Payment and percent of class saved. Change is logged.",
+          payload.percentOfDeal != null &&
+            payload.payment == null &&
+            payload.percentOfClass == null
+            ? "Percent of deal saved as entered. Change is logged."
+            : payload.payment != null &&
+                payload.percentOfClass == null &&
+                payload.percentOfDeal == null
+              ? "Payment saved as entered. Change is logged."
+              : payload.percentOfClass != null &&
+                  payload.payment == null &&
+                  payload.percentOfDeal == null
+                ? "Percent of class saved as entered. Change is logged."
+                : "Distribution share saved. Change is logged.",
         )
       } catch (err) {
         toast.error(
@@ -278,6 +305,24 @@ export function DistributionClassInvestorsPanel({
         [investorId]: `${(Math.round(nextPct * 100) / 100).toFixed(2)}`,
       }))
       await persistShare(investorId, { percentOfClass: nextPct })
+    },
+    [persistShare],
+  )
+
+  const saveDealPercent = useCallback(
+    async (investorId: string, raw: string) => {
+      const t = sanitizePercentTypingInput(raw)
+      const n = t ? parseFloat(t) : NaN
+      if (!Number.isFinite(n)) {
+        toast.error("Invalid percent", "Enter a number between 0 and 100.")
+        return
+      }
+      const nextPct = Math.max(0, Math.min(100, n))
+      setDealPctDrafts((prev) => ({
+        ...prev,
+        [investorId]: `${(Math.round(nextPct * 100) / 100).toFixed(2)}`,
+      }))
+      await persistShare(investorId, { percentOfDeal: nextPct })
     },
     [persistShare],
   )
@@ -481,11 +526,67 @@ export function DistributionClassInvestorsPanel({
         ),
       },
       {
+        id: "pctDeal",
+        header: (
+          <ColumnHeader
+            label="% of deal"
+            hint="This investor’s share of the whole deal. Edits are saved as entered and do not auto-change Payment or % of class."
+          />
+        ),
+        align: "right",
+        colWidth: "7.25rem",
+        thClassName: "deals_th_align_right deal_dist_th_pct",
+        tdClassName: "um_td_numeric deals_td_align_right deal_dist_td_pct",
+        sortValue: (row) => row.percentOfDeal,
+        cell: (row) => (
+          <div className="deal_dist_pct_input_wrap">
+            <input
+              type="text"
+              className="deal_dist_details_pct_input"
+              inputMode="decimal"
+              aria-label={`Percent of deal for ${row.name}`}
+              value={dealPctDrafts[row.id] ?? ""}
+              disabled={
+                savingInvestorId === row.id || isInvestorPayoutLocked(row.id)
+              }
+              placeholder="0.00"
+              onChange={(e) => {
+                const next = formatPercentTypeInputBare(e.target.value, 100)
+                setDealPctDrafts((prev) => ({
+                  ...prev,
+                  [row.id]: next,
+                }))
+              }}
+              onBlur={(e) => {
+                const formatted = blurFormatPercentClamped(e.target.value)
+                setDealPctDrafts((prev) => ({
+                  ...prev,
+                  [row.id]: formatted,
+                }))
+                const nextN = formatted
+                  ? parseFloat(sanitizePercentTypingInput(formatted))
+                  : NaN
+                if (
+                  !Number.isFinite(nextN) ||
+                  Math.abs(nextN - row.percentOfDeal) < 0.0005
+                ) {
+                  return
+                }
+                void saveDealPercent(row.id, formatted)
+              }}
+            />
+            <span className="deal_dist_pct_suffix" aria-hidden>
+              %
+            </span>
+          </div>
+        ),
+      },
+      {
         id: "required",
         header: (
           <ColumnHeader
-            label="Required"
-            hint="Preferred / CoC due for this investor in the distribution period."
+            label="Accumulated Pref"
+            hint="Preferred due for this investor in the distribution period."
           />
         ),
         align: "right",
@@ -546,7 +647,7 @@ export function DistributionClassInvestorsPanel({
         header: (
           <ColumnHeader
             label="Unpaid"
-            hint="Required minus payment for this investor on this run."
+            hint="Accumulated Pref minus payment for this investor on this run."
           />
         ),
         align: "right",
@@ -640,6 +741,7 @@ export function DistributionClassInvestorsPanel({
     ],
     [
       pctDrafts,
+      dealPctDrafts,
       paymentDrafts,
       savingInvestorId,
       sendingInvestorId,
@@ -649,6 +751,7 @@ export function DistributionClassInvestorsPanel({
       isInvestorPayoutLocked,
       requestSendInvestorAchPayout,
       savePercent,
+      saveDealPercent,
       savePayment,
     ],
   )

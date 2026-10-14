@@ -5,6 +5,7 @@ import {
   type DropdownSelectOption,
 } from "../../../../../common/components/dropdown-select"
 import { useHorizontalScrollRegion } from "../../../../../common/hooks/useHorizontalScrollRegion"
+import { FloatingTableHScroll } from "../../../../../common/components/data-table/FloatingTableHScroll"
 import {
   blurFormatMoneyInput,
   formatCurrencyUsdTypeInput,
@@ -124,7 +125,7 @@ export function WaterfallBuilder({
         </div>
       </div>
 
-      <div className="ds_table_scroll" ref={tableScrollRef}>
+      <div className="ds_table_scroll data_table_scroll_region--floating-hscroll" ref={tableScrollRef}>
         <table className="ds_wf_table">
           <thead>
             <tr>
@@ -242,6 +243,11 @@ export function WaterfallBuilder({
           </tbody>
         </table>
       </div>
+      <FloatingTableHScroll
+        scrollerRef={tableScrollRef}
+        syncKey={String(rows.length)}
+        ariaLabel="Waterfall columns"
+      />
     </section>
   )
 }

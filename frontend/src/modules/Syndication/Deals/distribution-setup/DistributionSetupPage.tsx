@@ -934,6 +934,7 @@ export function DistributionSetupPage() {
             className: string
             capital: number
             percentOfClass: number
+            percentOfDeal?: number
             payment: number
           }>
         | undefined
@@ -970,6 +971,7 @@ export function DistributionSetupPage() {
             className: l.className,
             capital: l.capital,
             percentOfClass: l.percentOfClass,
+            percentOfDeal: l.percentOfDeal,
             payment: l.payment,
           }))
         }
@@ -1114,6 +1116,7 @@ export function DistributionSetupPage() {
             className: string
             capital: number
             percentOfClass: number
+            percentOfDeal?: number
             payment: number
           }>
         | undefined
@@ -1155,6 +1158,7 @@ export function DistributionSetupPage() {
             className: l.className,
             capital: l.capital,
             percentOfClass: l.percentOfClass,
+            percentOfDeal: l.percentOfDeal,
             payment: l.payment,
           }))
         }

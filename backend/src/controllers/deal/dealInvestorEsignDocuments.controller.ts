@@ -43,6 +43,7 @@ import { getDealMyEsignSignSession } from "../../services/deal/dealMemberEsignSi
 import { readOfferingInvestorPreviewJsonAfterEsignSync } from "../../services/deal/dealEsignDocumentsWorkspaceSync.service.js";
 import { getDealSponsorEsignSignSession } from "../../services/deal/dealSponsorEsignSignSession.service.js";
 import { isPortalUserSponsorOnDeal } from "../../services/deal/dealMemberScope.service.js";
+import { scopeOfferingInvestorPreviewJsonForViewer } from "../../services/deal/dealDocumentCoSponsorVisibility.service.js";
 
 function queryString(v: unknown): string {
   if (typeof v === "string") return v.trim();
@@ -580,7 +581,12 @@ export async function postSyncCompletedEsignDocuments(
     }
 
     const offeringInvestorPreviewJson =
-      await readOfferingInvestorPreviewJsonAfterEsignSync(dealId);
+      await scopeOfferingInvestorPreviewJsonForViewer({
+        dealId,
+        viewerUserId: user.id,
+        viewerRole: user.userRole,
+        json: await readOfferingInvestorPreviewJsonAfterEsignSync(dealId),
+      });
     res.status(200).json({ offeringInvestorPreviewJson });
   } catch (err) {
     console.error("postSyncCompletedEsignDocuments:", err);
@@ -744,7 +750,12 @@ export async function postDealSponsorEsignSync(
     }
 
     const offeringInvestorPreviewJson =
-      await readOfferingInvestorPreviewJsonAfterEsignSync(dealId);
+      await scopeOfferingInvestorPreviewJsonForViewer({
+        dealId,
+        viewerUserId: user.id,
+        viewerRole: user.userRole,
+        json: await readOfferingInvestorPreviewJsonAfterEsignSync(dealId),
+      });
 
     res.status(200).json({
       ok: true,

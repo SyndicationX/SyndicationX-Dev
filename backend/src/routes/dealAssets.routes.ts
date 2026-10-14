@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { blockCrossOrgColleagueDealMutations } from "../middleware/crossOrgDealManage.middleware.js";
 import {
   deleteDealAssetHandler,
   getDealAsset,
@@ -9,6 +10,8 @@ import {
 } from "../controllers/dealAssets/dealAssets.controller.js";
 
 const router = Router();
+
+router.use("/deals/:dealId", blockCrossOrgColleagueDealMutations);
 
 /** Assets section for a deal (property + additional information). */
 router.get("/deals/:dealId/assets", getDealAssets);

@@ -30,10 +30,10 @@ export type DealInvestmentModalEntry =
   | "general_partner"
 
 export const DEAL_MEMBER_ROLE_VALUE = "Deal Member"
-export const DEAL_MEMBER_ROLE_LABEL = "Deal Member"
+export const DEAL_MEMBER_ROLE_LABEL = "General Partner"
 
 export const GENERAL_PARTNER_ROLE_VALUE = "General Partner"
-export const GENERAL_PARTNER_ROLE_LABEL = "General Partner"
+export const GENERAL_PARTNER_ROLE_LABEL = "Team Member"
 
 /** Roles shown on the Deal Members subtab (not LP investors, not general partners). */
 export const DEAL_MEMBERS_TAB_ROLE_VALUES = new Set([
@@ -124,8 +124,14 @@ export function investorRoleLabel(value: string): string {
   const lower = t.toLowerCase()
   /** Portal role stored on legacy rows — never show as a deal role label. */
   if (lower === "deal_participant" || lower === "deal participant") return "—"
-  if (lower === LP_INVESTOR_ROLE_VALUE || lower === "lp investors")
+  if (
+    lower === LP_INVESTOR_ROLE_VALUE ||
+    lower === "lp_investor" ||
+    lower === "lp investors" ||
+    lower === "lp investor"
+  ) {
     return LP_INVESTORS_ROLE_LABEL
+  }
   const row = INVESTOR_ROLE_SELECT_OPTIONS.find((o) => o.value === t)
   if (row) return row.label
   return t
@@ -234,7 +240,12 @@ export function isLpInvestorRole(stored: string | undefined): boolean {
   if (!t) return false
   if (t === LP_INVESTOR_ROLE_VALUE) return true
   const lower = t.toLowerCase()
-  return lower === "lp investors" || lower === LP_INVESTOR_ROLE_VALUE
+  return (
+    lower === "lp investors" ||
+    lower === "lp investor" ||
+    lower === LP_INVESTOR_ROLE_VALUE ||
+    lower === "lp_investor"
+  )
 }
 
 /** Lead / admin / co-sponsor / deal member — matches select option value or label. */
@@ -256,6 +267,7 @@ export function isGeneralPartnerRole(stored: string | undefined): boolean {
   const lower = t.toLowerCase()
   if (lower === GENERAL_PARTNER_ROLE_VALUE.toLowerCase()) return true
   if (lower === "general partners") return true
+  if (lower === "team member" || lower === "team members") return true
   const byVal = INVESTOR_ROLE_SELECT_OPTIONS.find((o) => o.value === t)
   if (byVal?.value && GENERAL_PARTNERS_TAB_ROLE_VALUES.has(byVal.value))
     return true

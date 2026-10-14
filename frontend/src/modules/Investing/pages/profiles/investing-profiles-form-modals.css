@@ -1,7 +1,11 @@
 /* Investing Profiles add modals — width + extras on top of Add investment / Add contact shell */
 
-.investing_add_profile_form_panel.um_modal.um_modal_view {
+.investing_add_profile_form_panel.um_modal.um_modal_view:not(
+    .investing_add_profile_form_panel--inline
+  ) {
   max-width: min(40rem, 100%);
+  max-height: min(90dvh, calc(100dvh - 2rem));
+  overflow: hidden;
 }
 
 .investing_add_address_form_panel.um_modal.um_modal_view {

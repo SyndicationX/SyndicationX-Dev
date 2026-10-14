@@ -35,6 +35,11 @@ import {
   DISTRIBUTION_WF_SOURCES,
 } from "../../services/distributionSetup/distributionSetup.types.js";
 import type { InvestorPaymentLineInput } from "../../services/distributionSetup/investorDistributionAllocation.js";
+import {
+  coSponsorMayAccessInvestorPayment,
+  scopeDistributionSetupBundleForViewer,
+} from "../../services/distributionSetup/distributionCoSponsorScope.service.js";
+import type { DistributionSetupBundle } from "../../services/distributionSetup/distributionSetup.types.js";
 
 function paramId(v: string | string[] | undefined): string {
   if (typeof v === "string") return v;
@@ -199,6 +204,37 @@ async function assertDealAccess(
   return { ok: true };
 }
 
+async function scopeSetupForRequest(
+  req: Request,
+  dealId: string,
+  bundle: DistributionSetupBundle | null | undefined,
+): Promise<DistributionSetupBundle | null | undefined> {
+  if (bundle == null) return bundle;
+  const user = await getValidJwtUser(req);
+  return scopeDistributionSetupBundleForViewer(dealId, user?.id, bundle);
+}
+
+async function jsonWithScopedSetup(
+  req: Request,
+  res: Response,
+  dealId: string,
+  status: number,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const setup = body.distributionSetup;
+  if (setup && typeof setup === "object") {
+    body = {
+      ...body,
+      distributionSetup: await scopeSetupForRequest(
+        req,
+        dealId,
+        setup as DistributionSetupBundle,
+      ),
+    };
+  }
+  res.status(status).json(body);
+}
+
 export async function getDealDistributionSetup(req: Request, res: Response) {
   try {
     const dealId = paramId(req.params.dealId);
@@ -216,7 +252,9 @@ export async function getDealDistributionSetup(req: Request, res: Response) {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    res.json({ distributionSetup: bundle });
+    await jsonWithScopedSetup(req, res, dealId, 200, {
+      distributionSetup: bundle,
+    });
   } catch (err) {
     console.error("getDealDistributionSetup", err);
     res.status(500).json({ message: "Failed to load distribution setup" });
@@ -245,13 +283,15 @@ export async function putDealDistributionSetup(req: Request, res: Response) {
         priorDistributions: [],
       });
       if (cleared.error) {
-        res.status(400).json({
+        await jsonWithScopedSetup(req, res, dealId, 400, {
           message: cleared.error,
           distributionSetup: cleared.bundle,
         });
         return;
       }
-      res.json({ distributionSetup: cleared.bundle });
+      await jsonWithScopedSetup(req, res, dealId, 200, {
+        distributionSetup: cleared.bundle,
+      });
       return;
     }
 
@@ -265,7 +305,10 @@ export async function putDealDistributionSetup(req: Request, res: Response) {
       input,
     });
     if (error) {
-      res.status(400).json({ message: error, distributionSetup: bundle });
+      await jsonWithScopedSetup(req, res, dealId, 400, {
+        message: error,
+        distributionSetup: bundle,
+      });
       return;
     }
 
@@ -275,7 +318,7 @@ export async function putDealDistributionSetup(req: Request, res: Response) {
     if (completeBody != null) {
       const completeInput = parseCompleteInput(completeBody);
       if (!completeInput) {
-        res.status(400).json({
+        await jsonWithScopedSetup(req, res, dealId, 400, {
           message:
             "Invalid complete payload. Provide source (operating|capital|fee) and amount.",
           distributionSetup: bundle,
@@ -287,20 +330,22 @@ export async function putDealDistributionSetup(req: Request, res: Response) {
         input: completeInput,
       });
       if (completed.error) {
-        res.status(400).json({
+        await jsonWithScopedSetup(req, res, dealId, 400, {
           message: completed.error,
           distributionSetup: completed.bundle,
         });
         return;
       }
-      res.json({
+      await jsonWithScopedSetup(req, res, dealId, 200, {
         distributionSetup: completed.bundle,
         record: completed.record,
       });
       return;
     }
 
-    res.json({ distributionSetup: bundle });
+    await jsonWithScopedSetup(req, res, dealId, 200, {
+      distributionSetup: bundle,
+    });
   } catch (err) {
     console.error("putDealDistributionSetup", err);
     res.status(500).json({ message: "Failed to save distribution setup" });
@@ -331,6 +376,17 @@ function parseInvestorPayments(raw: unknown): InvestorPaymentLineInput[] {
       percentOfClass:
         Number(str(o.percentOfClass ?? o.percent_of_class).replace(/[^0-9.-]/g, "")) ||
         0,
+      ...(str(o.percentOfDeal ?? o.percent_of_deal) !== ""
+        ? {
+            percentOfDeal:
+              Number(
+                str(o.percentOfDeal ?? o.percent_of_deal).replace(
+                  /[^0-9.-]/g,
+                  "",
+                ),
+              ) || 0,
+          }
+        : {}),
       payment,
     });
   }
@@ -578,10 +634,16 @@ export async function postDealDistributionComplete(
       input,
     });
     if (error) {
-      res.status(400).json({ message: error, distributionSetup: bundle });
+      await jsonWithScopedSetup(req, res, dealId, 400, {
+        message: error,
+        distributionSetup: bundle,
+      });
       return;
     }
-    res.status(201).json({ distributionSetup: bundle, record });
+    await jsonWithScopedSetup(req, res, dealId, 201, {
+      distributionSetup: bundle,
+      record,
+    });
   } catch (err) {
     console.error("postDealDistributionComplete", err);
     res.status(500).json({ message: "Failed to complete distribution" });
@@ -590,7 +652,7 @@ export async function postDealDistributionComplete(
 
 /**
  * PATCH /deals/:dealId/distributions/:distributionId/investor-percent
- * Body: { investorId, percentOfClass? } and/or { payment? } — co-dependent.
+ * Body: { investorId, percentOfClass? } and/or { percentOfDeal? } and/or { payment? }.
  */
 export async function patchDealDistributionInvestorPercent(
   req: Request,
@@ -616,12 +678,17 @@ export async function patchDealDistributionInvestorPercent(
     const b = asRecord(req.body);
     const investorId = str(b.investorId ?? b.investor_id);
     const pctRaw = b.percentOfClass ?? b.percent_of_class;
+    const dealPctRaw = b.percentOfDeal ?? b.percent_of_deal;
     const payRaw = b.payment;
     const reason = str(b.reason);
     const hasPct =
       pctRaw !== undefined &&
       pctRaw !== null &&
       String(pctRaw).trim() !== "";
+    const hasDealPct =
+      dealPctRaw !== undefined &&
+      dealPctRaw !== null &&
+      String(dealPctRaw).trim() !== "";
     const hasPay =
       payRaw !== undefined &&
       payRaw !== null &&
@@ -631,6 +698,11 @@ export async function patchDealDistributionInvestorPercent(
         ? pctRaw
         : Number(String(pctRaw ?? "").replace(/[^0-9.-]/g, ""))
       : undefined;
+    const percentOfDeal = hasDealPct
+      ? typeof dealPctRaw === "number"
+        ? dealPctRaw
+        : Number(String(dealPctRaw ?? "").replace(/[^0-9.-]/g, ""))
+      : undefined;
     const payment = hasPay
       ? typeof payRaw === "number"
         ? payRaw
@@ -638,12 +710,23 @@ export async function patchDealDistributionInvestorPercent(
       : undefined;
     if (
       !investorId ||
-      (!Number.isFinite(percentOfClass) && !Number.isFinite(payment))
+      (!Number.isFinite(percentOfClass) &&
+        !Number.isFinite(percentOfDeal) &&
+        !Number.isFinite(payment))
     ) {
       res.status(400).json({
         message:
-          "Provide investorId and percentOfClass (0–100) and/or payment.",
+          "Provide investorId and percentOfClass (0–100), percentOfDeal (0–100), and/or payment.",
       });
+      return;
+    }
+    const mayEdit = await coSponsorMayAccessInvestorPayment({
+      dealId,
+      viewerUserId: user.id,
+      investorId,
+    });
+    if (!mayEdit) {
+      res.status(404).json({ message: "Investor payment line not found." });
       return;
     }
     const { bundle, error } = await updatePriorDistributionInvestorPercent({
@@ -655,13 +738,21 @@ export async function patchDealDistributionInvestorPercent(
       ...(Number.isFinite(percentOfClass)
         ? { percentOfClass: percentOfClass as number }
         : {}),
+      ...(Number.isFinite(percentOfDeal)
+        ? { percentOfDeal: percentOfDeal as number }
+        : {}),
       ...(Number.isFinite(payment) ? { payment: payment as number } : {}),
     });
     if (error) {
-      res.status(400).json({ message: error, distributionSetup: bundle });
+      await jsonWithScopedSetup(req, res, dealId, 400, {
+        message: error,
+        distributionSetup: bundle,
+      });
       return;
     }
-    res.json({ distributionSetup: bundle });
+    await jsonWithScopedSetup(req, res, dealId, 200, {
+      distributionSetup: bundle,
+    });
   } catch (err) {
     console.error("patchDealDistributionInvestorPercent", err);
     res.status(500).json({ message: "Failed to update investor percent" });
@@ -705,13 +796,21 @@ export async function deleteDealPriorDistribution(
       reason,
     });
     if (error) {
-      res.status(error === "Distribution not found" ? 404 : 400).json({
-        message: error,
-        distributionSetup: bundle,
-      });
+      await jsonWithScopedSetup(
+        req,
+        res,
+        dealId,
+        error === "Distribution not found" ? 404 : 400,
+        {
+          message: error,
+          distributionSetup: bundle,
+        },
+      );
       return;
     }
-    res.json({ distributionSetup: bundle });
+    await jsonWithScopedSetup(req, res, dealId, 200, {
+      distributionSetup: bundle,
+    });
   } catch (err) {
     console.error("deleteDealPriorDistribution", err);
     res.status(500).json({ message: "Failed to delete distribution" });
@@ -766,10 +865,15 @@ export async function putDealPriorDistributions(req: Request, res: Response) {
       priorDistributions: next,
     });
     if (error) {
-      res.status(400).json({ message: error, distributionSetup: bundle });
+      await jsonWithScopedSetup(req, res, dealId, 400, {
+        message: error,
+        distributionSetup: bundle,
+      });
       return;
     }
-    res.json({ distributionSetup: bundle });
+    await jsonWithScopedSetup(req, res, dealId, 200, {
+      distributionSetup: bundle,
+    });
   } catch (err) {
     console.error("putDealPriorDistributions", err);
     res.status(500).json({ message: "Failed to update prior distributions" });

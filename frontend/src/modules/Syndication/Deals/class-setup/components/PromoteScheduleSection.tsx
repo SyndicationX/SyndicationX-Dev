@@ -1,4 +1,5 @@
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
+import { TableHScrollShell } from "../../../../../common/components/data-table/TableHScrollShell"
 import type {
   ClassSetupClass,
   ClassSetupPromoteSchedule,
@@ -179,6 +180,7 @@ export function PromoteScheduleSection({
           </p>
         ) : (
           <div className="cs_matrix_wrap">
+            <TableHScrollShell ariaLabel="Promote schedule columns">
             <table className="cs_matrix_table">
               <thead>
                 <tr>
@@ -297,6 +299,7 @@ export function PromoteScheduleSection({
                 </tr>
               </tfoot>
             </table>
+            </TableHScrollShell>
           </div>
         )}
       </div>

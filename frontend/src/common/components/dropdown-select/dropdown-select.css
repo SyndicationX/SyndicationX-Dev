@@ -26,7 +26,8 @@
   text-align: left;
   color: var(--portal-text, #282828);
   /* color: gray; */
-  background: var(--portal-surface, #fff);
+  background-color: var(--portal-surface, #fff);
+  background-image: none;
   border: 1px solid var(--portal-border, #e5e5e5);
   border-radius: var(--portal-pill-radius, 4px);
   cursor: pointer;
@@ -139,6 +140,7 @@
   flex-shrink: 0;
   padding: 0.35em 0.5em 0.45em;
   border-bottom: 1px solid var(--portal-border, #e5e5e5);
+  margin-top: 10px;
   margin-bottom: 0.15em;
   position: sticky;
   top: 0;
@@ -233,14 +235,26 @@
   /* outline-offset: 1px; */
 }
 
-.portal_dropdown_select_heading {
-  padding: 0.35em 0.65em 0.2em;
+/* Specificity must beat `.portal_dropdown_select_panel > li`, which zeroes padding. */
+.portal_dropdown_select_panel > li.portal_dropdown_select_heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 1em 0.5em 0.45em;
+  padding: 0 0.65em;
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--portal-text-muted, #64748b);
   list-style: none;
+}
+
+.portal_dropdown_select_heading_hint {
+  display: inline-flex;
+  align-items: center;
+  color: var(--portal-text-muted, #64748b);
+  cursor: help;
 }
 
 .portal_dropdown_select_option {

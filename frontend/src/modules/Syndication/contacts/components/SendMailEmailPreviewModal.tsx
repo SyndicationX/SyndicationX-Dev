@@ -19,7 +19,6 @@ import {
 import { toast } from "../../../../common/components/Toast"
 import {
   EMAIL_TEMPLATE_BODY_HTML_MAX,
-  EMAIL_TEMPLATE_BODY_MAX,
   EMAIL_TEMPLATE_SUBJECT_MAX,
   attachmentToObjectUrl,
   formatEmailAttachmentSize,
@@ -39,6 +38,8 @@ export type SendMailEmailPreviewPayload = {
   bodyHtml: string
   toEmails: string[]
   ccEmails: string[]
+  /** When set, investors are shown as BCC (addresses hidden from other recipients). */
+  bccEmails?: string[]
   attachment: EmailTemplateAttachmentStored | null
   /** When true, opens with the inline template editor (pencil on send mail). */
   startInEditMode?: boolean
@@ -77,7 +78,6 @@ export function SendMailEmailPreviewModal({
   const [editing, setEditing] = useState(false)
   const [draftSubject, setDraftSubject] = useState("")
   const [saveBusy, setSaveBusy] = useState(false)
-  const [bodyPlainLen, setBodyPlainLen] = useState(0)
 
   const editorRef = useRef<HTMLDivElement>(null)
   const quillRef = useRef<Quill | null>(null)
@@ -144,16 +144,9 @@ export function SendMailEmailPreviewModal({
       }
     }
 
-    const updatePlainLen = () => {
-      const t = quill.getText().replace(/\n$/, "").trim()
-      setBodyPlainLen(t.length)
-    }
-    updatePlainLen()
-    quill.on("text-change", updatePlainLen)
     quillRef.current = quill
 
     return () => {
-      quill.off("text-change", updatePlainLen)
       quillRef.current = null
       removeQuillSnowArtifacts(editorRef.current)
     }
@@ -182,14 +175,6 @@ export function SendMailEmailPreviewModal({
     const quill = quillRef.current
     if (!quill) {
       toast.error("Editor not ready", "Please wait a moment and try again.")
-      return
-    }
-    const plain = quill.getText().replace(/\n$/, "").trim()
-    if (plain.length > EMAIL_TEMPLATE_BODY_MAX) {
-      toast.error(
-        "Body too long",
-        `Use at most ${EMAIL_TEMPLATE_BODY_MAX} characters of text.`,
-      )
       return
     }
     let bodyHtml = quill.root.innerHTML
@@ -230,6 +215,8 @@ export function SendMailEmailPreviewModal({
 
   const toLine = joinRecipients(preview.toEmails)
   const ccLine = joinRecipients(preview.ccEmails)
+  const bccLine =
+    preview.bccEmails != null ? joinRecipients(preview.bccEmails) : null
 
   return (
     <div
@@ -294,9 +281,6 @@ export function SendMailEmailPreviewModal({
                   onChange={(e) => setDraftSubject(e.target.value)}
                   autoComplete="off"
                 />
-                <p className="email_preview_body_len_hint" aria-live="polite">
-                  Body text: {bodyPlainLen} / {EMAIL_TEMPLATE_BODY_MAX}
-                </p>
                 <div
                   ref={editorRef}
                   className="email_preview_quill_host"
@@ -317,6 +301,12 @@ export function SendMailEmailPreviewModal({
                     <dt>CC</dt>
                     <dd>{ccLine}</dd>
                   </div>
+                  {bccLine != null ? (
+                    <div className="email_preview_dl_row">
+                      <dt>BCC</dt>
+                      <dd>{bccLine}</dd>
+                    </div>
+                  ) : null}
                 </dl>
                 <div className="email_preview_message_card">
                   {preview.bodyHtml?.trim() ? (

@@ -8,6 +8,9 @@
 
 export const SX_EMAIL_PRIMARY = "#00477a";
 
+/** Visible hyperlink / CTA color (Gmail / Outlook friendly). */
+export const SX_EMAIL_LINK = "#1a73e8";
+
 /** Primary action button */
 export const SX_EMAIL_BUTTON_STYLE = `
   background-color:${SX_EMAIL_PRIMARY};
@@ -122,11 +125,13 @@ export function buildSyndicationXEmailSignatureHtml(
     ? `tel:${escapeAttrUrl(v.senderPhone.replace(/[^\d+]/g, ""))}`
     : "";
 
+  const signatureLinkStyle =
+    "color:#1a73e8 !important;text-decoration:underline;font-size:14px;line-height:1.45;font-family:Arial,Helvetica,sans-serif;";
   const emailRow = email
-    ? `<a href="${emailHref}" style="color:#007AFF;text-decoration:underline;font-size:14px;line-height:1.45;font-family:Arial,Helvetica,sans-serif;">${email}</a><br />`
+    ? `<a href="${emailHref}" style="${signatureLinkStyle}"><span style="color:#1a73e8 !important;text-decoration:underline;"><font color="#1a73e8">${email}</font></span></a><br />`
     : "";
   const phoneRow = phone
-    ? `<a href="${phoneHref}" style="color:#007AFF;text-decoration:underline;font-size:14px;line-height:1.45;font-family:Arial,Helvetica,sans-serif;">${phone}</a>`
+    ? `<a href="${phoneHref}" style="${signatureLinkStyle}"><span style="color:#1a73e8 !important;text-decoration:underline;"><font color="#1a73e8">${phone}</font></span></a>`
     : "";
 
   const logoCell = src

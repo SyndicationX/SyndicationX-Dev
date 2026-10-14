@@ -3,6 +3,7 @@ import {
   Ban,
   Building2,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Download,
   Eye,
@@ -93,6 +94,8 @@ import { buildMembersCsv, downloadMembersCsv, exportAuditLinesForMembers } from 
 import { notifyMembersExportAudit } from "../usermanagement/membersExportNotifyApi"
 import { ExportMembersModal } from "../usermanagement/ExportMembersModal"
 import { buildTableExportFilename } from "../../../common/utils/tableExportFilename"
+import { fetchMemberInviteeContacts } from "../contacts/api/contactsApi"
+import type { ContactRow } from "../contacts/types/contact.types"
 import type { CustomerCompanyOutletContext } from "./CustomerCompanyLayout"
 import "../Deals/deal-investors-tab.css"
 import "../Deals/deals-list.css"
@@ -126,6 +129,201 @@ function rowStableId(row: Record<string, unknown>, index: number): string {
 function rowSelectionId(row: Record<string, unknown>): string {
   const id = row.id ?? row.user_id
   return id != null ? String(id).trim() : ""
+}
+
+function memberNameKeys(row: Record<string, unknown>): Set<string> {
+  const keys = [
+    memberUserCellPrimaryLabel(row),
+    rowDisplayName(row),
+    formatMemberUsername(row.username),
+    displayEmail(row.email),
+    String(row.email ?? ""),
+  ]
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value && value !== "—" && value !== "n/a")
+  return new Set(keys)
+}
+
+function contactDisplayName(row: ContactRow): string {
+  const name = [row.firstName, row.lastName]
+    .map((part) => String(part ?? "").trim())
+    .filter((part) => part && part !== "—")
+    .join(" ")
+  return name || displayEmail(row.email) || "—"
+}
+
+function contactStatusLabel(row: ContactRow): string {
+  return row.status === "suspended" ? "Archived" : "Active"
+}
+
+function platformVisibleBadge(visible: boolean) {
+  return (
+    <span
+      className={`contacts_platform_visible_badge contacts_platform_visible_badge--${
+        visible ? "yes" : "no"
+      }`}
+    >
+      {visible ? "Yes" : "No"}
+    </span>
+  )
+}
+
+function initialsFromContact(row: ContactRow): string {
+  const first = String(row.firstName ?? "").trim()
+  const last = String(row.lastName ?? "").trim()
+  if (first && last) return (first[0] + last[0]).toUpperCase()
+  if (first.length >= 2) return first.slice(0, 2).toUpperCase()
+  const email = String(row.email ?? "").trim()
+  if (email.length >= 2) return email.slice(0, 2).toUpperCase()
+  return "?"
+}
+
+/** Same table presentation as the company Contacts tab. */
+function MemberInvitedContactsTable({ contacts }: { contacts: ContactRow[] }) {
+  const columns: DataTableColumn<ContactRow>[] = useMemo(
+    () => [
+      {
+        id: "name",
+        header: "Name",
+        colWidth: "16rem",
+        sortValue: (row) => contactDisplayName(row).toLowerCase(),
+        tdClassName: "um_td_user",
+        cell: (row) => {
+          const rawEmail = String(row.email ?? "").trim()
+          const emailShown = displayEmail(row.email)
+          const primary = contactDisplayName(row)
+          return (
+            <div className="um_user_cell">
+              <div className="um_user_avatar_ring" aria-hidden>
+                <span className="um_user_initials">{initialsFromContact(row)}</span>
+              </div>
+              <div className="um_user_meta">
+                <span
+                  className={`um_user_meta_username${
+                    primary === "—" ? " um_user_meta_username--placeholder" : ""
+                  }`}
+                >
+                  {primary}
+                </span>
+                {rawEmail && emailShown !== "—" ? (
+                  <span className="um_user_meta_email">{emailShown}</span>
+                ) : (
+                  <span className="um_user_meta_email um_status_muted">—</span>
+                )}
+              </div>
+            </div>
+          )
+        },
+      },
+      {
+        id: "phone",
+        header: "Phone",
+        colWidth: "9rem",
+        sortValue: (row) => formatUsPhoneStoredForUi(row.phone),
+        cell: (row) => formatUsPhoneStoredForUi(row.phone) || "—",
+      },
+      {
+        id: "owner",
+        header: "Owner",
+        colWidth: "12rem",
+        sortValue: (row) => (row.owners ?? []).join(", ").toLowerCase(),
+        tdClassName: "cp_company_deal_meta_td",
+        cell: (row) => {
+          const owners = (row.owners ?? [])
+            .map((name) => name.trim())
+            .filter(Boolean)
+          return (
+            <span className="cp_company_cell_muted">
+              {owners.length > 0 ? owners.join(", ") : "—"}
+            </span>
+          )
+        },
+      },
+      {
+        id: "invitedBy",
+        header: "Invited by",
+        colWidth: "12rem",
+        sortValue: (row) => (row.invitedByDisplayName ?? "").toLowerCase(),
+        tdClassName: "cp_company_deal_meta_td",
+        cell: (row) => (
+          <span className="cp_company_cell_muted">
+            {row.invitedByDisplayName?.trim() || "—"}
+          </span>
+        ),
+      },
+      {
+        id: "visibleToUsers",
+        header: "Visible on platform",
+        colWidth: "9rem",
+        align: "center",
+        sortValue: (row) => (row.visibleToUsers === true ? 1 : 0),
+        cell: (row) => platformVisibleBadge(row.visibleToUsers === true),
+      },
+      {
+        id: "status",
+        header: "Status",
+        colWidth: "7rem",
+        sortValue: (row) => contactStatusLabel(row).toLowerCase(),
+        cell: (row) => contactStatusLabel(row),
+      },
+    ],
+    [],
+  )
+
+  return (
+    <div className="cp_company_member_contacts">
+      <DataTable
+        visualVariant="members"
+        stickyFirstColumn={false}
+        membersTableClassName="um_table_members deal_inv_table cp_company_deals_table"
+        initialSort={{ columnId: "name", direction: "asc" }}
+        columns={columns}
+        rows={contacts}
+        getRowKey={(row, i) => row.id || `invited-contact-${i}`}
+        emptyLabel="No contacts invited by this user."
+      />
+    </div>
+  )
+}
+
+/** Contacts who signed up through this company user's invite link, including a deal or offering link. */
+function contactsForCompanyUser(
+  contacts: ContactRow[],
+  row: Record<string, unknown>,
+): ContactRow[] {
+  const memberId = rowSelectionId(row).trim().toLowerCase()
+  const names = memberNameKeys(row)
+  const matched = contacts.filter((contact) => {
+    const invitedByUserId = String(contact.invitedByUserId ?? "")
+      .trim()
+      .toLowerCase()
+    const createdByUserId = String(contact.createdByUserId ?? "")
+      .trim()
+      .toLowerCase()
+    if (memberId && invitedByUserId === memberId) return true
+    if (
+      memberId &&
+      !invitedByUserId &&
+      contact.isPortalUser === true &&
+      createdByUserId === memberId
+    ) {
+      return true
+    }
+    const invitedBy = String(contact.invitedByDisplayName ?? "")
+      .trim()
+      .toLowerCase()
+    return invitedBy !== "" && names.has(invitedBy)
+  })
+  const seen = new Set<string>()
+  const unique: ContactRow[] = []
+  for (const contact of matched) {
+    const email = String(contact.email ?? "").trim().toLowerCase()
+    const key = email.includes("@") ? email : String(contact.id ?? "").trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    unique.push(contact)
+  }
+  return unique
 }
 
 function memberRowMatchesSearch(
@@ -200,6 +398,8 @@ export default function CompanyMembersPage() {
   }, [token])
 
   const [members, setMembers] = useState<Record<string, unknown>[]>([])
+  const [companyContacts, setCompanyContacts] = useState<ContactRow[]>([])
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [page, setPage] = useState(1)
@@ -327,15 +527,20 @@ export default function CompanyMembersPage() {
     setLoading(true)
     setError("")
     setMembers([])
+    setCompanyContacts([])
+    setExpandedMemberId(null)
     closeActionMenu()
     try {
-      const userRes = await fetch(
+      const [userRes, contactsResult] = await Promise.all([
+        fetch(
         `${apiV1}/users?organizationId=${encodeURIComponent(id)}`,
         {
           headers: { Authorization: `Bearer ${token}` },
           credentials: "include",
         },
-      )
+      ),
+        fetchMemberInviteeContacts(id),
+      ])
 
       const userData = (await userRes.json().catch(() => ({}))) as {
         users?: unknown
@@ -355,6 +560,12 @@ export default function CompanyMembersPage() {
             isOrgStaffPortalRole(x.role),
         ),
       )
+      if (!contactsResult.ok) {
+        setError(contactsResult.error)
+        setCompanyContacts([])
+      } else {
+        setCompanyContacts(contactsResult.contacts)
+      }
     } catch {
       setError("Unable to connect.")
     } finally {
@@ -861,6 +1072,7 @@ export default function CompanyMembersPage() {
         ccRaw: sendMailCc,
         templateSubject: template.subject,
         templateBodyHtml: template.body,
+        templateAttachment: template.attachment,
         senderEmail,
       })
       if (!result.ok) {
@@ -965,12 +1177,15 @@ export default function CompanyMembersPage() {
           return `${name} ${e}`.toLowerCase()
         },
         tdClassName: "um_td_user",
-        cell: (row) => {
+        cell: (row, rowIndex = 0) => {
           const rawEmail = String(row.email ?? "").trim()
           const emailShown = displayEmail(row.email)
           const displayName = memberUserCellPrimaryLabel(row)
           const namePlaceholder =
             displayName === "—" ? " um_user_meta_username--placeholder" : ""
+          const rowKey = rowStableId(row, rowIndex)
+          const open = expandedMemberId === rowKey
+          const contactCount = contactsForCompanyUser(companyContacts, row).length
           return (
             <div className="um_user_cell">
               <div className="um_user_avatar_ring" aria-hidden>
@@ -979,11 +1194,32 @@ export default function CompanyMembersPage() {
                 </span>
               </div>
               <div className="um_user_meta">
-                <span
-                  className={`um_user_meta_username${namePlaceholder}`}
+                <button
+                  type="button"
+                  className={`cp_company_member_contacts_toggle${
+                    open ? " cp_company_member_contacts_toggle--open" : ""
+                  }`}
+                  aria-expanded={open}
+                  aria-label={
+                    open
+                      ? `Hide contacts for ${displayName}`
+                      : `Show contacts for ${displayName}`
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setExpandedMemberId((current) =>
+                      current === rowKey ? null : rowKey,
+                    )
+                  }}
                 >
-                  {displayName}
-                </span>
+                  <span className={`um_user_meta_username${namePlaceholder}`}>
+                    {displayName}
+                  </span>
+                  <ChevronDown size={16} aria-hidden />
+                  <span className="cp_company_member_contacts_count">
+                    {contactCount}
+                  </span>
+                </button>
                 {isDisplayableEmail(rawEmail) ? (
                   <a
                     href={`mailto:${encodeURIComponent(rawEmail)}`}
@@ -1100,6 +1336,8 @@ export default function CompanyMembersPage() {
     ],
     [
       actionMenuRowId,
+      companyContacts,
+      expandedMemberId,
       allMembersSelected,
       toggleSelectAllMembers,
       loading,
@@ -1228,6 +1466,16 @@ export default function CompanyMembersPage() {
               pagination={
                 !loading && filteredMembers.length > 0 ? pagination : undefined
               }
+              getRowClassName={(row, i) =>
+                expandedMemberId === rowStableId(row, i)
+                  ? "cp_company_member_row_expanded"
+                  : ""
+              }
+              renderExpandedContent={(row, i) => {
+                if (expandedMemberId !== rowStableId(row, i)) return null
+                const owned = contactsForCompanyUser(companyContacts, row)
+                return <MemberInvitedContactsTable contacts={owned} />
+              }}
             />
           </div>
         ) : null}

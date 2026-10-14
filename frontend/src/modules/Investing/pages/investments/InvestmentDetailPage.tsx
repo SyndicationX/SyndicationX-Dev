@@ -41,6 +41,11 @@ import "@/modules/Syndication/usermanagement/user_management.css"
 import "@/modules/Syndication/Deals/deals-list.css"
 import "@/modules/Syndication/contacts/contacts.css"
 import "@/modules/Investing/pages/profiles/investing-profiles.css"
+import { DealSaasPaywallModal } from "@/modules/Syndication/Deals/components/DealSaasPaywallModal"
+import {
+  isDealSaasPaymentRequiredError,
+  type DealSaasPaywallDeal,
+} from "@/modules/Syndication/Deals/utils/dealSaasAccess"
 import { loadInvestmentDetailFromDeal } from "./investmentsListFromDeals"
 import {
   getInvestmentDetail,
@@ -58,6 +63,8 @@ import { InvestmentDetailDocumentsTab } from "./InvestmentDetailDocumentsTab"
 import { InvestmentDetailDistributionsTab } from "./InvestmentDetailDistributionsTab"
 import { InvestmentProfileBreakdownRowActions } from "./InvestmentProfileBreakdownRowActions"
 import { resolveInvestmentDealId } from "./utils/resolveInvestmentDealId"
+import { countVisibleDocumentsForInvestmentDetail } from "./utils/countInvestmentDetailDocuments"
+import { bindInvestmentOfferingDocumentsAutoRefresh } from "./utils/bindInvestmentOfferingDocumentsAutoRefresh"
 import "./investment-detail.css"
 
 function formatInvDetailUsd(n: number): string {
@@ -616,6 +623,7 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
   }
   const profileLineCount = d.investedAsBreakdown?.length ?? 0
   const dealId = resolveInvestmentDealId(d)
+  const [documentsCount, setDocumentsCount] = useState(0)
   const [dealInvestorRows, setDealInvestorRows] = useState<
     import("@/modules/Syndication/Deals/types/deal-investors.types").DealInvestorRow[]
   >([])
@@ -634,6 +642,45 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
       cancelled = true
     }
   }, [dealId])
+
+  useEffect(() => {
+    const id = dealId?.trim() ?? ""
+    if (!id) {
+      setDocumentsCount(0)
+      return
+    }
+    let cancelled = false
+    const loadCount = () => {
+      void countVisibleDocumentsForInvestmentDetail(id).then((n) => {
+        if (!cancelled) setDocumentsCount(n)
+      })
+    }
+    loadCount()
+    const unbind = bindInvestmentOfferingDocumentsAutoRefresh(id, loadCount)
+    return () => {
+      cancelled = true
+      unbind()
+    }
+  }, [dealId])
+
+  const openAddInvestmentForLine = useCallback(
+    (line: InvestmentBreakdownLine) => {
+      const id = dealId?.trim()
+      const profileId = line.userInvestorProfileId?.trim()
+      if (!id || !profileId) return
+      switchToInvesting()
+      navigate(dealInvestNowPath(id), {
+        state: {
+          returnTo: `/investing/investments/${encodeURIComponent(d.id)}?tab=profile`,
+          mode: "fresh",
+          addCommitment: true,
+          userInvestorProfileId: profileId,
+          profileId: line.commitmentProfileId,
+        } satisfies InvestNowLocationState,
+      })
+    },
+    [dealId, d.id, navigate, switchToInvesting],
+  )
 
   const openResumeForLine = useCallback(
     (line: InvestmentBreakdownLine) => {
@@ -685,12 +732,18 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
                     profileId: line.commitmentProfileId,
                   })
                 : undefined)
+            const canAddInvestment = Boolean(line.userInvestorProfileId?.trim())
             const canResume =
               Boolean(row && em && isInvestNowDraftInvestorRow(row, em))
             return (
               <InvestmentProfileBreakdownRowActions
                 profileLabel={line.profileName?.trim() || "Profile"}
-                disabled={!canResume}
+                disabled={!canAddInvestment && !canResume}
+                onAddInvestment={
+                  canAddInvestment
+                    ? () => openAddInvestmentForLine(line)
+                    : undefined
+                }
                 onResumeInvesting={
                   canResume ? () => openResumeForLine(line) : undefined
                 }
@@ -699,7 +752,7 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
           },
         },
       ]
-    }, [profileBreakdownColumns, dealInvestorRows, openResumeForLine])
+    }, [profileBreakdownColumns, dealInvestorRows, openAddInvestmentForLine, openResumeForLine])
 
   return (
     <>
@@ -775,6 +828,9 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
               <span className="deals_tabs_label um_segmented_tab_label">
                 Documents
               </span>
+              {documentsCount > 0 ? (
+                <span className="deals_tabs_count">({documentsCount})</span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -1015,7 +1071,9 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
                     membersTableClassName="um_table_members deal_inv_table"
                     columns={profileBreakdownColumnsWithActions}
                     rows={filteredProfileBreakdown}
-                    getRowKey={(_r, i) => `inv-breakdown-${i}`}
+                    getRowKey={(r, i) =>
+                      r.investmentRowId?.trim() || `inv-breakdown-${i}`
+                    }
                     emptyLabel={
                       profileBreakdownQuery.trim()
                         ? "No lines match this filter."
@@ -1080,6 +1138,7 @@ function DetailForm({ d }: { d: InvestmentDetailRecord }) {
 }
 
 export default function InvestmentDetailPage() {
+  const navigate = useNavigate()
   const { investmentId = "" } = useParams<{ investmentId: string }>()
   const decodedId = useMemo(
     () => decodeURIComponent(investmentId.trim()),
@@ -1093,40 +1152,65 @@ export default function InvestmentDetailPage() {
     undefined,
   )
   const [loadPending, setLoadPending] = useState(false)
+  const [saasPaywallDeal, setSaasPaywallDeal] =
+    useState<DealSaasPaywallDeal | null>(null)
 
   useEffect(() => {
     if (!decodedId) {
       setFromApi(null)
+      setSaasPaywallDeal(null)
       return
     }
     // Always load server deal + investors for this investment so the Profile and investment
-    // table can list every book profile and amount (not only a single "Invested as" line
-    // from local/runtime storage when both exist).
+    // table can list every commitment (not only a single "Invested as" line from local storage).
     let cancelled = false
-    setLoadPending(true)
-    void (async () => {
-      try {
-        const d = await loadInvestmentDetailFromDeal(decodedId)
-        if (!cancelled) setFromApi(d ?? null)
-      } catch {
-        if (!cancelled) setFromApi(null)
-      } finally {
-        if (!cancelled) setLoadPending(false)
+    const load = (background: boolean) => {
+      if (!background) {
+        setLoadPending(true)
+        setSaasPaywallDeal(null)
       }
-    })()
+      void (async () => {
+        try {
+          const d = await loadInvestmentDetailFromDeal(decodedId)
+          if (!cancelled) setFromApi(d ?? null)
+        } catch (err) {
+          if (!cancelled) {
+            if (isDealSaasPaymentRequiredError(err)) {
+              setSaasPaywallDeal({
+                ...err.payload,
+                id: err.payload.id || decodedId,
+              })
+            }
+            if (!background) setFromApi(null)
+          }
+        } finally {
+          if (!cancelled && !background) setLoadPending(false)
+        }
+      })()
+    }
+    load(false)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load(true)
+    }
+    const onFocus = () => load(true)
+    window.addEventListener("focus", onFocus)
+    document.addEventListener("visibilitychange", onVisible)
     return () => {
       cancelled = true
+      window.removeEventListener("focus", onFocus)
+      document.removeEventListener("visibilitychange", onVisible)
     }
   }, [decodedId])
 
   const detail = useMemo((): InvestmentDetailRecord | null => {
+    if (saasPaywallDeal) return null
     if (fromApi) {
       return fromLocal
         ? mergeServerInvestmentDetailWithLocal(fromApi, fromLocal)
         : fromApi
     }
     return fromLocal ?? null
-  }, [fromApi, fromLocal])
+  }, [fromApi, fromLocal, saasPaywallDeal])
 
   useEffect(() => {
     if (loadPending && !fromLocal) {
@@ -1160,6 +1244,27 @@ export default function InvestmentDetailPage() {
         <p className="deals_list_not_found" role="status">
           Loading investment…
         </p>
+      </div>
+    )
+  }
+
+  if (saasPaywallDeal) {
+    return (
+      <div className="um_page deals_list_page deals_detail_page investment_detail_page">
+        <p className="deals_list_not_found">
+          {saasPaywallDeal.dealName.trim()
+            ? `Contact your sponsor for access to “${saasPaywallDeal.dealName.trim()}”.`
+            : "Contact your sponsor for access to this deal."}{" "}
+          <Link to="/investing/investments" className="deals_list_inline_back">
+            <ArrowLeft size={18} strokeWidth={2} aria-hidden />
+            Back to investments
+          </Link>
+        </p>
+        <DealSaasPaywallModal
+          deal={saasPaywallDeal}
+          investorFacing
+          onClose={() => navigate("/investing/investments")}
+        />
       </div>
     )
   }

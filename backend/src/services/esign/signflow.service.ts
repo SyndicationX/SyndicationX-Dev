@@ -698,6 +698,38 @@ export function enrichSignFlowEmbedSignUrl(
   }
 }
 
+/**
+ * Template page + page anchor for a field read back from a SignFlow document.
+ *
+ * SignFlow echoes the `templatePage`/`pageHash` annotations we patched earlier,
+ * so they still describe the old page after the sponsor drags a field to another
+ * page in the embed. The live `page` is the only trustworthy placement; a moved
+ * field's anchor hash is dropped so it gets re-derived from the current page.
+ */
+export function resolveSignFlowFieldTemplateAnchor(field: {
+  page?: number;
+  templatePage?: number;
+  pageHash?: string;
+}): { templatePage: number; pageHash: string | undefined } {
+  const livePage = Math.floor(Number(field.page));
+  const storedPage = Math.floor(Number(field.templatePage));
+  const templatePage =
+    Number.isFinite(livePage) && livePage >= 1
+      ? livePage
+      : Number.isFinite(storedPage) && storedPage >= 1
+        ? storedPage
+        : 1;
+
+  const moved =
+    Number.isFinite(storedPage) && storedPage >= 1 && storedPage !== templatePage;
+  const pageHash = field.pageHash?.trim();
+
+  return {
+    templatePage,
+    pageHash: pageHash && !moved ? pageHash : undefined,
+  };
+}
+
 /** Shifts page numbers when answer pages are prepended; x/y/width/height stay as placed. */
 export function shiftSignFlowFieldsPageOffset(
   fields: SignFlowField[],
@@ -1018,15 +1050,8 @@ export function mapSignFlowTemplateFieldsForInvestor(
       const profileType = profileTypes?.length
         ? undefined
         : (f.profileType as SignFlowProfileType | undefined);
-      const templatePage = Math.max(
-        1,
-        Math.floor(
-          signFlowFieldCoordinate(
-            f.templatePage ?? f.page,
-            1,
-          ),
-        ),
-      );
+      const { templatePage, pageHash } =
+        resolveSignFlowFieldTemplateAnchor(f);
       return {
         type: normalizeSignFlowFieldTypeForApi(String(f.type ?? "signature")),
         label: String(f.label ?? "Field"),
@@ -1036,7 +1061,7 @@ export function mapSignFlowTemplateFieldsForInvestor(
         height: Math.max(1, signFlowFieldCoordinate(f.height, 4)),
         page: templatePage,
         templatePage,
-        ...(f.pageHash?.trim() ? { pageHash: f.pageHash.trim() } : {}),
+        ...(pageHash ? { pageHash } : {}),
         ...(f.dataKey?.trim() ? { dataKey: f.dataKey.trim() } : {}),
         ...(f.value?.trim() ? { value: f.value.trim() } : {}),
         recipientId: investorRecipientId,
@@ -1099,15 +1124,8 @@ export function mapSignFlowTemplateFieldsForSponsor(
       return true;
     })
     .map((f) => {
-      const templatePage = Math.max(
-        1,
-        Math.floor(
-          signFlowFieldCoordinate(
-            f.templatePage ?? f.page,
-            1,
-          ),
-        ),
-      );
+      const { templatePage, pageHash } =
+        resolveSignFlowFieldTemplateAnchor(f);
       return {
         type: String(f.type ?? "signature"),
         label: String(f.label ?? "Field"),
@@ -1117,7 +1135,7 @@ export function mapSignFlowTemplateFieldsForSponsor(
         height: Math.max(1, signFlowFieldCoordinate(f.height, 4)),
         page: templatePage,
         templatePage,
-        ...(f.pageHash?.trim() ? { pageHash: f.pageHash.trim() } : {}),
+        ...(pageHash ? { pageHash } : {}),
         recipientId: sponsorRecipientId,
         required: f.required !== false,
       };

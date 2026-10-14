@@ -2,6 +2,7 @@ import { Bell, Inbox, Loader2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useNotifications } from "../hooks/useNotifications"
+import { formatCount } from "@/common/utils/formatCount"
 import type { PortalNotification } from "../types/notification.types"
 import { NotificationListItem } from "../components/NotificationListItem"
 import "@/modules/Syndication/usermanagement/user_management.css"
@@ -98,7 +99,7 @@ export function NotificationsPage() {
             onClick={() => setFilter("all")}
           >
             All
-            <span className="notifications_tab_count">{notifications.length}</span>
+            <span className="notifications_tab_count">{formatCount(notifications.length)}</span>
           </button>
           <button
             type="button"
@@ -112,7 +113,7 @@ export function NotificationsPage() {
             Unread
             {unreadCount > 0 ? (
               <span className="notifications_tab_count notifications_tab_count--accent">
-                {unreadCount}
+                {formatCount(unreadCount)}
               </span>
             ) : null}
           </button>

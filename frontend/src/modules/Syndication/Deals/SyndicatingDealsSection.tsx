@@ -35,7 +35,11 @@ import {
 import { fetchDistributionSetup } from "./distribution-setup/api/distributionSetupApi";
 import { sumPriorDistributionsAmount } from "./dealsDashboardMoney";
 import { DEALS_LIST_REFETCH_EVENT } from "./createDealFormDraftStorage";
-import { dateSortValue, formatDealListDateDisplay } from "./dealsListDisplay";
+import {
+  dateSortValue,
+  dealFieldsMatchSearch,
+  formatDealListDateDisplay,
+} from "./dealsListDisplay";
 import { filterDealListRowsVisibleToInvestors, filterDealListToViewerInvested } from "@/modules/Investing/utils/investingViewerDealScope";
 import {
   getDealStatusRules,
@@ -341,7 +345,7 @@ export function SyndicatingDealsSection({
       const bundles = await Promise.all(
         list.map(async (row) => {
           const [payload, classes, distSetup] = await Promise.all([
-            fetchDealInvestors(row.id),
+            fetchDealInvestors(row.id, { lpInvestorsOnly: true }),
             fetchDealInvestorClasses(row.id),
             fetchDistributionSetup(row.id).catch(() => null),
           ]);
@@ -413,7 +417,7 @@ export function SyndicatingDealsSection({
         const bundles = await Promise.all(
           list.map(async (row) => {
             const [payload, classes, distSetup] = await Promise.all([
-              fetchDealInvestors(row.id),
+              fetchDealInvestors(row.id, { lpInvestorsOnly: true }),
               fetchDealInvestorClasses(row.id),
               fetchDistributionSetup(row.id).catch(() => null),
             ]);
@@ -487,10 +491,16 @@ export function SyndicatingDealsSection({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [...deals];
-    return deals.filter(
-      (d) =>
-        (d.title ?? "").toLowerCase().includes(q) ||
-        (d.location && d.location.toLowerCase().includes(q)),
+    return deals.filter((d) =>
+      dealFieldsMatchSearch(
+        {
+          name: d.title,
+          location: d.location,
+          dealType: d.dealType,
+          secType: d.secTypeDisplay,
+        },
+        q,
+      ),
     );
   }, [query, deals]);
 

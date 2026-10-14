@@ -214,10 +214,21 @@ export function viewerCanUploadDealEsignTemplates(
   return role === "lead_sponsor" || role === "admin_sponsor"
 }
 
-/** Investors tab: approve fund — lead or admin sponsor only. */
+/**
+ * Deal profile (create/edit wizard, list “Edit Deal”): lead or admin sponsor,
+ * or a workspace viewer who is not a co-sponsor / LP on this deal.
+ * Co-sponsors cannot edit the deal.
+ */
+export function viewerCanEditDeal(role: ViewerDealMemberRole): boolean {
+  return role !== "co_sponsor" && role !== "lp_investor"
+}
+
+/** Investors tab: approve fund — lead, admin sponsor, or company / platform admin. */
 export function viewerCanApproveDealFund(
   role: ViewerDealMemberRole,
+  opts?: { isWorkspaceAdmin?: boolean },
 ): boolean {
+  if (opts?.isWorkspaceAdmin) return true
   return role === "lead_sponsor" || role === "admin_sponsor"
 }
 
@@ -249,30 +260,38 @@ export function filterDealInvestorRowsForCoSponsorViewer(
 }
 
 /**
- * Investors tab: co-sponsor rows are already limited to that viewer’s Sponsor-name
- * investors by the API; lead/admin get full roster with co-sponsor emails redacted.
+ * Investors tab: co-sponsor rows are limited to that viewer’s Sponsor-name
+ * investors by the API; lead/admin get the full roster with co-sponsor emails hidden.
  */
 export function scopeDealInvestorRowsForViewer(
   rows: DealInvestorRow[],
   viewerRole: ViewerDealMemberRole,
-  _sessionUserId: string,
+  sessionUserId: string,
 ): DealInvestorRow[] {
-  return redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(rows, viewerRole)
+  return redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
+    rows,
+    viewerRole,
+    sessionUserId,
+  )
 }
 
 /**
- * Lead / admin sponsors see the full roster; hide email on rows a co-sponsor added.
- * Uses API `addedByIsCoSponsorOnDeal` when present (matches backend redaction).
+ * Lead / admin see the full roster, but not emails on investors a co-sponsor added.
+ * If the viewer is that investor's sponsor, the email stays visible.
  */
 export function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
   rows: DealInvestorRow[],
   viewerRole: ViewerDealMemberRole,
+  sessionUserId?: string,
 ): DealInvestorRow[] {
   if (viewerRole !== "lead_sponsor" && viewerRole !== "admin_sponsor") {
     return rows
   }
+  const viewer = String(sessionUserId ?? "").trim().toLowerCase()
   return rows.map((row) => {
     if (row.addedByIsCoSponsorOnDeal !== true) return row
+    const addedBy = String(row.addedByUserId ?? "").trim().toLowerCase()
+    if (viewer && addedBy && addedBy === viewer) return row
     return { ...row, userEmail: EMAIL_UNAVAILABLE_LABEL }
   })
 }
@@ -280,7 +299,7 @@ export function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
 /** Which deal detail tab ids the viewer may open, based on roster role. */
 export function visibleDealDetailTabIds(
   role: ViewerDealMemberRole,
-  opts?: { isWorkspaceAdmin?: boolean },
+  opts?: { isWorkspaceAdmin?: boolean; isRoleLoading?: boolean },
 ): Set<string> {
   const all = new Set([
     "offering_details",
@@ -291,14 +310,24 @@ export function visibleDealDetailTabIds(
     "distributions",
     "deal_members",
   ])
+  // Keep the restricted tab hidden until the deal-specific roster role is known.
+  // Otherwise co-sponsors briefly see it while the members request is loading.
+  // Company / platform admins are known from the session, so they never wait.
+  if (opts?.isRoleLoading && !opts.isWorkspaceAdmin) {
+    const s = new Set(all)
+    s.delete("deal_members")
+    return s
+  }
+  // Deal-specific co-sponsor restrictions take precedence over workspace roles.
+  if (role === "co_sponsor") {
+    const s = new Set(all)
+    s.delete("deal_members")
+    return s
+  }
   // Company / platform admin keep Deal Members even if they are also an LP on the deal.
   if (opts?.isWorkspaceAdmin) return all
   if (role === null) return all
-  if (
-    role === "lead_sponsor" ||
-    role === "admin_sponsor" ||
-    role === "co_sponsor"
-  ) {
+  if (role === "lead_sponsor" || role === "admin_sponsor") {
     return all
   }
   if (role === "lp_investor") {

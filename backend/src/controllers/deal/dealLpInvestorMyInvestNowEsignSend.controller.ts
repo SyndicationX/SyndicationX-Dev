@@ -8,6 +8,7 @@ import { requestedOrganizationIdFromRequest } from "../../services/org/orgResolu
 import { getAddDealFormById } from "../../services/deal/dealForm.service.js";
 import { sendMyInvestNowEsignIfNeeded } from "../../services/deal/dealLpInvestNowMyEsignSend.service.js";
 import { evaluateLpInvestNowEligibility } from "../../services/deal/dealLpInvestNowEligibility.service.js";
+import { dealSaasLockHttpPayload } from "../../services/billing/dealBilling.service.js";
 import { resolveLpViewerEmailNorm } from "../../services/deal/dealLpViewerIdentity.service.js";
 
 function bodyString(v: unknown): string {
@@ -84,6 +85,13 @@ export async function postDealLpInvestorMyInvestNowEsignSend(
     }
 
     const dealRow = await getAddDealFormById(dealId.trim());
+    if (dealRow) {
+      const saasLock = await dealSaasLockHttpPayload(dealRow);
+      if (saasLock) {
+        res.status(402).json(saasLock);
+        return;
+      }
+    }
     const investEligibility = evaluateLpInvestNowEligibility(dealRow);
     if (!investEligibility.ok) {
       res.status(403).json({ message: investEligibility.message });

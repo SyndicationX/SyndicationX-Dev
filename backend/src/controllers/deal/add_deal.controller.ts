@@ -7,7 +7,16 @@ import {
 import { getValidJwtUser } from "../../middleware/jwtUser.js";
 import { db } from "../../database/db.js";
 import { users } from "../../schema/schema.js";
-import { isPlatformAdminRole } from "../../constants/roles.js";
+import {
+  isInvestorPortalRole,
+  isPlatformAdminRole,
+} from "../../constants/roles.js";
+import {
+  filterRowsBySearch,
+  paginateInMemory,
+  parsePageQuery,
+  sortRowsBy,
+} from "../../common/pagination.js";
 import type { AddDealFormRow } from "../../schema/deal.schema/add-deal-form.schema.js";
 import {
   assertDealIdReadableOrAssignedParticipant,
@@ -18,6 +27,7 @@ import {
   listDealsForViewerIncludingAssignedParticipation,
   filterDealsVisibleToInvestorParticipants,
   resolveDealViewerScope,
+  withCrossOrgColleagueSponsoredDeals,
   type DealViewerScope,
 } from "../../services/deal/dealAccess.service.js";
 import { filterDealIdsByContactOfferingVisibility } from "../../services/contact/contactOfferingVisibility.service.js";
@@ -37,7 +47,16 @@ import {
 import {
   isPortalUserSponsorOnDeal,
   listDealIdsWhereViewerIsLeadSponsor,
+  listDealIdsWhereViewerIsLeadOrAdminSponsor,
+  listDealIdsWhereViewerIsCoSponsor,
+  viewerIsDealSponsorOnAnyDeal,
+  viewerMayEditDealProfile,
 } from "../../services/deal/dealMemberScope.service.js";
+import {
+  mergeCoSponsorOfferingInvestorPreviewJson,
+  scopeOfferingInvestorPreviewJsonForViewer,
+} from "../../services/deal/dealDocumentCoSponsorVisibility.service.js";
+import { resolveCrossOrgColleagueSponsorForDeal } from "../../services/deal/crossOrgColleagueDeal.service.js";
 import { canInvestorAccessPublicOffering } from "../../constants/deal-lifecycle/index.js";
 import { isDealStageDraft } from "../../constants/deal-lifecycle/deal-stage.js";
 import {
@@ -60,6 +79,7 @@ import {
   type OfferingOverviewFieldErrors,
   updateDealOfferingGalleryPathsById,
   updateDealArchivedById,
+  updateDealStageById,
   sanitizeOfferingOverviewPatch,
   normalizeOverviewAssetIdsFromBody,
   parseStoredOfferingOverviewAssetIds,
@@ -69,7 +89,6 @@ import {
   type OfferingOverviewPatchInput,
   type CreateDealFormInput,
   type DealFormFieldErrors,
-  type DealMemoryUploadFile,
 } from "../../services/deal/dealForm.service.js";
 import { sanitizeDealAnnouncement } from "../../utils/sanitizeDealAnnouncement.js";
 import {
@@ -90,8 +109,11 @@ import {
   GalleryCoverUrlTooLargeError,
   sanitizeGalleryCoverImageUrl,
 } from "../../utils/sanitizeGalleryCoverImageUrl.js";
-import { requireDealMultipartFiles, optionalDealMultipartFiles } from "../../utils/dealMultipartUpload.util.js";
-import { validateOfferingDocumentUploadFiles } from "../../utils/uploadFileValidation.js";
+import {
+  requireDealDocumentMultipartFiles,
+  requireDealMultipartFiles,
+  optionalDealMultipartFiles,
+} from "../../utils/dealMultipartUpload.util.js";
 import { formatDdMmmYyyy } from "../../utils/formatDdMmmYyyy.js";
 import {
   encryptOfferingPreviewDealId,
@@ -103,6 +125,11 @@ import {
   mapDealInvestmentsToInvestorApi,
 } from "../../services/deal/dealInvestment.service.js";
 import { countDealLpInvestorsByDealIdsForViewer } from "../../services/deal/dealLpInvestor.service.js";
+import { mapWithConcurrency } from "../../common/mapWithConcurrency.js";
+import {
+  dealsListCache,
+  invalidateDealsListCache,
+} from "../../services/cache/listReadCache.js";
 import {
   listInvestingParticipantDealIdsForUser,
   mapLpInvestorRoleDisplayByDealIdForUserEmail,
@@ -111,14 +138,16 @@ import {
   listInvestorClassesByDealId,
   mapRowToJson as mapInvestorClassRowToJson,
 } from "../../services/deal/dealInvestorClass.service.js";
-import { enrichDealListRowForApi } from "../../services/deal/dealListRowEnrichment.service.js";
+import {
+  enrichDealListRowForApi,
+  mapDealListEnrichmentByDealId,
+} from "../../services/deal/dealListRowEnrichment.service.js";
 import {
   dealSaasBillingListFields,
   dealSaasPaymentRequiredPayload,
-  ensureDealSaasComplimentaryPeriod,
-  evaluateDealSaasWorkspaceAccess,
+  evaluateDealSaasWorkspaceAccessRefreshing,
+  mapDealRaiseAmountByDealIds,
 } from "../../services/billing/dealBilling.service.js";
-import { isInvestingPortalRequest } from "../../middleware/portalMode.middleware.js";
 
 function parseBoolField(
   v: unknown,
@@ -142,26 +171,35 @@ function organizationIdFromBody(b: Record<string, unknown>): string | null {
 }
 
 /**
- * Billable deals stay in the list. This month they remain viewable; from next
- * month unpaid MRR locks view/edit (Deal billing / Upgrade the plan to continue).
- * Returns true when the response has already been sent.
+ * Unpaid / past-due / expired MRR locks the deal for sponsors and investors.
+ * Returns true when the 402 response has already been sent.
  */
-function sendDealSaasLockIfNeeded(
+async function sendDealSaasLockIfNeeded(
   res: Response,
   row: AddDealFormRow,
-  scope: DealViewerScope,
-  opts?: { allowInvestingRead?: boolean },
-): boolean {
-  if (scope.isPlatformAdmin) return false;
-  if (opts?.allowInvestingRead && isInvestingPortalRequest()) return false;
-  if (!row.saasBillingStartsAt) {
-    void ensureDealSaasComplimentaryPeriod(row).catch((err) => {
-      console.warn("ensureDealSaasComplimentaryPeriod:", row.id, err);
-    });
+  scope?: DealViewerScope | null,
+): Promise<boolean> {
+  const evaluated = await evaluateDealSaasWorkspaceAccessRefreshing(row);
+  if (!evaluated.access.locked) return false;
+  const dealKey = String(evaluated.row.id ?? "").trim().toLowerCase();
+  let viewerIsLeadSponsor = false;
+  if (scope?.userId) {
+    try {
+      const leadIds = await listDealIdsWhereViewerIsLeadSponsor(scope.userId);
+      viewerIsLeadSponsor = leadIds.some(
+        (id) => String(id).trim().toLowerCase() === dealKey,
+      );
+    } catch (err) {
+      console.warn("sendDealSaasLockIfNeeded lead sponsor:", err);
+    }
   }
-  const access = evaluateDealSaasWorkspaceAccess(row);
-  if (!access.locked) return false;
-  res.status(402).json(dealSaasPaymentRequiredPayload(row, access));
+  // Platform admin still pays MRR when they are the lead sponsor on this deal.
+  if (scope?.isPlatformAdmin && !viewerIsLeadSponsor) return false;
+  res.status(402).json(
+    dealSaasPaymentRequiredPayload(evaluated.row, evaluated.access, {
+      viewerIsLeadSponsor,
+    }),
+  );
   return true;
 }
 
@@ -295,6 +333,19 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
     const requestedOrg = includeParticipantDeals
       ? null
       : requestedOrganizationIdFromRequest(req);
+    const dealsCacheKey = [
+      user.id,
+      includeParticipantDeals ? "1" : "0",
+      requestedOrg ?? "",
+      orgParam,
+    ].join(":");
+    const cachedDeals = dealsListCache.get(dealsCacheKey) as
+      | { deals: unknown }
+      | undefined;
+    if (cachedDeals) {
+      res.status(200).json(cachedDeals);
+      return;
+    }
     const scope = await resolveDealViewerScope(
       user.id,
       user.userRole,
@@ -314,15 +365,23 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
         .trim()
         .toLowerCase();
       /**
-       * Company admin / company member / Lead-Admin workspace users: Investing
-       * Mode still lists their workspace deals, then Contacts Visibility
-       * (Show / Hide / 506(c) only) decides which of those deals stay visible.
-       * LP-only viewers keep the participant + sponsor-scoped list.
+       * Lead / Admin / Co-sponsor (and LP-only viewers) see deals they are
+       * invested in / invited to, then Contacts Visibility (Show / Hide /
+       * 506(c) only). Company / platform workspace users keep org deals.
+       */
+      const dealSponsorUsesInvestorScope =
+        !scope.seesAllDeals && (await viewerIsDealSponsorOnAnyDeal(user.id));
+      /**
+       * Self-serve investors have no company deal list. Investing must use the
+       * contact’s offerings (506(c), plus 506(b) deals they are already on),
+       * even when they were later added as a sponsor.
        */
       const investingUsesWorkspaceDeals =
-        scope.seesAllDeals ||
-        (scope.lpInvestorEmailScopedDealIds == null &&
-          !scope.assignedParticipationOnly);
+        !isInvestorPortalRole(user.userRole) &&
+        !dealSponsorUsesInvestorScope &&
+        (scope.seesAllDeals ||
+          (scope.lpInvestorEmailScopedDealIds == null &&
+            !scope.assignedParticipationOnly));
       if (investingUsesWorkspaceDeals) {
         rows = await listDealsForViewerIncludingAssignedParticipation(scope);
       } else {
@@ -330,6 +389,7 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
           ? await listInvestingParticipantDealIdsForUser({
               userId: user.id,
               emailNorm: includeParticipantViewerEmailNorm,
+              applyContactOfferingVisibility: true,
             })
           : [];
         rows =
@@ -350,13 +410,31 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
          * Intersect viewer-scoped deals with the requested organization.
          */
         const scoped = await listDealsForViewer(scope);
-        rows = scoped.filter(
-          (r) =>
-            String(r.organizationId ?? "").trim() === orgParam ||
-            scope.organizationId == null ||
-            String(r.organizationId ?? "").trim() ===
-              String(scope.organizationId ?? "").trim(),
+        const [leadAdminIds, coSponsorIds] = await Promise.all([
+          listDealIdsWhereViewerIsLeadOrAdminSponsor(user.id),
+          listDealIdsWhereViewerIsCoSponsor(user.id),
+        ]);
+        const rosterDealIds = new Set(
+          [...leadAdminIds, ...coSponsorIds].map((id) =>
+            String(id).trim().toLowerCase(),
+          ),
         );
+        const crossOrgColleagueIds = new Set(
+          (scope.crossOrgColleagueSponsoredDealIds ?? []).map((id) =>
+            String(id).trim().toLowerCase(),
+          ),
+        );
+        const viewerOrg = String(scope.organizationId ?? "").trim();
+        rows = scoped.filter((r) => {
+          const dealOrg = String(r.organizationId ?? "").trim();
+          if (dealOrg === orgParam) return true;
+          if (viewerOrg && dealOrg === viewerOrg) return true;
+          const dealKey = String(r.id).trim().toLowerCase();
+          // Lead / Admin / Co deals stay visible even when the deal belongs to another company.
+          if (rosterDealIds.has(dealKey)) return true;
+          // A peer in this org sponsors the deal in another company.
+          return crossOrgColleagueIds.has(dealKey);
+        });
         // If org filter emptied a valid co-sponsor/LP set (legacy null org_id),
         // keep the viewer-scoped list instead of falling back to all org deals.
         if (rows.length === 0 && scoped.length > 0) rows = scoped;
@@ -367,16 +445,28 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
       rows = await listDealsForViewer(scope);
     }
 
+    if (includeParticipantDeals) {
+      rows = await withCrossOrgColleagueSponsoredDeals(rows, scope);
+    }
+
     if (includeParticipantDeals && rows.length > 0) {
       rows = await filterDealsVisibleToInvestorParticipants(rows, scope);
     }
 
     /**
-     * Investing Mode (and LP-email-scoped viewers): apply CRM Contacts Visibility.
+     * Investing Mode only: apply CRM Contacts Visibility.
      * Syndicating lists skip this so Lead / Admin / Co / company roles still see
      * every workspace deal.
      */
     if (scope.enforceContactOfferingVisibility && rows.length > 0) {
+      const crossOrgKeep = new Set(
+        (scope.crossOrgColleagueSponsoredDealIds ?? []).map((id) =>
+          String(id).trim().toLowerCase(),
+        ),
+      );
+      const crossOrgRows = rows.filter((row) =>
+        crossOrgKeep.has(String(row.id ?? "").trim().toLowerCase()),
+      );
       const emailNorm =
         includeParticipantViewerEmailNorm ||
         String(
@@ -398,6 +488,15 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
           ),
         );
         rows = rows.filter((r) => allowedIds.has(String(r.id ?? "")));
+        const kept = new Set(
+          rows.map((row) => String(row.id ?? "").trim().toLowerCase()),
+        );
+        for (const row of crossOrgRows) {
+          const key = String(row.id ?? "").trim().toLowerCase();
+          if (!key || kept.has(key)) continue;
+          rows.push(row);
+          kept.add(key);
+        }
       }
     }
 
@@ -407,14 +506,27 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
         ? await countDealLpInvestorsByDealIdsForViewer(dealIds, scope)
         : new Map<string, number>();
 
-    const leadSponsorDealIds =
-      !includeParticipantDeals && dealIds.length > 0
-        ? new Set(
-            (await listDealIdsWhereViewerIsLeadSponsor(user.id)).map((id) =>
-              String(id).trim().toLowerCase(),
-            ),
+    const [leadSponsorDealIds, leadOrAdminSponsorDealIds, coSponsorDealIds] =
+      dealIds.length > 0
+        ? await Promise.all([
+            listDealIdsWhereViewerIsLeadSponsor(user.id),
+            listDealIdsWhereViewerIsLeadOrAdminSponsor(user.id),
+            listDealIdsWhereViewerIsCoSponsor(user.id),
+          ]).then(
+            ([lead, leadOrAdmin, co]) =>
+              [
+                new Set(lead.map((id) => String(id).trim().toLowerCase())),
+                new Set(
+                  leadOrAdmin.map((id) => String(id).trim().toLowerCase()),
+                ),
+                new Set(co.map((id) => String(id).trim().toLowerCase())),
+              ] as const,
           )
-        : new Set<string>();
+        : [
+            new Set<string>(),
+            new Set<string>(),
+            new Set<string>(),
+          ];
 
     let lpRoleByDealId = new Map<string, string>();
     const shouldAttachLpRole =
@@ -443,12 +555,19 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
       }
     }
 
+    /* Batched up front: querying classes / commitments / raise per row made the
+       deals list slow down linearly with the number of deals. */
+    const [enrichmentByDealId, raiseAmountByDealId] = await Promise.all([
+      mapDealListEnrichmentByDealId(rows),
+      mapDealRaiseAmountByDealIds(rows.map((r: AddDealFormRow) => String(r.id))),
+    ]);
+
     const dealsPayload = (
-      await Promise.all(
-        rows.map(async (r: AddDealFormRow) => {
+      await mapWithConcurrency(rows, 8, async (r: AddDealFormRow) => {
           const id = String(r.id);
           const n = lpInvestorCounts.get(id) ?? 0;
-          const enriched = await enrichDealListRowForApi(r);
+          const enriched =
+            enrichmentByDealId.get(id) ?? (await enrichDealListRowForApi(r));
           const listRow = {
             ...mapRowToJson(r, {
               investmentRowCount: n,
@@ -461,15 +580,36 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
                 ...listRow,
                 yourRole: lpRoleByDealId.get(id) ?? "LP Investor",
               };
-          const withBilling = !includeParticipantDeals
+          const dealKey = id.trim().toLowerCase();
+          const viewerIsLeadSponsor = leadSponsorDealIds.has(dealKey);
+          const viewerIsLeadOrAdmin = leadOrAdminSponsorDealIds.has(dealKey);
+          const viewerIsCoSponsor = coSponsorDealIds.has(dealKey);
+          const crossOrgViewOnly =
+            (scope.crossOrgColleagueSponsoredDealIds ?? []).some(
+              (dealId) => dealId.trim().toLowerCase() === dealKey,
+            ) &&
+            !viewerIsLeadOrAdmin &&
+            !viewerIsCoSponsor;
+          const withBilling =
+            !includeParticipantDeals || viewerIsLeadSponsor
             ? {
                 ...withRole,
-                ...dealSaasBillingListFields(r),
-                viewerIsLeadSponsor: leadSponsorDealIds.has(
-                  id.trim().toLowerCase(),
-                ),
+                ...(await dealSaasBillingListFields(r, {
+                  raiseAmount: raiseAmountByDealId.get(id),
+                })),
+                viewerIsLeadSponsor,
+                viewerCanEditDeal: viewerIsLeadOrAdmin
+                  ? true
+                  : viewerIsCoSponsor || crossOrgViewOnly
+                    ? false
+                    : !includeParticipantDeals,
+                viewerCanManageDeal: !crossOrgViewOnly,
               }
-            : withRole;
+            : {
+                ...withRole,
+                viewerCanEditDeal: false as const,
+                viewerCanManageDeal: !crossOrgViewOnly,
+              };
           if (!includeParticipantDeals) return withBilling;
           const readable = await assertDealIdReadableOrAssignedParticipant(
             id,
@@ -479,16 +619,76 @@ export async function getDeals(req: Request, res: Response): Promise<void> {
           // visibility Hide / 506c-only) — avoids "Deal not found" on click.
           if (!readable) return null;
           return { ...withBilling, rosterReadable: true as const };
-        }),
-      )
+      })
     ).filter((row): row is NonNullable<typeof row> => row != null);
 
-    res.status(200).json({
-      deals: dealsPayload,
-    });
+    const dealsBody = { deals: dealsPayload };
+    dealsListCache.set(dealsCacheKey, dealsBody);
+
+    /**
+     * Paged from the cached full list: the per-deal enrichment above is already
+     * batched and cached, so slicing here shrinks the response without losing
+     * the archived/active counts the list header shows.
+     */
+    const pageQuery = parsePageQuery(req);
+    if (!pageQuery.paginated) {
+      res.status(200).json(dealsBody);
+      return;
+    }
+    const matched = filterRowsBySearch(dealsPayload, pageQuery.search);
+    const sorted = sortRowsBy(
+      matched,
+      pageQuery.sortId,
+      pageQuery.sortDir,
+      (row, sortId) => dealListSortValue(row as Record<string, unknown>, sortId),
+    );
+    const { items, envelope } = paginateInMemory(sorted, pageQuery);
+    res.status(200).json({ deals: items, ...envelope });
   } catch (err) {
     console.error("getDeals:", err);
     res.status(500).json({ message: "Could not load deals" });
+  }
+}
+
+/**
+ * Sort values for the Deals list columns, keyed by the UI column ids.
+ *
+ * The Funded, Gap, Committed and Your Role columns are derived from investor
+ * metrics the browser fetches per deal, so they are not sortable here and fall
+ * back to the list's own ordering.
+ */
+function dealListSortValue(
+  row: Record<string, unknown>,
+  sortId: string,
+): string | number | undefined {
+  const text = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  const amount = (v: unknown) =>
+    Number(String(v ?? "").replace(/[^0-9.-]/g, "")) || 0;
+  switch (sortId) {
+    case "name":
+      return text(row.dealName);
+    case "dealStage":
+      return text(row.dealStage);
+    case "start":
+      return text(row.startDateDisplay ?? row.createdDateDisplay);
+    case "close":
+      return text(row.closeDateDisplay);
+    case "nextBilling":
+      return text(row.nextBillingDate);
+    case "dealType":
+      return text(row.dealType);
+    case "secType":
+      return text(row.secType);
+    case "propertyName":
+      return text(row.propertyName);
+    case "owningEntity":
+      return text(row.owningEntityName);
+    case "targetRaised":
+      return amount(row.raiseTarget);
+    case "softCommitted":
+      return amount(row.totalInProgress);
+    default:
+      return undefined;
   }
 }
 
@@ -526,7 +726,7 @@ export async function patchDealInvestorSummary(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealInvestorSummaryById(dealId, htmlRaw);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -594,7 +794,7 @@ export async function patchDealAnnouncement(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const { title, message } = sanitizeDealAnnouncement({
       title: titleRaw,
       message: messageRaw,
@@ -674,13 +874,13 @@ export async function patchDealOfferingOverview(
     "offeringOverviewClassId" in b
   ) {
     const raw = b.offering_overview_class_id ?? b.offeringOverviewClassId;
-    if (raw === null || raw === "") {
+    if (raw === null || raw === "" || raw === undefined) {
       patchIn.offeringOverviewClassId = null;
     } else if (typeof raw === "string") {
-      patchIn.offeringOverviewClassId = raw.trim();
+      const trimmed = raw.trim();
+      patchIn.offeringOverviewClassId = trimmed || null;
     } else {
-      res.status(400).json({ message: "offering_overview_class_id must be a UUID string or null." });
-      return;
+      patchIn.offeringOverviewClassId = null;
     }
   }
 
@@ -701,7 +901,7 @@ export async function patchDealOfferingOverview(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealOfferingOverviewById(
       dealId,
       sanitized.set,
@@ -754,13 +954,27 @@ export async function getDealOfferingInvestorPreview(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (
-      sendDealSaasLockIfNeeded(res, row, scope, { allowInvestingRead: true })
-    ) {
+    if (await sendDealSaasLockIfNeeded(res, row, scope)) {
       return;
     }
+    const crossOrgViewOnly =
+      !scope.isPlatformAdmin &&
+      (scope.crossOrgColleagueSponsoredDealIds ?? []).some(
+        (id) =>
+          id.trim().toLowerCase() === String(dealId).trim().toLowerCase(),
+      ) &&
+      !(await isPortalUserSponsorOnDeal(dealId, user.id));
+    const documentScopeUserId = crossOrgViewOnly
+      ? await resolveCrossOrgColleagueSponsorForDeal(dealId, user.id)
+      : user.id;
     res.status(200).json({
-      offeringInvestorPreviewJson: row.offeringInvestorPreviewJson ?? null,
+      offeringInvestorPreviewJson: await scopeOfferingInvestorPreviewJsonForViewer({
+        dealId,
+        viewerUserId: documentScopeUserId ?? user.id,
+        viewerRole: user.userRole,
+        json: row.offeringInvestorPreviewJson ?? null,
+        requireSponsorScope: crossOrgViewOnly,
+      }),
     });
   } catch (err) {
     console.error("getDealOfferingInvestorPreview:", err);
@@ -797,19 +1011,34 @@ export async function patchDealOfferingInvestorPreview(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const canonical = sanitizeOfferingInvestorPreviewBody(body);
+    const merged = await mergeCoSponsorOfferingInvestorPreviewJson({
+      dealId,
+      viewerUserId: user.id,
+      viewerRole: user.userRole,
+      existingJson: visible.offeringInvestorPreviewJson ?? null,
+      incomingCanonicalJson: canonical,
+    });
     const updated = await updateDealOfferingInvestorPreviewById(
       dealId,
-      canonical,
+      merged,
     );
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    const deal = await mapRowToJsonWithInvestmentCount(updated, scope);
+    deal.offeringInvestorPreviewJson =
+      await scopeOfferingInvestorPreviewJsonForViewer({
+        dealId,
+        viewerUserId: user.id,
+        viewerRole: user.userRole,
+        json: deal.offeringInvestorPreviewJson ?? null,
+      });
     res.status(200).json({
       message: "Offering investor preview updated",
-      deal: await mapRowToJsonWithInvestmentCount(updated, scope),
+      deal,
     });
   } catch (err: unknown) {
     if (err instanceof OfferingInvestorPreviewJsonInvalidError) {
@@ -863,7 +1092,7 @@ export async function patchDealKeyHighlights(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealKeyHighlightsById(dealId, jsonRaw);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -925,7 +1154,7 @@ export async function patchDealFundingInstructions(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealFundingInstructionsById(dealId, jsonRaw);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -1004,7 +1233,7 @@ export async function patchDealGalleryCover(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealGalleryCoverById(dealId, toStore);
     if (!updated) {
       res.status(404).json({ message: "Deal not found" });
@@ -1057,7 +1286,7 @@ export async function patchDealOfferingGallery(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const updated = await updateDealOfferingGalleryPathsById(
       dealId,
       norm.paths,
@@ -1092,17 +1321,8 @@ export async function postDealOfferingDocumentUploads(
     res.status(400).json({ message: "Missing deal id" });
     return;
   }
-  const files = (req as Request & { files?: DealMemoryUploadFile[] }).files;
-  const fileList = Array.isArray(files) ? files : [];
-  if (!fileList.length) {
-    res.status(400).json({ message: "No files uploaded." });
-    return;
-  }
-  const typeCheck = validateOfferingDocumentUploadFiles(fileList);
-  if (!typeCheck.ok) {
-    res.status(400).json({ message: typeCheck.message });
-    return;
-  }
+  const fileList = requireDealDocumentMultipartFiles(req, res);
+  if (!fileList) return;
   try {
     const scope = await resolveDealViewerScope(
       user.id,
@@ -1117,7 +1337,7 @@ export async function postDealOfferingDocumentUploads(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     const newPaths = await saveDealAssetFiles({ files: fileList, dealId });
     logSocDealOfferingAssetUpload({
       actorUserId: user.id,
@@ -1164,7 +1384,26 @@ export async function postDealOfferingGalleryUploads(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    /** Keep in sync with frontend `ASSET_MAX_IMAGE_COUNT`. */
+    const ASSET_MAX_IMAGE_COUNT = 10;
+    const alreadyOnDeal = (
+      visible.assetImagePath?.split(";").filter(Boolean) ?? []
+    ).length;
+    if (alreadyOnDeal >= ASSET_MAX_IMAGE_COUNT) {
+      res.status(400).json({
+        message:
+          "Each asset can have up to 10 images. Remove one or more to add more.",
+      });
+      return;
+    }
+    if (alreadyOnDeal + fileList.length > ASSET_MAX_IMAGE_COUNT) {
+      const left = ASSET_MAX_IMAGE_COUNT - alreadyOnDeal;
+      res.status(400).json({
+        message: `Each asset can have up to 10 images. You can add ${left} more.`,
+      });
+      return;
+    }
     const newPaths = await saveDealAssetFiles({
       files: fileList,
       dealId,
@@ -1225,9 +1464,7 @@ export async function getOfferingPreviewToken(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (
-      sendDealSaasLockIfNeeded(res, visible, scope, { allowInvestingRead: true })
-    ) {
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) {
       return;
     }
     if (isDealStageDraft(visible.dealStage)) {
@@ -1325,7 +1562,7 @@ export async function postOfferingPreviewShareEmail(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
     if (isDealStageDraft(visible.dealStage)) {
       res.status(403).json({
         message:
@@ -1437,6 +1674,9 @@ export async function getPublicOfferingPreview(
       res.status(404).json({ message: "Offering not found." });
       return;
     }
+    if (await sendDealSaasLockIfNeeded(res, row)) {
+      return;
+    }
     if (
       !canInvestorAccessPublicOffering(row.dealStage, row.offeringStatus)
     ) {
@@ -1499,15 +1739,57 @@ export async function getDealById(req: Request, res: Response): Promise<void> {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (
-      sendDealSaasLockIfNeeded(res, row, scope, { allowInvestingRead: true })
-    ) {
+    if (await sendDealSaasLockIfNeeded(res, row, scope)) {
       return;
     }
     const withPreview = await ensureDealOfferingPreviewTokenStored(dealId);
     const rowForJson = withPreview ?? row;
+    const deal = await mapRowToJsonWithInvestmentCount(rowForJson, scope);
+    const crossOrgViewOnly =
+      !scope.isPlatformAdmin &&
+      (scope.crossOrgColleagueSponsoredDealIds ?? []).some(
+        (id) =>
+          id.trim().toLowerCase() === String(dealId).trim().toLowerCase(),
+      ) &&
+      !(await isPortalUserSponsorOnDeal(dealId, user.id));
+    const documentScopeUserId = crossOrgViewOnly
+      ? await resolveCrossOrgColleagueSponsorForDeal(dealId, user.id)
+      : user.id;
+    deal.offeringInvestorPreviewJson =
+      await scopeOfferingInvestorPreviewJsonForViewer({
+        dealId,
+        viewerUserId: documentScopeUserId ?? user.id,
+        viewerRole: user.userRole,
+        json: deal.offeringInvestorPreviewJson ?? null,
+        requireSponsorScope: crossOrgViewOnly,
+      });
+    const billing = await dealSaasBillingListFields(rowForJson);
+    let viewerIsLeadSponsor = false;
+    try {
+      const leadIds = await listDealIdsWhereViewerIsLeadSponsor(scope.userId);
+      viewerIsLeadSponsor = leadIds.some(
+        (id) => String(id).trim().toLowerCase() === String(dealId).trim().toLowerCase(),
+      );
+    } catch (err) {
+      console.warn("getDealById lead sponsor:", err);
+    }
+    const listRow =
+      deal && typeof deal === "object" && "listRow" in deal
+        ? {
+            ...(deal as { listRow?: Record<string, unknown> }).listRow,
+            ...billing,
+            viewerIsLeadSponsor,
+          }
+        : undefined;
     res.status(200).json({
-      deal: await mapRowToJsonWithInvestmentCount(rowForJson, scope),
+      deal: {
+        ...deal,
+        ...billing,
+        viewerIsLeadSponsor,
+        viewerCanEditDeal: await viewerMayEditDealProfile(dealId, user.id),
+        viewerCanManageDeal: !crossOrgViewOnly,
+        ...(listRow ? { listRow } : {}),
+      },
     });
   } catch (err) {
     console.error("getDealById:", err);
@@ -1567,6 +1849,7 @@ export async function postDeal(req: Request, res: Response): Promise<void> {
     const dealId = String(created.id);
     await assignCreatorToDeal(dealId, user.id);
     await assignCreatorAsLeadSponsorOnDeal(dealId, user.id);
+    invalidateDealsListCache();
     res.status(201).json({
       message: "Deal created",
       deal: mapRowToJson(created, { investmentRowCount: 0 }),
@@ -1642,7 +1925,14 @@ export async function putDeal(req: Request, res: Response): Promise<void> {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    if (sendDealSaasLockIfNeeded(res, visible, scope)) return;
+    if (!(await viewerMayEditDealProfile(dealId, user.id))) {
+      res.status(403).json({
+        message:
+          "Only the lead or admin sponsor on this deal can edit it",
+      });
+      return;
+    }
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
 
     const [actor] = await db
       .select({ organizationId: users.organizationId, role: users.role })
@@ -1683,6 +1973,7 @@ export async function putDeal(req: Request, res: Response): Promise<void> {
       res.status(404).json({ message: "Deal not found" });
       return;
     }
+    invalidateDealsListCache();
     res.status(200).json({
       message: "Deal updated",
       deal: await mapRowToJsonWithInvestmentCount(updated, scope),
@@ -1753,6 +2044,7 @@ export async function patchDealArchived(
       ...enriched,
       archived: Boolean(updated.archived),
     };
+    invalidateDealsListCache();
     res.status(200).json({
       message: archived ? "Deal archived" : "Deal restored",
       deal: listRow,
@@ -1760,6 +2052,76 @@ export async function patchDealArchived(
   } catch (err) {
     console.error("patchDealArchived:", err);
     res.status(500).json({ message: "Could not update deal archive status" });
+  }
+}
+
+/**
+ * Manage deal stage: changes only `deal_stage` (plus the offering status the transition
+ * implies). When SaaS payment is still required the stage is held in Draft and the
+ * requested stage is returned as `pendingDealStage`.
+ */
+export async function patchDealStage(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const rawId = req.params.dealId;
+  const dealId = typeof rawId === "string" ? rawId : rawId?.[0];
+  if (!dealId) {
+    res.status(400).json({ message: "Missing deal id" });
+    return;
+  }
+  const b = req.body as Record<string, unknown>;
+  const requestedStage = bodyString(b.deal_stage ?? b.dealStage);
+  if (!requestedStage) {
+    res.status(400).json({ message: "Field deal_stage is required" });
+    return;
+  }
+
+  try {
+    const scope = await resolveDealViewerScope(
+      user.id,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    const visible = await getAddDealFormForViewer(dealId, scope);
+    if (!visible) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    if (!(await viewerMayEditDealProfile(dealId, user.id))) {
+      res.status(403).json({
+        message: "Only the lead or admin sponsor on this deal can edit it",
+      });
+      return;
+    }
+    if (await sendDealSaasLockIfNeeded(res, visible, scope)) return;
+
+    const updated = await updateDealStageById(dealId, requestedStage);
+    if (updated === "INVALID_STAGE") {
+      res.status(400).json({ message: "Unknown deal stage" });
+      return;
+    }
+    if (!updated) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    const pendingDealStage = updated.pendingDealStage ?? null;
+    invalidateDealsListCache();
+    res.status(200).json({
+      message: pendingDealStage
+        ? "Pay monthly SaaS (MRR) for this deal to move it out of Draft."
+        : "Deal stage updated",
+      pendingDealStage,
+      deal: await mapRowToJsonWithInvestmentCount(updated, scope),
+    });
+  } catch (err) {
+    console.error("patchDealStage:", err);
+    res.status(500).json({ message: "Could not update deal stage" });
   }
 }
 
@@ -1799,6 +2161,7 @@ export async function deleteDeal(req: Request, res: Response): Promise<void> {
       actorUserId: user.id,
       dealId,
     });
+    invalidateDealsListCache();
     res.status(204).send();
   } catch (err) {
     console.error("deleteDeal:", err);

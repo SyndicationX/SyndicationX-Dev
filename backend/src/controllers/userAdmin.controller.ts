@@ -29,10 +29,17 @@ import {
   resolveActiveOrganizationIdForUser,
   userHasAccessToOrganization,
 } from "../services/org/orgResolution.service.js";
-import emailConfig, {
-  getEmailBccFromEnv,
-  smtpEnvelopeForSendMail,
-} from "../functions/emailconfig.js";
+import { getEmailBccFromEnv } from "../functions/emailconfig.js";
+import {
+  filterRowsBySearch,
+  paginateInMemory,
+  parsePageQuery,
+  sortRowsBy,
+} from "../common/pagination.js";
+import {
+  sendHtmlMailPerRecipient,
+  type MailAttachment,
+} from "../services/mail/sendHtmlMailPerRecipient.service.js";
 
 function bodyString(v: unknown): string {
   return typeof v === "string" ? v : v != null ? String(v) : "";
@@ -44,6 +51,39 @@ function normalizeAddressList(v: string | string[] | undefined): string[] {
     return [...new Set(v.map((x) => String(x).trim()).filter((x) => x.includes("@")))];
   }
   return [...new Set(String(v).split(",").map((x) => x.trim()).filter((x) => x.includes("@")))];
+}
+
+/** Base64 of a 30 MB file is ~40 MB (4/3). */
+const SEND_MAIL_ATTACHMENT_BASE64_MAX = 42_000_000;
+
+type ParsedMailAttachments =
+  | { ok: true; attachments: MailAttachment[] }
+  | { ok: false; message: string };
+
+/** Accepts the stored email-template attachment shape (single object or list). */
+function parseMailAttachments(v: unknown): ParsedMailAttachments {
+  const list = Array.isArray(v) ? v : v != null ? [v] : [];
+  const attachments: MailAttachment[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const filename = bodyString(o.fileName).trim();
+    const dataBase64 = bodyString(o.dataBase64).trim();
+    if (!filename || !dataBase64) continue;
+    if (dataBase64.length > SEND_MAIL_ATTACHMENT_BASE64_MAX) {
+      return { ok: false, message: `Attachment "${filename}" is too large to send` };
+    }
+    const content = Buffer.from(dataBase64, "base64");
+    if (content.length === 0) {
+      return { ok: false, message: `Attachment "${filename}" could not be read` };
+    }
+    attachments.push({
+      filename,
+      content,
+      contentType: bodyString(o.mimeType).trim() || "application/octet-stream",
+    });
+  }
+  return { ok: true, attachments };
 }
 
 function normalizeAddressListUnknown(v: unknown): string[] {
@@ -170,12 +210,20 @@ export async function getUsers(req: Request, res: Response): Promise<void> {
     if (active) filterOrganizationId = active;
   }
 
+  const sortRaw = String(req.query.sort ?? req.query.order ?? "")
+    .trim()
+    .toLowerCase();
+  const sort =
+    sortRaw === "name" || sortRaw === "asc" || sortRaw === "alphabetical"
+      ? "name"
+      : "createdAt";
+
   const rows = await listUsersForAdmin(
     role,
     actor.organizationId ?? null,
     filterOrganizationId
-      ? { filterOrganizationId, actorUserId: jwtUser.id }
-      : { actorUserId: jwtUser.id },
+      ? { filterOrganizationId, actorUserId: jwtUser.id, sort }
+      : { actorUserId: jwtUser.id, sort },
   );
   if (rows === null) {
     res.status(403).json({ message: "Not allowed to list members" });
@@ -194,9 +242,23 @@ export async function getUsers(req: Request, res: Response): Promise<void> {
   const useGlobalCounts =
     isPlatformAdminRole(role) && restrictToOrganizationId == null;
 
+  /**
+   * Search, sort and slice before counting assigned deals so that lookup runs
+   * for one page of members rather than the whole directory.
+   */
+  const pageQuery = parsePageQuery(req);
+  const matched = filterRowsBySearch(rows, pageQuery.search);
+  const sorted = sortRowsBy(
+    matched,
+    pageQuery.sortId,
+    pageQuery.sortDir,
+    memberSortValue,
+  );
+  const { items: pageRows, envelope } = paginateInMemory(sorted, pageQuery);
+
   const userIds = [
     ...new Set(
-      rows
+      pageRows
         .map((r) => String(r.id ?? "").trim().toLowerCase())
         .filter((id) => ORG_UUID_RE.test(id)),
     ),
@@ -206,7 +268,7 @@ export async function getUsers(req: Request, res: Response): Promise<void> {
     restrictToOrganizationId: useGlobalCounts ? null : restrictToOrganizationId,
   });
 
-  const enriched = rows.map((r) => {
+  const enriched = pageRows.map((r) => {
     const id = String(r.id ?? "").trim().toLowerCase();
     const c = dealCounts.get(id) ?? 0;
     return {
@@ -229,7 +291,37 @@ export async function getUsers(req: Request, res: Response): Promise<void> {
     organizationScopeId: scopeLog ?? undefined,
   });
 
-  res.status(200).json({ users: enriched });
+  res.status(200).json({ users: enriched, ...envelope });
+}
+
+/**
+ * Sort values for the Members table columns, keyed by the column ids the UI
+ * sends. Returning `undefined` for an unknown column leaves the ordering the
+ * query already applied.
+ */
+function memberSortValue(
+  row: Record<string, unknown>,
+  sortId: string,
+): string | undefined {
+  const text = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  switch (sortId) {
+    case "user":
+      return [row.firstName, row.lastName, row.email, row.username]
+        .map(text)
+        .join(" ");
+    case "role":
+      return text(row.role);
+    case "organizations":
+      return text(row.companyName);
+    case "status":
+      return text(row.userStatus);
+    case "accountStatus":
+      return text(row.accountStatus ?? row.account_status);
+    case "deals":
+      return text(row.assignedDealCount);
+    default:
+      return undefined;
+  }
 }
 
 /** Frontend send-mail composer defaults (auth required). */
@@ -262,6 +354,11 @@ export async function postSendMail(req: Request, res: Response): Promise<void> {
   const bodyText = decodeHtmlEntities(bodyString(b.bodyText))
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  const parsedAttachments = parseMailAttachments(b.attachment ?? b.attachments);
+  if (!parsedAttachments.ok) {
+    res.status(400).json({ message: parsedAttachments.message });
+    return;
+  }
   const [actor] = await db
     .select({ email: users.email })
     .from(users)
@@ -302,25 +399,19 @@ export async function postSendMail(req: Request, res: Response): Promise<void> {
     ),
   ];
   const fromAddress = senderEmail;
-  console.log("fromAddress",fromAddress)
 
   try {
-    const transporter = emailConfig();
-    await transporter.sendMail({
+    await sendHtmlMailPerRecipient({
       from: fromAddress,
       to,
-      ...(cc.length > 0 ? { cc } : {}),
-      ...(bcc.length > 0 ? { bcc } : {}),
-      ...(senderEmail ? { replyTo: senderEmail } : {}),
+      cc,
+      bcc,
+      replyTo: senderEmail,
       subject,
       html: bodyHtml || "<p></p>",
       text: bodyText || "",
-      envelope: smtpEnvelopeForSendMail({
-        fromAddress: configuredSenderAddress,
-        to,
-        ...(cc.length > 0 ? { cc } : {}),
-        ...(bcc.length > 0 ? { bcc } : {}),
-      }),
+      envelopeFrom: configuredSenderAddress,
+      attachments: parsedAttachments.attachments,
     });
     res.status(200).json({ sent: true });
   } catch (err) {

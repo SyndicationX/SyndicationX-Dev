@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, inArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, or, sql } from "drizzle-orm";
 import { db } from "../../database/db.js";
 import {
   companies,
@@ -28,6 +28,32 @@ import {
 import { hasUserCompanyMembership } from "../auth/userCompanyMembership.service.js";
 
 const ALLOWED_USER_STATUS = new Set(["active", "inactive"]);
+
+export type UserListSort = "name" | "createdAt";
+
+function userListOrderBy(sort: UserListSort = "createdAt") {
+  if (sort === "name") {
+    return [
+      asc(sql`lower(trim(${users.firstName}))`),
+      asc(sql`lower(trim(${users.lastName}))`),
+      asc(sql`lower(trim(${users.email}))`),
+    ];
+  }
+  return [desc(users.createdAt)];
+}
+
+function compareSerializedUserName(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): number {
+  const key = (row: Record<string, unknown>) =>
+    [
+      String(row.firstName ?? "").trim().toLowerCase(),
+      String(row.lastName ?? "").trim().toLowerCase(),
+      String(row.email ?? "").trim().toLowerCase(),
+    ].join("\0");
+  return key(a).localeCompare(key(b), undefined, { sensitivity: "base" });
+}
 
 export const MEMBER_AUDIT_ACTION_EDIT = "member_edit";
 export const MEMBER_AUDIT_ACTION_SUSPEND = "member_suspend";
@@ -143,7 +169,10 @@ async function appendPlatformAdminViewerToScopedList(
   return [...rows, ...narrowed];
 }
 
-async function listUsersScopedToCompany(companyId: string): Promise<Record<string, unknown>[]> {
+async function listUsersScopedToCompany(
+  companyId: string,
+  sort: UserListSort = "createdAt",
+): Promise<Record<string, unknown>[]> {
   const [scopeCompany] = await db
     .select({ name: companies.name })
     .from(companies)
@@ -185,7 +214,7 @@ async function listUsersScopedToCompany(companyId: string): Promise<Record<strin
         ),
       )
       .where(companyStaffWhere)
-      .orderBy(desc(users.createdAt));
+      .orderBy(...userListOrderBy(sort));
   } catch (err) {
     if (!isMissingMembershipTableError(err)) throw err;
     // Pre-migration DB fallback.
@@ -202,7 +231,7 @@ async function listUsersScopedToCompany(companyId: string): Promise<Record<strin
           inArray(users.role, [...ORG_SETTINGS_MEMBER_ROLES]),
         ),
       )
-      .orderBy(desc(users.createdAt));
+      .orderBy(...userListOrderBy(sort));
     rows = fallbackRows.map((r) => ({
       user: r.user,
       orgName: r.orgName,
@@ -213,10 +242,8 @@ async function listUsersScopedToCompany(companyId: string): Promise<Record<strin
   const deduped = new Map<string, { user: UserRow; orgName: string | null }>();
   for (const r of rows) {
     const id = String(r.user.id ?? "").trim();
-    if (!id) continue;
-    if (!deduped.has(id)) {
-      deduped.set(id, { user: r.user, orgName: r.orgName });
-    }
+    if (!id || deduped.has(id)) continue;
+    deduped.set(id, { user: r.user, orgName: r.orgName });
   }
 
   const mapped = [...deduped.values()]
@@ -243,8 +270,13 @@ async function listUsersScopedToCompany(companyId: string): Promise<Record<strin
 export async function listUsersForAdmin(
   actorRole: string,
   actorOrganizationId: string | null,
-  opts?: { filterOrganizationId?: string | null; actorUserId?: string | null },
+  opts?: {
+    filterOrganizationId?: string | null;
+    actorUserId?: string | null;
+    sort?: UserListSort;
+  },
 ): Promise<Record<string, unknown>[] | null> {
+  const sort: UserListSort = opts?.sort === "name" ? "name" : "createdAt";
   if (isPlatformAdminRole(actorRole)) {
     const filterOrg = opts?.filterOrganizationId?.trim() ?? "";
     const applyOrgFilter =
@@ -252,7 +284,7 @@ export async function listUsersForAdmin(
     if (!applyOrgFilter) {
       return [];
     }
-    let rows = await listUsersScopedToCompany(filterOrg);
+    let rows = await listUsersScopedToCompany(filterOrg, sort);
     const actorUserId = opts?.actorUserId?.trim() ?? "";
     if (actorUserId) {
       rows = await appendPlatformAdminViewerToScopedList(
@@ -260,6 +292,7 @@ export async function listUsersForAdmin(
         actorUserId,
         filterOrg,
       );
+      if (sort === "name") rows = [...rows].sort(compareSerializedUserName);
     }
     return rows;
   }
@@ -270,7 +303,7 @@ export async function listUsersForAdmin(
         ? filterOrg
         : actorOrganizationId?.trim() ?? "";
     if (companyId && ORG_UUID_RE.test(companyId)) {
-      return listUsersScopedToCompany(companyId);
+      return listUsersScopedToCompany(companyId, sort);
     }
   }
   return null;

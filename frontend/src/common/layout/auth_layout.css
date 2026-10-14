@@ -215,6 +215,11 @@ body:has(.authPage) {
 
 .authPage:has(.signup_page) .auth_card_header {
   margin-bottom: 1.15rem;
+  gap: 0.1rem;
+}
+
+.authPage:has(.signup_page) .auth_card_logo {
+  margin-bottom: 0.15rem;
 }
 
 @media (max-width: 480px) {

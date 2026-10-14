@@ -143,7 +143,10 @@
 .deal_docs_ui_table_scroll,
 .data_table_scroll_region.data_table_scroll_region--floating-hscroll,
 .deals_list_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll,
-.deal_inv_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll {
+.deal_inv_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll,
+.cs_table_scroll.data_table_scroll_region--floating-hscroll,
+.ds_table_scroll.data_table_scroll_region--floating-hscroll,
+.ds_flow_wrap.data_table_scroll_region--floating-hscroll {
   scrollbar-width: none;
 }
 
@@ -153,7 +156,10 @@
 .deal_docs_ui_table_scroll::-webkit-scrollbar,
 .data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
 .deals_list_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
-.deal_inv_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar {
+.deal_inv_table_panel .data_table_scroll_region.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
+.cs_table_scroll.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
+.ds_table_scroll.data_table_scroll_region--floating-hscroll::-webkit-scrollbar,
+.ds_flow_wrap.data_table_scroll_region--floating-hscroll::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;

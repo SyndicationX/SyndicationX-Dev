@@ -57,6 +57,11 @@ export {
   type DealMemberRow,
 } from "./deal.schema/deal-member.schema.js";
 export {
+  dealMemberRemovalLogs,
+  type DealMemberRemovalLogInsert,
+  type DealMemberRemovalLogRow,
+} from "./deal.schema/deal-member-removal-log.schema.js";
+export {
   dealLpInvestor,
   type DealLpInvestorInsert,
   type DealLpInvestorRow,
@@ -87,9 +92,16 @@ export {
 } from "./deal.schema/deal-investor-communication-mail.schema.js";
 export {
   contact,
+  contactImportBatch,
+  contactImportRow,
   contactEmailTemplate,
   type ContactInsert,
   type ContactRow,
+  type ContactImportBatchInsert,
+  type ContactImportBatchRow,
+  type ContactImportCounts,
+  type ContactImportRowInsert,
+  type ContactImportRowRow,
   type ContactEmailTemplateInsert,
   type ContactEmailTemplateRow,
   type EmailTemplateAttachment,
@@ -137,3 +149,21 @@ export {
   type PlatformSignupNotificationInsert,
   type PlatformSignupNotificationRow,
 } from "./platformSignupNotification.schema.js";
+export {
+  userFeedback,
+  feedbackPageCatalog,
+  FEEDBACK_STATUS_PENDING,
+  FEEDBACK_STATUS_REVIEWED,
+  FEEDBACK_STATUS_RESOLVED,
+  FEEDBACK_SUB_PAGE_OTHER_KEY,
+  FEEDBACK_SUB_PAGE_OTHER_LABEL,
+  FEEDBACK_PRIORITIES,
+  parseFeedbackPriority,
+  type FeedbackStatus,
+  type FeedbackPriority,
+  type FeedbackReviewAction,
+  type FeedbackSubPageOption,
+  type UserFeedbackRow,
+  type UserFeedbackInsert,
+  type FeedbackPageCatalogRow,
+} from "./feedback.schema.js";

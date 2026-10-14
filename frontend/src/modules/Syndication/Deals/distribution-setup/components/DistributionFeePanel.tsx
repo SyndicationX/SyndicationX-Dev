@@ -1,4 +1,5 @@
 import { useMemo } from "react"
+import { TableHScrollShell } from "../../../../../common/components/data-table/TableHScrollShell"
 import {
   DropdownSelect,
   type DropdownSelectOption,
@@ -282,6 +283,7 @@ export function DistributionFeePanel({
           </p>
         ) : (
           <div className="ds_table_scroll">
+            <TableHScrollShell ariaLabel="Fee split columns">
             <table className="ds_wf_table ds_fee_split_table">
               <thead>
                 <tr>
@@ -365,6 +367,7 @@ export function DistributionFeePanel({
                 })}
               </tbody>
             </table>
+            </TableHScrollShell>
           </div>
         )}
 

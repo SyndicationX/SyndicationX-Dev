@@ -44,10 +44,14 @@ import {
 } from "../../../../../../common/components/dropdown-select"
 import {
   createContact,
-  fetchContacts,
+  fetchDealContactPickerLists,
 } from "../../../../contacts/api/contactsApi"
 import { AddContactPanel } from "../../../../contacts/components/AddContactPanel"
-import type { ContactRow } from "../../../../contacts/types/contact.types"
+import {
+  PLATFORM_CONTACTS_PICKER_HINT,
+  type AddContactSavePayload,
+  type ContactRow,
+} from "../../../../contacts/types/contact.types"
 import {
   fetchDealInvestorClasses,
   fetchDealMembers,
@@ -60,6 +64,7 @@ import {
 import { getApiV1Base } from "../../../../../../common/utils/apiBaseUrl"
 import { MEMBER_SELECT_OPTIONS } from "../../../constants/member-options"
 import {
+  DEAL_MEMBER_ROLE_VALUE,
   DEAL_MEMBERS_TAB_ROLE_VALUES,
   GENERAL_PARTNER_ROLE_LABEL,
   GENERAL_PARTNER_ROLE_VALUE,
@@ -109,6 +114,11 @@ import {
 } from "../../../utils/offeringMoneyFormat"
 import { InfoIconPanel } from "../../offering_details/FieldInfoHeading"
 import { YesNoCardRadioGroup } from "../../../../../../common/components/YesNoCardRadioGroup/YesNoCardRadioGroup"
+import { ExtraCompanyUserPayModal } from "../../../../company/ExtraCompanyUserPayModal"
+import {
+  ExtraCompanyUserPaymentRequiredError,
+  type ExtraCompanyUserPaymentRequired,
+} from "../../../utils/extraCompanyUserBilling"
 import "../../../../contacts/contacts.css"
 import "../../../../usermanagement/user_management.css"
 import "../../../components/deal-step-form.css"
@@ -327,12 +337,22 @@ export function AddInvestmentModal({
     null,
   )
   const backendLpInvestorIdRef = useRef<string | null>(null)
+  const [extraUserPayment, setExtraUserPayment] =
+    useState<ExtraCompanyUserPaymentRequired | null>(null)
+  const pendingSaveAfterExtraPayRef = useRef<AddInvestmentFormValues | null>(
+    null,
+  )
   const backendInvAutosaveTimerRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null)
   const backendInvPostInFlightRef = useRef(false)
   const backendInvAutosaveInFlightRef = useRef(false)
   const [form, setForm] = useState<AddInvestmentFormValues>(emptyForm)
+  const [replacementLeadSponsorContactId, setReplacementLeadSponsorContactId] =
+    useState("")
+  const [addContactTarget, setAddContactTarget] = useState<
+    "member" | "replacementLeadSponsor"
+  >("member")
   const addInvFormRef = useRef<HTMLFormElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [sectionTab, setSectionTab] =
@@ -345,6 +365,9 @@ export function AddInvestmentModal({
   const [submitting, setSubmitting] = useState(false)
   const [memberRows, setMemberRows] = useState<Record<string, unknown>[]>([])
   const [contactRows, setContactRows] = useState<ContactRow[]>([])
+  const [platformContactRows, setPlatformContactRows] = useState<ContactRow[]>(
+    [],
+  )
   const [allDealClasses, setAllDealClasses] = useState<DealInvestorClass[]>([])
   const dealClasses = useMemo(() => {
     if (isGpEntry) return allDealClasses.filter((c) => isGpInvestorClass(c))
@@ -365,6 +388,7 @@ export function AddInvestmentModal({
       contactId?: string
       profileId?: string
       userEmail?: string
+      displayName?: string
     }[]
   >([])
 
@@ -377,6 +401,7 @@ export function AddInvestmentModal({
           contactId: r.contactId,
           profileId: r.profileId,
           userEmail: r.userEmail,
+          displayName: r.displayName,
         })),
       )
     })
@@ -432,10 +457,67 @@ export function AddInvestmentModal({
     [leadSponsorContactId, form.contactId],
   )
 
+  const startedAsLeadSponsor = useMemo(
+    () =>
+      mode === "edit" &&
+      !isInvestorEntry &&
+      !isGpEntry &&
+      isLeadSponsorRole(initialValues?.investorRole),
+    [mode, isInvestorEntry, isGpEntry, initialValues?.investorRole],
+  )
+
+  const demotingLeadSponsorRequiresReplacement = useMemo(
+    () =>
+      startedAsLeadSponsor &&
+      isAdminSponsorOrCoSponsorRole(form.investorRole),
+    [startedAsLeadSponsor, form.investorRole],
+  )
+
+  const replacementLeadSponsorOptions = useMemo(() => {
+    const currentContactId = form.contactId.trim().toLowerCase()
+    const seen = new Set<string>()
+    const sponsorOptions = memberRosterForGate
+      .filter((r) => {
+        const cid = String(r.contactId ?? "").trim()
+        if (!cid) return false
+        if (cid.toLowerCase() === currentContactId) return false
+        if (seen.has(cid.toLowerCase())) return false
+        seen.add(cid.toLowerCase())
+        return true
+      })
+      .map((r) => {
+        const cid = String(r.contactId ?? "").trim()
+        const name = String(r.displayName ?? "").trim()
+        const email = String(r.userEmail ?? "").trim()
+        const role = String(r.investorRole ?? "").trim()
+        const identity = [name, email].filter(Boolean).join(" - ")
+        return {
+          value: cid,
+          label: [identity || "Sponsor", role].filter(Boolean).join(" - "),
+        }
+      })
+    const contactOptions = [...contactRows, ...platformContactRows]
+      .filter((c) => {
+        const cid = String(c.id ?? "").trim()
+        if (!cid) return false
+        if (cid.toLowerCase() === currentContactId) return false
+        if (seen.has(cid.toLowerCase())) return false
+        seen.add(cid.toLowerCase())
+        return true
+      })
+      .map((c) => ({
+        value: String(c.id).trim(),
+        label: `${contactOptionLabel(c)} - Contact`,
+      }))
+    return [...sponsorOptions, ...contactOptions]
+  }, [memberRosterForGate, contactRows, platformContactRows, form.contactId])
+
   /** Lead Sponsor is a single roster identity — do not allow changing member/contact while editing that row. */
   const memberContactSelectLocked = useMemo(
-    () => mode === "edit" && isLeadSponsorRole(form.investorRole),
-    [mode, form.investorRole],
+    () =>
+      mode === "edit" &&
+      (isLeadSponsorRole(form.investorRole) || startedAsLeadSponsor),
+    [mode, form.investorRole, startedAsLeadSponsor],
   )
 
   const investorRoleDropdownOptions = useMemo(
@@ -458,7 +540,9 @@ export function AddInvestmentModal({
             ]
           : INVESTOR_ROLE_SELECT_OPTIONS.filter(
               (o) =>
-                !o.value || DEAL_MEMBERS_TAB_ROLE_VALUES.has(o.value),
+                (!o.value || DEAL_MEMBERS_TAB_ROLE_VALUES.has(o.value)) &&
+                (o.value !== DEAL_MEMBER_ROLE_VALUE ||
+                  form.investorRole === DEAL_MEMBER_ROLE_VALUE),
             ).map((o) => ({
               value: o.value,
               label: o.label,
@@ -471,6 +555,7 @@ export function AddInvestmentModal({
     [
       isInvestorEntry,
       isGpEntry,
+      form.investorRole,
       leadSponsorOptionDisabled,
       adminCoBlockedForSelectedContact,
     ],
@@ -530,6 +615,7 @@ export function AddInvestmentModal({
   useLayoutEffect(() => {
     if (!open) return
     setSectionTab("investor")
+    setReplacementLeadSponsorContactId("")
     const rolePatch = isInvestorEntry
       ? { investorRole: LP_INVESTOR_ROLE_VALUE }
       : isGpEntry
@@ -620,6 +706,12 @@ export function AddInvestmentModal({
     isInvestorEntry,
     isGpEntry,
   ])
+
+  useEffect(() => {
+    if (!demotingLeadSponsorRequiresReplacement) {
+      setReplacementLeadSponsorContactId("")
+    }
+  }, [demotingLeadSponsorRequiresReplacement])
 
   latestAddMemberDraftRef.current = { form, step: 1 as const }
 
@@ -830,6 +922,7 @@ export function AddInvestmentModal({
     isInvestorEntry,
     membersLoading,
     contactRows,
+    platformContactRows,
     memberRows,
   ])
 
@@ -880,14 +973,15 @@ export function AddInvestmentModal({
     setInvestorClassesReady(false)
     setInvestorClassOptions([{ value: "", label: "Loading investor classes…" }])
     void (async () => {
-      const [users, contacts, classes] = await Promise.all([
+      const [users, picker, classes] = await Promise.all([
         fetchUsersForMemberSelect(),
-        fetchContacts(),
+        fetchDealContactPickerLists({ sort: "name" }),
         fetchDealInvestorClasses(dealId),
       ])
       if (cancelled) return
       setMemberRows(users)
-      setContactRows(contacts)
+      setContactRows(picker.contacts)
+      setPlatformContactRows(picker.platformContacts)
       setAllDealClasses(classes)
       setInvestorClassesReady(true)
       setMembersLoading(false)
@@ -1008,7 +1102,9 @@ export function AddInvestmentModal({
       if (raw.startsWith(PREFIX_CONTACT)) {
         const id = raw.slice(PREFIX_CONTACT.length)
         if (isLeadSponsorBlockedForAdminCo(id)) return
-        const c = contactRows.find((x) => x.id === id)
+        const c =
+          contactRows.find((x) => x.id === id) ??
+          platformContactRows.find((x) => x.id === id)
         if (c) {
           const display = contactOptionLabel(c)
           patch({
@@ -1061,6 +1157,7 @@ export function AddInvestmentModal({
     },
     [
       contactRows,
+      platformContactRows,
       memberRows,
       patch,
       leadSponsorContactId,
@@ -1074,12 +1171,12 @@ export function AddInvestmentModal({
       resolveInvestorMemberSelectValue({
         contactId: form.contactId,
         contactEmail: form.contactEmail,
-        contactRows,
+        contactRows: [...contactRows, ...platformContactRows],
         memberRows,
         prefixContact: PREFIX_CONTACT,
         prefixUser: PREFIX_USER,
       }),
-    [form.contactId, form.contactEmail, contactRows, memberRows],
+    [form.contactId, form.contactEmail, contactRows, platformContactRows, memberRows],
   )
 
   const memberDropdownSections = useMemo((): DropdownSelectSection[] => {
@@ -1139,6 +1236,30 @@ export function AddInvestmentModal({
         }),
       })
     }
+    if (platformContactRows.length > 0) {
+      sections.push({
+        heading: "Platform Contacts",
+        headingHint: PLATFORM_CONTACTS_PICKER_HINT,
+        options: platformContactRows.map((c) => {
+          const value = `${PREFIX_CONTACT}${c.id}`
+          const baseLabel = contactOptionLabel(c)
+          const onDeal = isAlreadyOnDealRoster(c.id, c.email ?? "")
+          const lsConflict = optionDisabledForLeadSponsorConflict(value)
+          const meta = buildContactRosterDropdownOption(
+            baseLabel,
+            c,
+            onDeal,
+            lsConflict,
+          )
+          return {
+            value,
+            label: baseLabel,
+            disabled: meta.disabled,
+            labelContent: meta.labelContent,
+          }
+        }),
+      })
+    }
     if (memberRows.length > 0) {
       const directoryOptions = memberRows
         .map((u) => memberOptionFromUser(u))
@@ -1177,6 +1298,7 @@ export function AddInvestmentModal({
     })
   }, [
     contactRows,
+    platformContactRows,
     memberRows,
     isInvestorEntry,
     leadSponsorContactId,
@@ -1192,11 +1314,12 @@ export function AddInvestmentModal({
   useEffect(() => {
     const id = form.contactId.trim()
     if (!id) return
-    if (contactRows.length === 0 && memberRows.length === 0) return
+    if (contactRows.length === 0 && platformContactRows.length === 0 && memberRows.length === 0) return
+    const pickerContacts = [...contactRows, ...platformContactRows]
     const resolved = resolveInvestorMemberSelectValue({
       contactId: id,
       contactEmail: form.contactEmail,
-      contactRows,
+      contactRows: pickerContacts,
       memberRows,
       prefixContact: PREFIX_CONTACT,
       prefixUser: PREFIX_USER,
@@ -1208,7 +1331,7 @@ export function AddInvestmentModal({
     let nextName = String(form.contactDisplayName ?? "").trim()
     if (resolved.startsWith(PREFIX_CONTACT)) {
       nextId = resolved.slice(PREFIX_CONTACT.length).trim()
-      const c = contactRows.find(
+      const c = pickerContacts.find(
         (row) =>
           String(row.id).trim().toLowerCase() === nextId.toLowerCase(),
       )
@@ -1250,6 +1373,7 @@ export function AddInvestmentModal({
     form.contactEmail,
     form.contactDisplayName,
     contactRows,
+    platformContactRows,
     memberRows,
     patch,
   ])
@@ -1258,10 +1382,24 @@ export function AddInvestmentModal({
     (contact: ContactRow) => {
       setContactRows((prev) => {
         if (prev.some((c) => c.id === contact.id)) return prev
-        return [...prev, contact]
+        return [...prev, contact].sort((a, b) =>
+          `${a.firstName} ${a.lastName} ${a.email}`.localeCompare(
+            `${b.firstName} ${b.lastName} ${b.email}`,
+            undefined,
+            { sensitivity: "base" },
+          ),
+        )
       })
       const display = contactOptionLabel(contact)
       const namePart = display.split(" — ")[0]?.trim() || display
+      if (addContactTarget === "replacementLeadSponsor") {
+        setReplacementLeadSponsorContactId(contact.id)
+        toast.success(
+          "Contact added",
+          `${namePart} is selected as the new Lead Sponsor.`,
+        )
+        return
+      }
       patch({
         contactId: contact.id,
         contactDisplayName: namePart,
@@ -1275,17 +1413,22 @@ export function AddInvestmentModal({
           : `${namePart} is selected as the member for this investment.`,
       )
     },
-    [patch, isInvestorEntry],
+    [addContactTarget, patch, isInvestorEntry],
   )
 
   const handleAddContactSave = useCallback(
-    async (
-      contact: Omit<ContactRow, "id" | "createdByDisplayName">,
-    ) => {
-      const created = await createContact(contact)
+    async (contact: AddContactSavePayload) => {
+      const { sendInvitationMail, ...rest } = contact
+      const created = await createContact({
+        ...rest,
+        sendInvitationMail: "no",
+      })
+      patch({
+        sendInvitationMail: sendInvitationMail === "no" ? "no" : "yes",
+      })
       handleContactCreated(created)
     },
-    [handleContactCreated],
+    [handleContactCreated, patch],
   )
 
   const noDealClasses =
@@ -1295,6 +1438,10 @@ export function AddInvestmentModal({
     isInvestorEntry || (isGpEntry && dealClasses.length > 0)
 
   const showClassPercentFields = isInvestorEntry && !noDealClasses
+  const saveDisabled =
+    submitting ||
+    (demotingLeadSponsorRequiresReplacement &&
+      !replacementLeadSponsorContactId.trim())
 
   function blurFormatPercentClamped(raw: string): string {
     const t = sanitizePercentTypingInput(raw)
@@ -1321,8 +1468,8 @@ export function AddInvestmentModal({
       return isInvestorEntry
         ? "Select an investor or contact."
         : isGpEntry
-          ? "Select a general partner."
-          : "Select a member."
+          ? "Select a team member."
+          : "Select a general partner."
     }
     if (!isInvestorEntry && !form.investorRole.trim()) {
       return "Select a role."
@@ -1363,11 +1510,10 @@ export function AddInvestmentModal({
       return "This deal already has a Lead Sponsor. Choose another role or edit the existing Lead Sponsor row."
     }
     if (
-      isInvestorEntry &&
-      form.sendInvitationMail === "yes" &&
-      !String(form.profileId ?? "").trim()
+      demotingLeadSponsorRequiresReplacement &&
+      !replacementLeadSponsorContactId.trim()
     ) {
-      return "Select an investor profile before choosing to send the invitation email."
+      return "Select a new Lead Sponsor before saving."
     }
     return null
   }
@@ -1410,8 +1556,16 @@ export function AddInvestmentModal({
       return
     }
     setSubmitting(true)
+    const values = withInvitationMailPolicy(
+      {
+        ...form,
+        replacementLeadSponsorContactId: demotingLeadSponsorRequiresReplacement
+          ? replacementLeadSponsorContactId.trim()
+          : undefined,
+      },
+      dealBlocksInvitationEmails,
+    )
     try {
-      let values = withInvitationMailPolicy(form, dealBlocksInvitationEmails)
       await onSave(values, null)
       if (mode === "add") {
         skipFlushDraftAfterSaveRef.current = true
@@ -1422,6 +1576,12 @@ export function AddInvestmentModal({
         clearAddMemberDraft(dealId)
       }
     } catch (err) {
+      if (err instanceof ExtraCompanyUserPaymentRequiredError) {
+        pendingSaveAfterExtraPayRef.current = values
+        setExtraUserPayment(err.payload)
+        setError(err.message)
+        return
+      }
       setError(
         err instanceof Error ? err.message : "Could not save. Try again.",
       )
@@ -1505,13 +1665,13 @@ export function AddInvestmentModal({
                 ? addEntry === "investor"
                   ? "Edit Investor"
                   : addEntry === "general_partner"
-                    ? "Edit General Partner"
-                    : "Edit Member"
+                    ? "Edit Team Member"
+                    : "Edit General Partner"
                 : addEntry === "investor"
                   ? "Add Investor"
                   : addEntry === "general_partner"
-                    ? "Add General Partner"
-                    : "Add Member"}
+                    ? "Add Team Member"
+                    : "Add General Partner"}
               {mode === "add" ? (
                 <span className="deals_add_inv_autosave_badge" aria-live="polite">
                   {/* Autosave on */}
@@ -1646,8 +1806,8 @@ export function AddInvestmentModal({
                         isInvestorEntry
                           ? "Investor"
                           : isGpEntry
-                            ? "General Partner"
-                            : "Member"
+                            ? "Team Member"
+                            : "General Partner"
                       }
                       Icon={UserRound}
                       tight
@@ -1666,32 +1826,51 @@ export function AddInvestmentModal({
                         value={memberSelectValue}
                         disabled={membersLoading || memberContactSelectLocked}
                         onChange={(v) => patchMemberById(v)}
+                        searchable
+                        searchShowOptionCountHint
+                        searchPlaceholder={
+                          isInvestorEntry
+                            ? "Search investors or contacts…"
+                            : isGpEntry
+                              ? "Search team members or contacts…"
+                              : "Search general partners or contacts…"
+                        }
+                        searchAriaLabel={
+                          isInvestorEntry
+                            ? "Search investors or contacts"
+                            : isGpEntry
+                              ? "Search team members or contacts"
+                              : "Search general partners or contacts"
+                        }
                         placeholder={
                           membersLoading
                             ? isInvestorEntry
                               ? "Loading contacts and directory users…"
                               : isGpEntry
-                                ? "Loading contacts and general partners…"
-                                : "Loading contacts and members…"
+                                ? "Loading contacts and team members…"
+                                : "Loading contacts and general partners…"
                             : isInvestorEntry
                               ? "Select investor or contact"
                               : isGpEntry
-                                ? "Select general partner or contact"
-                                : "Select member or contact"
+                                ? "Select team member or contact"
+                                : "Select general partner or contact"
                         }
                         ariaLabel={
                           isInvestorEntry
                             ? "Investor or contact"
                             : isGpEntry
-                              ? "General partner or contact"
-                              : "Member or contact"
+                              ? "Team member or contact"
+                              : "General partner or contact"
                         }
                         header={
                           memberContactSelectLocked
                             ? undefined
                             : {
                                 label: "+ Add Contact",
-                                onClick: () => setAddContactModalOpen(true),
+                                onClick: () => {
+                                  setAddContactTarget("member")
+                                  setAddContactModalOpen(true)
+                                },
                               }
                         }
                         triggerClassName={[
@@ -1857,6 +2036,46 @@ export function AddInvestmentModal({
                         />
                       )}
                     </InvFormField>
+                    {demotingLeadSponsorRequiresReplacement ? (
+                      <InvFormField
+                        id="add-inv-new-lead-sponsor"
+                        label="New Lead Sponsor"
+                        Icon={Shield}
+                        tight
+                      >
+                        <p
+                          className="contacts_suspend_modal_desc contacts_suspend_modal_desc_info deals_add_inv_lead_sponsor_warning"
+                          role="status"
+                        >
+                          This Deal must have one Lead Sponsor. Please select a new Lead Sponsor.
+                        </p>
+                        <DropdownSelect
+                          {...MODAL_DROPDOWN_SELECT_PROPS}
+                          id="add-inv-new-lead-sponsor"
+                          options={replacementLeadSponsorOptions}
+                          value={replacementLeadSponsorContactId}
+                          onChange={setReplacementLeadSponsorContactId}
+                          placeholder={
+                            replacementLeadSponsorOptions.length > 0
+                              ? "Select new Lead Sponsor"
+                              : "No other sponsors available"
+                          }
+                          ariaLabel="New Lead Sponsor"
+                          triggerClassName={DROPDOWN_TRIGGER_PILL}
+                          searchable
+                          searchPlaceholder="Search lead sponsors"
+                          searchAriaLabel="Search lead sponsors"
+                          searchShowOptionCountHint
+                          header={{
+                            label: "+ Add Contact",
+                            onClick: () => {
+                              setAddContactTarget("replacementLeadSponsor")
+                              setAddContactModalOpen(true)
+                            },
+                          }}
+                        />
+                      </InvFormField>
+                    ) : null}
                      {/* <InvFormField id="add-inv-status" label="Status" Icon={Activity}>
                     <DropdownSelect
                       id="add-inv-status"
@@ -2150,8 +2369,8 @@ export function AddInvestmentModal({
                         {isInvestorEntry
                           ? "Would you like to notify the investor about their addition to the deal?"
                           : isGpEntry
-                            ? "Would you like to notify the general partner about their addition to the deal?"
-                            : "Would you like to notify the member about their addition to the deal?"}
+                            ? "Would you like to notify the team member about their addition to the deal?"
+                            : "Would you like to notify the general partner about their addition to the deal?"}
                       </span>
                       {dealBlocksInvitationEmails ? (
                         <span className="deals_add_inv_label_info">
@@ -2259,7 +2478,7 @@ export function AddInvestmentModal({
               <button
                 type="submit"
                 className="um_btn_primary"
-                disabled={submitting}
+                disabled={saveDisabled}
               >
                 {submitting ? (
                   <>
@@ -2269,8 +2488,10 @@ export function AddInvestmentModal({
                       className="add_contact_modal_btn_spin"
                       aria-hidden
                     />
-                    Adding...
+                    {mode === "edit" ? "Saving..." : "Adding..."}
                   </>
+                ) : mode === "edit" ? (
+                  "Save"
                 ) : (
                   <>
                     <Plus size={16} strokeWidth={2} aria-hidden />
@@ -2288,7 +2509,20 @@ export function AddInvestmentModal({
       onClose={() => setAddContactModalOpen(false)}
       onSave={handleAddContactSave}
       contactToEdit={null}
-      existingContacts={contactRows}
+      existingContacts={[...contactRows, ...platformContactRows]}
+    />
+    <ExtraCompanyUserPayModal
+      payload={extraUserPayment}
+      onClose={() => {
+        setExtraUserPayment(null)
+        pendingSaveAfterExtraPayRef.current = null
+      }}
+      onPaid={() => {
+        setExtraUserPayment(null)
+        toast.success("Extra company user paid", "Saving the team member…")
+        pendingSaveAfterExtraPayRef.current = null
+        void performSave()
+      }}
     />
     </>
   )

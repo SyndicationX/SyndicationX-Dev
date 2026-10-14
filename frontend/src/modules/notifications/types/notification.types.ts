@@ -12,4 +12,5 @@ export interface PortalNotification {
   createdAt: string
   read: boolean
   href?: string
+  actionLabel?: string
 }

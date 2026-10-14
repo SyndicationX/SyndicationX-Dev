@@ -31,20 +31,28 @@ function escHtmlText(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function expirySentence(expiresDescription: string, persistentLink: boolean): string {
+  if (persistentLink) {
+    return "Open the link to create your investor account. If you did not expect this email, you can ignore it.";
+  }
+  const human = humanizeInviteExpiry(expiresDescription);
+  return `This link expires in ${human}. If you did not expect this email, you can ignore it.`;
+}
+
 /** Plain-text body for the invite email (deliverability / plain clients). */
 export function buildInviteSignupEmailText(
   inviteeEmail: string,
   signupLink: string,
   expiresDescription: string,
+  options?: { persistentLink?: boolean },
 ): string {
-  const human = humanizeInviteExpiry(expiresDescription);
   return [
     "You're invited to SyndicationX",
     "",
     "An administrator invited you to create your account. Open this link to accept and complete registration:",
     signupLink,
     "",
-    `This link expires in ${human}. If you did not expect this email, you can ignore it.`,
+    expirySentence(expiresDescription, Boolean(options?.persistentLink)),
     "",
     `This invitation was sent to: ${inviteeEmail}`,
     "",
@@ -57,7 +65,9 @@ export function buildInviteSignupEmailHtml(
   inviteeEmail: string,
   signupLink: string,
   expiresDescription: string,
+  options?: { persistentLink?: boolean },
 ): string {
+  const persistentLink = Boolean(options?.persistentLink);
   const human = humanizeInviteExpiry(expiresDescription);
   const escHuman = escHtmlText(human);
   const escEmail = escHtmlText(inviteeEmail);
@@ -92,7 +102,11 @@ export function buildInviteSignupEmailHtml(
   <div style="margin:24px 0;">
     <a href="${safeHref}" style="${SX_EMAIL_BUTTON_STYLE}">Accept invitation</a>
   </div>
-  <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;">This secure link expires in <strong>${escHuman}</strong>. If you didn’t expect this message, you can ignore it.</p>
+  <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;">${
+    persistentLink
+      ? "Open the link to create your investor account. If you didn’t expect this message, you can ignore it."
+      : `This secure link expires in <strong>${escHuman}</strong>. If you didn’t expect this message, you can ignore it.`
+  }</p>
   <p style="font-size:13px;line-height:1.5;color:${SX_EMAIL_MUTED};margin:0;font-family:Arial,Helvetica,sans-serif;">Sent to <strong style="color:#374151;">${escEmail}</strong></p>
   ${authFooter}
 </div>

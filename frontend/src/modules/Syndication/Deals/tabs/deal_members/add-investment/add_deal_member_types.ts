@@ -28,4 +28,6 @@ export interface AddInvestmentFormValues {
   documentFileName: string | null
   /** Step 2 — whether to email an invitation to the member/contact */
   sendInvitationMail: "yes" | "no"
+  /** Required when demoting the current Lead Sponsor to Co-sponsor. */
+  replacementLeadSponsorContactId?: string
 }

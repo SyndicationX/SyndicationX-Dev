@@ -1,4 +1,11 @@
-import { pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { users } from "../auth.schema/signin.js";
 import { addDealForm } from "./add-deal-form.schema.js";
 
@@ -18,7 +25,27 @@ export const dealMember = pgTable(
     /** Contact / portal user id for this member (matches `deal_investment.contact_id`). */
     contactMemberId: text("contact_member_id").notNull().default(""),
     dealMemberRole: text("deal_member_role").notNull().default(""),
+    /** Optional denormalized member display name. Not required on add. */
+    dealMemberName: text("deal_member_name"),
+    /** Optional sponsor display name for this member. Not required on add. */
+    dealMemberSponsorName: text("deal_member_sponsor_name"),
+    /** Optional sponsor type. Left null unless set later. */
+    dealMemberSponsorType: text("deal_member_sponsor_type"),
     sendInvitationMail: text("send_invitation_mail").notNull().default("no"),
+    /**
+     * Debounced autosave from the Add Member / Add Investor modal. Draft rows are
+     * excluded from roster lists, gates, counts and billing until an explicit Save
+     * clears the flag.
+     */
+    isDraft: boolean("is_draft").notNull().default(false),
+    /**
+     * Co-sponsor only (this deal). `yes` = lead-sponsor deal emails go to this
+     * co-sponsor and their investors. `no` = those emails go to the co-sponsor
+     * only; they can later send the same template to their investors.
+     */
+    leadSponsorEmailIntercept: text("lead_sponsor_email_intercept")
+      .notNull()
+      .default("yes"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

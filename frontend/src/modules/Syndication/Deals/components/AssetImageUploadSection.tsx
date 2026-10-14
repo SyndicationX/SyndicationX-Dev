@@ -20,9 +20,13 @@ import {
 import { createPortal } from "react-dom"
 import { CloudinaryDeliveryImage } from "@/common/components/CloudinaryDeliveryImage"
 import {
-  isLikelyImageFile,
+  DEAL_ASSET_IMAGE_ACCEPT,
+  DEAL_ASSET_IMAGE_FORMAT_LABEL,
+  dealAssetImageLimitHint,
+  isAllowedDealAssetImageFile,
   materializeImageFileForUpload,
   MAX_DEAL_IMAGE_FILE_BYTES,
+  MAX_DEAL_IMAGE_FILE_MB,
 } from "@/common/utils/materializeImageFileForUpload"
 import { toast } from "../../../../common/components/Toast"
 import { ASSET_MAX_IMAGE_COUNT } from "../types/deal-asset.types"
@@ -64,6 +68,10 @@ export function AssetImageUploadSection({
   const totalCount = existingCount + pendingCount
   const remainingSlots = Math.max(0, maxCount - totalCount)
   const atLimit = totalCount >= maxCount
+  const existingCountRef = useRef(existingCount)
+  existingCountRef.current = existingCount
+  const imageFilesRef = useRef(imageFiles)
+  imageFilesRef.current = imageFiles
 
   useEffect(() => {
     const urls = imageFiles.map((file) => URL.createObjectURL(file))
@@ -129,26 +137,30 @@ export function AssetImageUploadSection({
   }, [lightboxIndex, closeLightbox, goPrev, goNext])
 
   useEffect(() => {
-    if (!atLimit) setImageLimitMessage(null)
+    if (atLimit) return
+    setImageLimitMessage((msg) =>
+      msg?.includes("up to") ? null : msg,
+    )
   }, [atLimit])
 
   function mergeFiles(incoming: FileList | File[]) {
     let skipped = 0
-    let rejected = 0
+    let tooLarge = 0
+    let badFormat = 0
+    let unreadable = 0
     void (async () => {
       const accepted: File[] = []
       for (const f of Array.from(incoming)) {
-        if (!isLikelyImageFile(f)) {
-          rejected += 1
+        if (!isAllowedDealAssetImageFile(f)) {
+          badFormat += 1
           continue
         }
         if (typeof f.size === "number" && f.size <= 0) {
-          rejected += 1
+          unreadable += 1
           continue
         }
         if (typeof f.size === "number" && f.size > MAX_DEAL_IMAGE_FILE_BYTES) {
-          toast.error("File too large", "Maximum file size is 20 MB per image.")
-          rejected += 1
+          tooLarge += 1
           continue
         }
         try {
@@ -158,43 +170,82 @@ export function AssetImageUploadSection({
               maxBytes: MAX_DEAL_IMAGE_FILE_BYTES,
             }),
           )
-        } catch {
-          rejected += 1
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : ""
+          if (msg.toLowerCase().includes("too large")) tooLarge += 1
+          else unreadable += 1
         }
+      }
+      if (tooLarge > 0) {
+        const sizeAlert = `Maximum file size is ${MAX_DEAL_IMAGE_FILE_MB} MB per image.`
+        toast.error("File too large", sizeAlert)
+        setImageLimitMessage(sizeAlert)
+      }
+      if (badFormat > 0) {
+        const formatAlert = `Use ${DEAL_ASSET_IMAGE_FORMAT_LABEL}. Maximum size is ${MAX_DEAL_IMAGE_FILE_MB} MB per image.`
+        toast.error("Invalid image format", formatAlert)
+        setImageLimitMessage(formatAlert)
+      }
+      if (unreadable > 0 && accepted.length === 0 && tooLarge === 0 && badFormat === 0) {
+        toast.error(
+          "Invalid image",
+          `Could not read the selected file. Use ${DEAL_ASSET_IMAGE_FORMAT_LABEL}.`,
+        )
+        setImageLimitMessage(
+          `Could not read the selected file. Use ${DEAL_ASSET_IMAGE_FORMAT_LABEL}.`,
+        )
       }
       if (accepted.length === 0) {
-        if (rejected > 0) {
-          toast.error(
-            "Invalid image",
-            "Could not read the selected file. Use PNG, JPEG, WebP, or GIF.",
+        return
+      }
+      const key = (f: File) => `${f.name}\0${f.size}\0${f.lastModified}`
+      const prev = imageFilesRef.current
+      const room = Math.max(0, maxCount - existingCountRef.current - prev.length)
+      const seen = new Set(prev.map(key))
+      const toAdd: File[] = []
+      for (const f of accepted) {
+        const k = key(f)
+        if (seen.has(k)) continue
+        if (toAdd.length >= room) {
+          skipped += 1
+          continue
+        }
+        seen.add(k)
+        toAdd.push(f)
+      }
+      if (toAdd.length > 0) {
+        imageFilesRef.current = [...prev, ...toAdd]
+        onImageFilesChange((current) => {
+          const liveRoom = Math.max(
+            0,
+            maxCount - existingCountRef.current - current.length,
           )
-        }
-        return
-      }
-      onImageFilesChange((prev) => {
-        const key = (f: File) => `${f.name}\0${f.size}\0${f.lastModified}`
-        const seen = new Set(prev.map(key))
-        const list = [...prev]
-        const room = Math.max(0, maxCount - existingCount - prev.length)
-        for (const f of accepted) {
-          const k = key(f)
-          if (seen.has(k)) continue
-          if (list.length - prev.length >= room) {
-            skipped += 1
-            continue
+          const liveSeen = new Set(current.map(key))
+          const extra: File[] = []
+          for (const f of toAdd) {
+            const k = key(f)
+            if (liveSeen.has(k)) continue
+            if (extra.length >= liveRoom) {
+              skipped += 1
+              continue
+            }
+            liveSeen.add(k)
+            extra.push(f)
           }
-          seen.add(k)
-          list.push(f)
-        }
-        return list
-      })
+          const next = extra.length === 0 ? current : [...current, ...extra]
+          imageFilesRef.current = next
+          return next
+        })
+      }
       if (skipped > 0) {
-        setImageLimitMessage(
-          `Each asset can have up to ${maxCount} images. Remove one or more to add more.`,
-        )
+        const limitAlert = `Each asset can have up to ${maxCount} images. Remove one or more to add more.`
+        toast.error("Image limit reached", limitAlert)
+        setImageLimitMessage(limitAlert)
         return
       }
-      setImageLimitMessage(null)
+      if (tooLarge === 0 && badFormat === 0 && unreadable === 0) {
+        setImageLimitMessage(null)
+      }
     })()
   }
 
@@ -257,8 +308,8 @@ export function AssetImageUploadSection({
         <div className="asset_image_upload_titles">
           <span className="deals_create_label_text">Property images</span>
           <p className="asset_image_upload_hint">
-            Upload photos for this asset. Click to preview; use the carousel to
-            browse multiple images.
+            Upload photos for this asset. {dealAssetImageLimitHint(maxCount)}.
+            Click to preview; use the carousel to browse multiple images.
           </p>
         </div>
       </div>
@@ -339,7 +390,7 @@ export function AssetImageUploadSection({
               />
               <span className="asset_image_add_tile_label">Add photo</span>
               <span className="asset_image_add_tile_meta">
-                {remainingSlots} left
+                {remainingSlots} left · {MAX_DEAL_IMAGE_FILE_MB} MB max
               </span>
             </button>
           ) : null}
@@ -370,7 +421,7 @@ export function AssetImageUploadSection({
             or click to browse from your device
           </span>
           <span className="asset_image_empty_dropzone_meta">
-            Up to {maxCount} images · JPG, PNG, WebP
+            {dealAssetImageLimitHint(maxCount)}
           </span>
         </button>
       )}
@@ -398,7 +449,7 @@ export function AssetImageUploadSection({
         ref={fileInputRef}
         type="file"
         className="asset_step_file_input"
-        accept="image/jpeg,image/png,image/webp,image/gif,image/*"
+        accept={DEAL_ASSET_IMAGE_ACCEPT}
         multiple
         disabled={atLimit}
         onChange={handleFileInput}

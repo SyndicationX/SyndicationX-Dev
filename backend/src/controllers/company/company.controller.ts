@@ -6,11 +6,16 @@ import {
   createCompany,
   ensureCompanyRowForOrganizationId,
   listCompanies,
+  renameCompanyDisplayName,
   updateCompany,
   type CompanyAuditAction,
 } from "../../services/company/company.service.js";
 import { getValidJwtUser } from "../../middleware/jwtUser.js";
-import { isPlatformAdminRole } from "../../constants/roles.js";
+import {
+  isCompanyAdminRole,
+  isPlatformAdminRole,
+} from "../../constants/roles.js";
+import { userCanAccessCompanyWorkspace } from "../../services/company/companyWorkspaceSettings.service.js";
 import { db } from "../../database/db.js";
 import { companies, users } from "../../schema/schema.js";
 import { getUserContactsExportAuditFields } from "../../services/contact/contact.service.js";
@@ -206,6 +211,57 @@ export async function patchCompany(req: Request, res: Response): Promise<void> {
 
   res.status(200).json({
     message: "Company updated",
+    company: result.company,
+  });
+}
+
+/** Company admin or platform admin: rename this organization. Name must be unique. */
+export async function patchCompanyDisplayName(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const companyId = req.params.companyId;
+  if (typeof companyId !== "string" || !companyId.trim()) {
+    res.status(400).json({ message: "Company id required" });
+    return;
+  }
+  const id = companyId.trim();
+  const [actor] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, user.id))
+    .limit(1);
+  if (!actor) {
+    res.status(401).json({ message: "User not found" });
+    return;
+  }
+  const role =
+    String(actor.role ?? "").trim() || String(user.userRole ?? "").trim();
+  if (!isPlatformAdminRole(role) && !isCompanyAdminRole(role)) {
+    res.status(403).json({
+      message: "Only company administrators can update the company name",
+    });
+    return;
+  }
+  const can = await userCanAccessCompanyWorkspace(user.id, role, id);
+  if (!can) {
+    res.status(403).json({ message: "Forbidden" });
+    return;
+  }
+  const body = req.body as { name?: unknown };
+  const name = typeof body.name === "string" ? body.name : "";
+  const result = await renameCompanyDisplayName(id, name);
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+  res.status(200).json({
+    message: result.changed ? "Company name updated" : "Company name unchanged",
     company: result.company,
   });
 }

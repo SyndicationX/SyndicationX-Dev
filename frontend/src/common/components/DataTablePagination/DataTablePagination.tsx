@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { formatCount } from "@/common/utils/formatCount";
 import "./data_table_pagination.css";
 
 export type DataTablePaginationProps = {
@@ -47,8 +48,8 @@ export function DataTablePagination({
       aria-label={ariaLabel}
     >
       <p className="um_table_pagination_range">
-        Showing <strong>{start}</strong>–<strong>{end}</strong> of{" "}
-        <strong>{totalItems}</strong>
+        Showing <strong>{formatCount(start)}</strong>–<strong>{formatCount(end)}</strong> of{" "}
+        <strong>{formatCount(totalItems)}</strong>
       </p>
       <div className="um_table_pagination_controls">
         <button

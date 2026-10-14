@@ -4,7 +4,12 @@ import {
   DataTable,
   type DataTableColumn,
 } from "../../../../../common/components/data-table/DataTable"
+import {
+  displayEmail,
+  isDisplayableEmail,
+} from "../../../../../common/utils/displayEmail"
 import { groupLabelForDealMailRecipient } from "./dealMailRecipients"
+import { investorRoleLabel } from "../../constants/investor-profile"
 import type { InvestorCommunicationRecipient } from "./investor-communication.types"
 import "../../../contacts/contacts.css"
 import "../../../usermanagement/user_management.css"
@@ -16,6 +21,8 @@ export interface MailRecipientsModalProps {
   subject: string
   recipients: InvestorCommunicationRecipient[]
   onClose: () => void
+  /** When true, show co-sponsor LP emails (this viewer owns those investors). */
+  viewerIsCosponsor?: boolean
 }
 
 function initialsFromRecipient(row: InvestorCommunicationRecipient): string {
@@ -35,6 +42,7 @@ export function MailRecipientsModal({
   subject,
   recipients,
   onClose,
+  viewerIsCosponsor = false,
 }: MailRecipientsModalProps) {
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
@@ -51,24 +59,44 @@ export function MailRecipientsModal({
     if (!q) return recipients
     return recipients.filter((r) => {
       const typeLabel = groupLabelForDealMailRecipient(r).toLowerCase()
-      const hay = [r.displayName, r.email, r.roleLabel, typeLabel]
+      const roleLabel = investorRoleLabel(r.roleLabel ?? "").toLowerCase()
+      const hideCoSponsorLpEmail =
+        !viewerIsCosponsor &&
+        r.addedByIsCoSponsor === true &&
+        r.classKind !== "gp"
+      const hay = [
+        r.displayName,
+        hideCoSponsorLpEmail ? "" : r.email,
+        roleLabel,
+        typeLabel,
+      ]
         .join(" ")
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [recipients, query])
+  }, [recipients, query, viewerIsCosponsor])
 
   const columns: DataTableColumn<InvestorCommunicationRecipient>[] = useMemo(
     () => [
       {
         id: "user",
         header: "User",
-        sortValue: (row) =>
-          `${row.displayName} ${row.email}`.toLowerCase(),
+        sortValue: (row) => {
+          const hide =
+            !viewerIsCosponsor &&
+            row.addedByIsCoSponsor === true &&
+            row.classKind !== "gp"
+          return `${row.displayName} ${hide ? "" : row.email}`.toLowerCase()
+        },
         tdClassName: "um_td_user",
         cell: (row) => {
           const primary = row.displayName?.trim() || "—"
-          const rawEmail = row.email.trim()
+          const hideCoSponsorLpEmail =
+            !viewerIsCosponsor &&
+            row.addedByIsCoSponsor === true &&
+            row.classKind !== "gp"
+          const rawEmail = hideCoSponsorLpEmail ? "" : row.email.trim()
+          const emailShown = displayEmail(rawEmail)
           return (
             <div className="um_user_cell">
               <div className="um_user_avatar_ring" aria-hidden>
@@ -84,16 +112,18 @@ export function MailRecipientsModal({
                 >
                   {primary}
                 </span>
-                {rawEmail.includes("@") ? (
+                {isDisplayableEmail(rawEmail) ? (
                   <a
                     href={`mailto:${encodeURIComponent(rawEmail)}`}
                     className="um_user_meta_email um_user_meta_email_link"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {rawEmail}
+                    {emailShown}
                   </a>
                 ) : (
-                  <span className="um_user_meta_email">—</span>
+                  <span className="um_user_meta_email um_status_muted">
+                    {emailShown}
+                  </span>
                 )}
               </div>
             </div>
@@ -121,9 +151,9 @@ export function MailRecipientsModal({
       {
         id: "role",
         header: "Role",
-        sortValue: (row) => (row.roleLabel ?? "").toLowerCase(),
+        sortValue: (row) => investorRoleLabel(row.roleLabel ?? "").toLowerCase(),
         cell: (row) => {
-          const role = row.roleLabel?.trim()
+          const role = investorRoleLabel(row.roleLabel ?? "")
           if (!role || role === "—") {
             return <span className="contacts_cell_muted">—</span>
           }
@@ -131,7 +161,7 @@ export function MailRecipientsModal({
         },
       },
     ],
-    [],
+    [viewerIsCosponsor],
   )
 
   if (!open) return null

@@ -603,6 +603,86 @@
   background: var(--portal-table-header-bg, #f8fafc);
 }
 
+.deal_dist_classes_panel .um_table.deal_dist_table thead th.deal_dist_th_class_type,
+.deal_dist_classes_panel .um_table.deal_dist_table tbody td.deal_dist_td_class_type {
+  width: 5rem;
+  min-width: 5rem;
+  max-width: 5.5rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.deal_dist_classes_panel .um_table.deal_dist_table thead th.deal_dist_th_investors,
+.deal_dist_classes_panel .um_table.deal_dist_table tbody td.deal_dist_td_investors {
+  width: 5.75rem;
+  min-width: 5.5rem;
+  max-width: 6.25rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.deal_dist_class_type_chip,
+.deal_dist_investor_count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.deal_dist_class_type_chip {
+  min-width: 2.75rem;
+  padding: 0.22rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+.deal_dist_investor_count {
+  min-width: 1.7rem;
+  height: 1.55rem;
+  padding: 0 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.deal_dist_class_type_chip--lp,
+.deal_dist_investor_count--lp {
+  color: #1a5aa8;
+  background: rgba(42, 120, 214, 0.1);
+  border-color: rgba(42, 120, 214, 0.28);
+}
+
+.deal_dist_class_type_chip--gp,
+.deal_dist_investor_count--gp {
+  color: #8a5a00;
+  background: rgba(237, 161, 0, 0.14);
+  border-color: rgba(237, 161, 0, 0.32);
+}
+
+.deal_dist_class_type_chip--pref,
+.deal_dist_investor_count--pref {
+  color: #3d3280;
+  background: rgba(74, 58, 167, 0.1);
+  border-color: rgba(74, 58, 167, 0.28);
+}
+
+.deal_dist_class_type_chip--mezz,
+.deal_dist_investor_count--mezz {
+  color: #a63d14;
+  background: rgba(235, 104, 52, 0.12);
+  border-color: rgba(235, 104, 52, 0.32);
+}
+
 .deal_dist_class_investors_panel
   .um_table.deal_dist_table
   thead

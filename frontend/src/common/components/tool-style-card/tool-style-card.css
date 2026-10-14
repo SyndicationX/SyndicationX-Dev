@@ -330,6 +330,14 @@
   }
 }
 
+/* 1920×1200 at 150% OS scale is 1280 CSS px. The 16rem sidebar leaves ~940px
+   of content, which is too narrow for five KPI cards. */
+@media (min-width: 1024px) and (max-width: 1280px) {
+  .sponsor_dash_metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 /* Platform metrics — 6 KPI cards: 1 → 2 → 3 → 6 columns by viewport */
 .pm_kpi_grid {
   display: grid;

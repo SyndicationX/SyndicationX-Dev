@@ -13,8 +13,8 @@ import {
 import {
   dealHasInvestNowDraftForViewer,
   firstInvestNowDraftRowForViewer,
+  investNowProgressForViewer,
 } from "@/modules/Investing/pages/invest/investNowDraftUtils"
-import { investNowDraftProgressFromInvestorRow } from "@/modules/Investing/pages/invest/investNowDraftProgress"
 import { readRecentlyViewedDealIds } from "./recentlyViewedDeals"
 import type { InvestingDashboardDealsByBucket } from "./investingDashboardDealBucket"
 
@@ -30,14 +30,17 @@ function mergeDealRecord(
     payload,
     classes,
   )
+  const progress = investNowProgressForViewer(
+    payload.investors,
+    viewerEmailNorm,
+  )
+  if (progress) record.investNowDraftProgress = progress
   if (dealHasInvestNowDraftForViewer(payload.investors, viewerEmailNorm)) {
     const draftRow = firstInvestNowDraftRowForViewer(
       payload.investors,
       viewerEmailNorm,
     )
     if (draftRow) {
-      record.investNowDraftProgress =
-        investNowDraftProgressFromInvestorRow(draftRow)
       record.investNowResumeScope = {
         investmentId: String(draftRow.id ?? "").trim() || undefined,
         userInvestorProfileId:

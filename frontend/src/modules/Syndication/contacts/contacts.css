@@ -4,6 +4,366 @@
   min-width: 0;
 }
 
+.contact_import_page {
+  gap: 1rem;
+}
+
+.contact_import_modal_overlay {
+  z-index: 1400;
+}
+
+.contact_import_modal.deals_add_inv_modal_panel.um_modal.um_modal_view {
+  width: min(60rem, calc(100vw - 2rem));
+  max-width: min(60rem, calc(100vw - 2rem));
+}
+
+.contact_import_wizard {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.contact_import_page_shell {
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-card-radius, 4px);
+  background: var(--portal-surface, #fff);
+  box-shadow: var(--portal-card-shadow, 0 1px 2px rgb(15 23 42 / 0.06));
+  padding: 1.1em 1.35em 1em;
+  max-width: 60rem;
+}
+
+.contact_import_header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.contact_import_back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--portal-text-muted);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 0.35rem;
+}
+
+.contact_import_title {
+  margin: 0;
+  font-size: 1.4em;
+  font-weight: 700;
+  color: var(--portal-text);
+}
+
+.contact_import_hint,
+.contact_import_required_hint {
+  margin: 0 0 0.85em;
+  color: var(--portal-text-muted, #64748b);
+  font-size: 0.875em;
+  line-height: 1.45;
+}
+
+.contact_import_required_hint {
+  margin-top: 0.75em;
+  margin-bottom: 0;
+  color: #b91c1c;
+}
+
+.contact_import_file_drop {
+  min-height: 8.5rem;
+  border: 1px dashed var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-card-radius, 4px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  color: var(--portal-text-muted, #64748b);
+  background: var(--portal-muted-bg, #f8fafc);
+  text-align: center;
+  padding: 1.1rem 1rem;
+}
+
+.contact_import_file_drop:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--portal-primary, #2563eb) 45%,
+    var(--portal-border, #e2e8f0)
+  );
+  background: color-mix(
+    in srgb,
+    var(--portal-primary, #2563eb) 6%,
+    var(--portal-muted-bg, #f8fafc)
+  );
+}
+
+.contact_import_file_drop_title {
+  color: var(--portal-text, #0f172a);
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+.contact_import_file_drop_meta {
+  font-size: 0.8em;
+}
+
+.contact_import_file_drop input {
+  display: none;
+}
+
+.contact_import_file_name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75em;
+  padding: 0.65em 0.8em;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-card-radius, 4px);
+  background: var(--portal-surface, #fff);
+  color: var(--portal-text, #0f172a);
+  font-size: 0.9em;
+}
+
+.contact_import_file_name svg {
+  flex-shrink: 0;
+  color: var(--portal-primary, #2563eb);
+}
+
+.contact_import_file_name span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact_import_success_note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  margin: 0 0 0.85em;
+  color: var(--portal-success, #067647);
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.contact_import_success_panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.5rem 0 0.25rem;
+  color: var(--portal-text);
+}
+
+.contact_import_success_panel > svg {
+  color: var(--portal-success, #067647);
+}
+
+.contact_import_success_panel h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.contact_import_success_panel p {
+  margin: 0;
+  color: var(--portal-text-muted, #64748b);
+  font-size: 0.9em;
+}
+
+.contact_import_mapping_list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.contact_import_mapping_row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(14rem, 1fr);
+  align-items: center;
+  justify-items: start;
+  gap: 0.75rem 1rem;
+  padding: 0.75em 0.85em;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-card-radius, 4px);
+  background: var(--portal-surface, #fff);
+}
+
+.contact_import_excel_column,
+.contact_import_map_to {
+  min-width: 0;
+}
+
+.contact_import_excel_column {
+  display: grid;
+  gap: 0.2rem;
+  justify-self: start;
+  justify-items: start;
+  text-align: left;
+}
+
+.contact_import_excel_column strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--portal-text, #0f172a);
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.contact_import_mapping_label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--portal-text-muted, #64748b);
+  font-size: 0.75em;
+  font-weight: 600;
+}
+
+.contact_import_mapping_arrow {
+  color: var(--portal-text-muted, #64748b);
+  align-self: center;
+}
+
+.contact_import_map_to.um_field {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  justify-self: stretch;
+  width: 100%;
+}
+
+.contact_import_map_to .um_field_select {
+  margin: 0;
+}
+
+.contact_import_stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 0.9em;
+}
+
+.contact_import_stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-pill-radius, 4px);
+  padding: 0.28rem 0.55rem;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--portal-text, #0f172a);
+  background: var(--portal-muted-bg, #f8fafc);
+}
+
+.contact_import_stat_new {
+  color: #067647;
+  border-color: color-mix(in srgb, #067647 28%, var(--portal-border, #e2e8f0));
+  background: color-mix(in srgb, #067647 8%, var(--portal-surface, #fff));
+}
+
+.contact_import_stat_duplicate {
+  color: #b45309;
+  border-color: color-mix(in srgb, #b45309 28%, var(--portal-border, #e2e8f0));
+  background: color-mix(in srgb, #b45309 8%, var(--portal-surface, #fff));
+}
+
+.contact_import_stat_invalid {
+  color: #b91c1c;
+  border-color: color-mix(in srgb, #b91c1c 28%, var(--portal-border, #e2e8f0));
+  background: color-mix(in srgb, #b91c1c 8%, var(--portal-surface, #fff));
+}
+
+.contact_import_duplicate_field {
+  margin-bottom: 0.9em;
+}
+
+.contact_import_duplicate_field .um_field_label_row {
+  margin-bottom: 0.45em;
+}
+
+.contact_import_table_wrap {
+  overflow: auto;
+  max-height: min(42vh, 28rem);
+  border: 1px solid var(--portal-table-border, #e2e8f0);
+  border-radius: var(--portal-card-radius, 4px);
+}
+
+.contact_import_table {
+  min-width: 46rem;
+}
+
+.contact_import_table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.contact_import_status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--portal-pill-radius, 4px);
+  padding: 0.12rem 0.45rem;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: capitalize;
+  background: var(--portal-muted-bg, #f8fafc);
+  color: var(--portal-text, #0f172a);
+}
+
+.contact_import_status_valid,
+.contact_import_status_imported {
+  color: #067647;
+  background: color-mix(in srgb, #067647 12%, transparent);
+}
+
+.contact_import_status_duplicate,
+.contact_import_status_updated,
+.contact_import_status_skipped {
+  color: #b45309;
+  background: color-mix(in srgb, #b45309 12%, transparent);
+}
+
+.contact_import_status_invalid {
+  color: #b91c1c;
+  background: color-mix(in srgb, #b91c1c 12%, transparent);
+}
+
+.contact_import_row_invalid td {
+  background: color-mix(in srgb, #b91c1c 5%, transparent);
+}
+
+.contact_import_row_duplicate td {
+  background: color-mix(in srgb, #b45309 6%, transparent);
+}
+
+@media (max-width: 900px) {
+  .contact_import_mapping_row {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+    justify-items: stretch;
+  }
+
+  .contact_import_excel_column {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .contact_import_mapping_arrow {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
+}
+
 .contacts_page .um_spin {
   animation: contacts_um_spin 0.75s linear infinite;
 }
@@ -20,7 +380,7 @@
  * or page size is large (e.g. 100).
  */
 .app_main_content:has(> .contacts_page),
-.app_main_content:has(.contacts_page) {
+.app_main_content:has(.contacts_page):not(:has(.contacts_page_embedded)) {
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
@@ -106,16 +466,71 @@
   overflow: hidden;
 }
 
-.contacts_page .contacts_table_panel .um_table_wrap.data_table_shell .um_table_pagination {
+.contacts_page .contacts_table_panel .um_table_wrap.data_table_shell .um_table_pagination,
+.contacts_page .contacts_table_panel .um_table_wrap.data_table_shell .data_table_hscroll_spacer {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
 }
 
 .contacts_page.um_page .um_members_header_block .um_header_row {
   margin-bottom: 0.4em;
 }
 
+.contacts_page.um_page:not(.contacts_page_embedded)
+  .um_members_header_block
+  .um_header_row {
+  align-items: center;
+  flex-wrap: nowrap;
+  min-height: var(
+    --portal-button-height,
+    var(--top-navbar-control-height, 2.25rem)
+  );
+}
+
 .contacts_page.um_page .um_members_header_block .um_title {
   font-size: 1.2rem;
+}
+
+.company_page .contacts_page_embedded.um_page {
+  margin-top: 0;
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+.company_page .contacts_page_embedded .contacts_embedded_header_row {
+  justify-content: flex-end;
+  margin-bottom: 0.65em;
+}
+
+/*
+ * Customers → All Contacts nests this directory under the company page.
+ * The standalone Contacts page sizes the row area with flex-basis 0 and
+ * min-height 0 so it scrolls inside the viewport. That same chain has no
+ * definite height here, so the table body collapses and the rows disappear.
+ */
+.company_page .contacts_page_embedded .contacts_main_tab_panel_wrap,
+.company_page .contacts_page_embedded .contacts_main_tab_panel_wrap > .um_members_tab_content,
+.company_page .contacts_page_embedded .contacts_table_panel.um_panel,
+.company_page .contacts_page_embedded .contacts_table_panel .um_table_wrap.data_table_shell,
+.company_page
+  .contacts_page_embedded
+  .contacts_table_panel
+  .um_table_wrap.data_table_shell
+  .data_table_scroll_region {
+  flex: 0 0 auto;
+  min-height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.company_page
+  .contacts_page_embedded
+  .contacts_table_panel
+  .um_table_wrap.data_table_shell
+  .data_table_scroll_region:not(.data_table_scroll_region--empty) {
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .email_templates_page .email_templates_tab_panel {
@@ -125,8 +540,27 @@
 
 /* Templates tab: full width like Deal Members (table scrolls horizontally when zoomed out) */
 .email_templates_page .email_templates_tab_panel.email_templates_tab_panel_templates {
+  flex: 1 1 auto;
+  min-height: 0;
   max-width: none;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.email_templates_page
+  .email_templates_tab_panel_templates
+  > .contacts_inner_header {
+  flex: 0 0 auto;
+}
+
+.email_templates_page
+  .email_templates_tab_panel_templates
+  > .contacts_main_tab_panel_wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .email_templates_page .email_templates_panel_hint {
@@ -135,7 +569,11 @@
   color: var(--portal-text-muted);
 }
 
+/* Scroll region between the pinned modal head and footer. */
 .email_templates_view_modal_body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 0 1.25rem 1rem;
   box-sizing: border-box;
 }
@@ -301,8 +739,6 @@
   color: var(--portal-text, #0f172a);
   overflow-wrap: anywhere;
   word-break: break-word;
-  max-height: min(52vh, 26rem);
-  overflow: auto;
 }
 
 .email_preview_message_body :first-child {
@@ -997,6 +1433,21 @@
   margin-bottom: 0.25em;
 }
 
+/* Keep All Contacts / Platform Contacts / Tags / Lists on one baseline.
+   The shared tab row is flex-end and content-sized, so the Tags count
+   (and a shorter Platform header) pulled Platform Contacts upward. */
+.contacts_main_tabs_outer .deals_tabs_row.um_segmented_tabs_row {
+  align-items: stretch;
+  width: 100%;
+  min-width: 100%;
+}
+
+.contacts_main_tabs_outer .um_members_tab.um_segmented_tab {
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 2.75rem;
+}
+
 /* Secondary filter strip (usage on Tags/Lists) — keep compact */
 .contacts_status_tabs_outer.um_members_tabs_outer {
   margin-top: 0.1rem;
@@ -1185,6 +1636,59 @@
   flex-shrink: 0;
 }
 
+.contacts_header_actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem 0.75rem;
+}
+
+.contacts_page:not(.contacts_page_embedded) .contacts_header_actions {
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  min-height: var(
+    --portal-button-height,
+    var(--top-navbar-control-height, 2.25rem)
+  );
+}
+
+.contacts_header_invite_link_group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.contacts_invite_link_field {
+  margin-bottom: 1em;
+}
+
+.contacts_invite_link_copy_row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.contacts_invite_link_copy_row input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: var(--portal-button-height, var(--top-navbar-control-height, 2.25rem));
+  height: var(--portal-button-height, var(--top-navbar-control-height, 2.25rem));
+}
+
+.contacts_invite_link_copy_btn {
+  flex-shrink: 0;
+}
+
+.contacts_invite_link_error {
+  margin: 0.45em 0 0;
+  font-size: 0.875em;
+  color: var(--portal-danger, #b91c1c);
+}
+
 .contacts_main_tab_content_flush.um_members_tab_content {
   margin-top: 0;
 }
@@ -1291,7 +1795,7 @@
   background: var(--portal-muted-bg, #f8fafc);
 }
 
-.add_contact_panel .add_contact_multiselect_field.um_field label {
+.add_contact_panel .add_contact_multiselect_field.um_field > label {
   display: flex;
   align-items: center;
   gap: 0.45em;
@@ -1305,6 +1809,25 @@
   padding: 0 !important;
   border-radius: 5px !important;
   box-sizing: border-box;
+}
+
+.add_contact_panel
+  .add_contact_multiselect_field.um_field
+  input.add_contact_multiselect_checkbox {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  opacity: 0;
+  cursor: pointer;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 /* Main contacts list uses `.deal_inv_table` (same as Deal Members / Investors) */
@@ -1321,7 +1844,27 @@
   color: inherit;
 }
 
-/* View contact: no inner vertical scroll — body grows with content; overlay scrolls if needed; dialog centered. */
+.contacts_platform_note {
+  margin: 0;
+  max-width: 42rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--portal-text-muted, #64748b);
+}
+
+/* Platform Contacts toolbar: note on the left, search + refresh on the right. */
+.contacts_platform_toolbar .contacts_directory_toolbar_start {
+  flex: 1 1 18rem;
+  min-width: min(18rem, 100%);
+}
+
+@media (max-width: 1100px) {
+  .contacts_platform_toolbar .contacts_directory_toolbar_start {
+    flex-basis: 100%;
+  }
+}
+
+/* View contact: stay inside the viewport; body scrolls, header/footer stay put. */
 .contacts_view_modal_overlay.um_modal_overlay {
   align-items: center;
   justify-content: center;
@@ -1331,8 +1874,10 @@
 
 .contacts_view_modal.um_modal.um_modal_view {
   max-width: min(36em, 100%);
-  max-height: none;
-  overflow-x: hidden;
+  max-height: min(90dvh, calc(100dvh - 2rem));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   box-sizing: border-box;
 }
@@ -1344,6 +1889,7 @@
 
 .contacts_view_modal .um_modal_head {
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .contacts_view_modal .um_modal_head .um_modal_title {
@@ -1353,10 +1899,10 @@
 }
 
 .contacts_view_modal .deals_add_inv_modal_scroll {
-  flex: none;
-  min-height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-x: hidden;
-  overflow-y: visible;
+  overflow-y: auto;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
@@ -1409,6 +1955,8 @@
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
+  flex-shrink: 0;
+  padding-top: 0.75rem;
 }
 
 .contacts_view_modal_footer .contacts_view_modal_close_btn {
@@ -1438,13 +1986,26 @@
   .contacts_table_panel
   .um_table_wrap.data_table_shell
   .data_table_scroll_region:not(.data_table_scroll_region--empty) {
-  flex: 1 1 auto;
-  min-height: 10rem;
-  max-height: max(10rem, calc(100dvh - 15.5rem));
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Must follow the rule above. Equal specificity would keep flex-basis 0 and
+   collapse the customer Contacts rows. */
+#cp-company-panel-contacts
+  .contacts_table_panel
+  .um_table_wrap.data_table_shell
+  .data_table_scroll_region:not(.data_table_scroll_region--empty) {
+  flex: 0 0 auto;
+  min-height: auto;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .contacts_page
@@ -1563,6 +2124,41 @@
 .contacts_table_panel .um_table th,
 .contacts_table_panel .um_table td {
   vertical-align: middle;
+}
+
+/* Pin checkbox + User while the contacts directory scrolls horizontally. */
+.contacts_page
+  .contacts_table_panel
+  .um_table.contacts_directory_table.data_table_sticky_first {
+  --data-table-sticky-col-0-width: 2.75rem;
+  --data-table-sticky-col-1-width: 16rem;
+}
+
+.contacts_page
+  .contacts_table_panel
+  .um_table.contacts_directory_table.data_table_sticky_first
+  th.data_table_col_sticky--0,
+.contacts_page
+  .contacts_table_panel
+  .um_table.contacts_directory_table.data_table_sticky_first
+  td.data_table_col_sticky--0 {
+  width: var(--data-table-sticky-col-0-width);
+  min-width: var(--data-table-sticky-col-0-width) !important;
+  max-width: var(--data-table-sticky-col-0-width);
+}
+
+.contacts_page
+  .contacts_table_panel
+  .um_table.contacts_directory_table.data_table_sticky_first
+  th.data_table_col_sticky--1,
+.contacts_page
+  .contacts_table_panel
+  .um_table.contacts_directory_table.data_table_sticky_first
+  td.data_table_col_sticky--1 {
+  left: var(--data-table-sticky-col-0-width);
+  width: var(--data-table-sticky-col-1-width);
+  min-width: var(--data-table-sticky-col-1-width) !important;
+  max-width: var(--data-table-sticky-col-1-width);
 }
 
 /* User column — was expanding to fill leftover width (min-width: 220px from members table). */
@@ -1978,6 +2574,17 @@
   flex-shrink: 0;
 }
 
+.add_contact_panel .mail_text_label {
+  font-size: var(--portal-form-label-font-size, 0.8125rem);
+  font-weight: var(--portal-form-label-font-weight, 600);
+  letter-spacing: var(--portal-form-label-letter-spacing, -0.01em);
+  color: var(--portal-form-label-color, var(--portal-text-muted, #64748b));
+}
+
+.add_contact_panel .portal_yesno_field_block {
+  margin-top: 0.35em;
+}
+
 .add_contact_name_grid .um_field_label_with_suffix {
   flex-wrap: nowrap;
 }
@@ -2038,12 +2645,50 @@
   display: flex;
   align-items: center;
   gap: 0.5em;
-  min-height: 2.65em;
+  min-height: 2.6666667em;
   padding: 0.4em 0.75em 0.4em 0.8em;
-  border: 1px solid var(--portal-border, #e2e8f0);
-  border-radius: var(--portal-card-radius, 4px);
+  border: 1px solid var(--portal-border, #e5e5e5);
+  border-radius: var(--portal-pill-radius, 4px);
   background: var(--portal-surface, #fff);
   box-sizing: border-box;
+}
+
+.add_contact_multiselect_control.is_select {
+  position: relative;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35em 0.45em;
+  padding: 0.4em 2.1em 0.4em 0.7em;
+  cursor: text;
+}
+
+.add_contact_multiselect_control.is_select .add_contact_multiselect_inline_chips {
+  display: contents;
+}
+
+.add_contact_multiselect_control.is_select .contacts_chip {
+  max-width: calc(100% - 2.5em);
+}
+
+.add_contact_multiselect_chevron {
+  position: absolute;
+  top: 50%;
+  right: 0.6em;
+  flex-shrink: 0;
+  color: var(--portal-text-muted, #64748b);
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+}
+
+.add_contact_multiselect_control.is_open .add_contact_multiselect_chevron {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.add_contact_multiselect_control.is_select .add_contact_multiselect_search_input {
+  flex: 1 1 7em;
+  min-width: 6em;
+  min-height: 1.55em;
 }
 
 .add_contact_multiselect_search_icon {
@@ -2068,24 +2713,32 @@
   outline: none;
 }
 
-.add_contact_multiselect_control:focus-within {
-  border-color: var(--portal-primary, #2563eb);
-  box-shadow: 0 0 0 2px
-    color-mix(in srgb, var(--portal-primary, #2563eb) 22%, transparent);
+.add_contact_multiselect_control:focus-within,
+.add_contact_multiselect_control.is_open {
+  border-color: var(--portal-text-muted, #64748b);
+  box-shadow: var(--portal-field-focus-shadow, 0 0 0 2px rgb(17 24 39 / 8%));
+}
+
+.add_contact_owners_multiselect.add_contact_multiselect_field {
+  margin-bottom: 0.45rem;
+}
+
+.add_contact_owners_field .add_contact_owners_hint {
+  margin: 0.4em 0 0;
 }
 
 .add_contact_multiselect_panel {
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(100% + 5px);
+  top: calc(100% + 4px);
   z-index: 20;
   margin-top: 0;
-  padding: 0.25em 0;
-  border: 1px solid var(--portal-border, #e2e8f0);
-  border-radius: var(--portal-card-radius, 4px);
+  padding: 0.3em 0;
+  border: 1px solid var(--portal-border, #e5e5e5);
+  border-radius: var(--portal-pill-radius, 4px);
   background: var(--portal-surface, #fff);
-  max-height: min(220px, 40vh);
+  max-height: min(240px, 42vh);
   overflow-y: auto;
   box-shadow:
     0 4px 6px -2px rgb(15 23 42 / 0.08),
@@ -2132,70 +2785,108 @@
   line-height: 1.45;
 }
 
+.um_field label.add_contact_multiselect_row,
+.add_contact_panel .um_field label.add_contact_multiselect_row,
 .add_contact_multiselect_row {
+  position: relative;
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.65em;
+  width: 100%;
   margin: 0;
-  padding: 0.55em 0.9em;
+  margin-bottom: 0;
+  padding: 0.5em 0.85em;
   cursor: pointer;
   font-family: inherit;
   font-style: normal;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--portal-text, #334155);
+  box-sizing: border-box;
 }
 
 .add_contact_multiselect_row:hover {
   background: var(--portal-muted-surface, #f8fafc);
 }
 
-/* Tag / list options: black rounded square + white check (matches design ref) */
-.add_contact_multiselect_checkbox {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 1.05rem !important;
-  height: 1.05rem !important;
-  max-width: 1.05rem !important;
-  min-width: 1.05rem !important;
+.add_contact_multiselect_row.is_selected {
+  background: color-mix(
+    in srgb,
+    var(--portal-primary, #2563eb) 7%,
+    var(--portal-surface, #fff)
+  );
+}
+
+.add_contact_multiselect_check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1rem;
+  width: 1rem;
+  height: 1rem;
   margin: 0;
-  flex: 0 0 auto !important;
-  flex-shrink: 0;
-  align-self: center;
-  box-sizing: border-box;
-  border: 2px solid #94a3b8;
-  border-radius: 4px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 3px;
   background: #fff;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease,
-    box-shadow 0.12s ease;
+  color: #fff;
+  box-sizing: border-box;
 }
 
-.add_contact_multiselect_checkbox:hover {
-  border-color: #64748b;
+.add_contact_multiselect_row:hover .add_contact_multiselect_check {
+  border-color: #94a3b8;
 }
 
-.add_contact_multiselect_checkbox:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #0f172a 18%, transparent);
+.add_contact_multiselect_row.is_selected .add_contact_multiselect_check {
+  border-color: var(--portal-primary, #2563eb);
+  background: var(--portal-primary, #2563eb);
 }
 
-.add_contact_multiselect_checkbox:checked {
-  border-color: #0f172a;
-  background: #0f172a
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    center / 0.65rem 0.65rem no-repeat;
+.add_contact_multiselect_row:has(.add_contact_multiselect_checkbox:focus-visible)
+  .add_contact_multiselect_check {
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--portal-primary, #2563eb) 28%, transparent);
+}
+
+.add_contact_owners_multiselect .add_contact_multiselect_row {
+  align-items: center;
+}
+
+.add_contact_owners_multiselect .add_contact_multiselect_check {
+  margin: 0;
 }
 
 .add_contact_multiselect_row_label {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  line-height: 1.4;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4em;
+  line-height: 1.3;
   font-weight: 500;
   letter-spacing: -0.01em;
   color: #334155;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.add_contact_multiselect_row_name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.add_contact_multiselect_row_hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.75em;
+  font-weight: 400;
+  color: var(--portal-text-muted, #64748b);
 }
 
 :root[data-theme="dark"] .add_contact_multiselect_control {
@@ -2224,16 +2915,24 @@
   color: var(--portal-text, #e2e8f0);
 }
 
-:root[data-theme="dark"] .add_contact_multiselect_checkbox {
-  border-color: rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.06);
+:root[data-theme="dark"] .add_contact_multiselect_row.is_selected {
+  background: color-mix(
+    in srgb,
+    var(--portal-primary, #60a5fa) 12%,
+    transparent
+  );
 }
 
-:root[data-theme="dark"] .add_contact_multiselect_checkbox:checked {
-  border-color: #f8fafc;
-  background: #f8fafc
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5' stroke='%230f172a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    center / 0.65rem 0.65rem no-repeat;
+:root[data-theme="dark"] .add_contact_multiselect_check {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: #0f172a;
+}
+
+:root[data-theme="dark"] .add_contact_multiselect_row.is_selected .add_contact_multiselect_check {
+  border-color: var(--portal-primary, #60a5fa);
+  background: var(--portal-primary, #60a5fa);
+  color: #0f172a;
 }
 
 :root[data-theme="dark"] .add_contact_step_dot {
@@ -2721,6 +3420,41 @@
   box-sizing: border-box;
 }
 
+.contacts_th_platform_visible,
+.contacts_td_platform_visible {
+  width: 8.75rem;
+  min-width: 8.25rem;
+  max-width: 10rem;
+  vertical-align: middle;
+  box-sizing: border-box;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.contacts_th_joined,
+.contacts_td_joined {
+  width: 8.5rem;
+  min-width: 7.5rem;
+  max-width: 9.5rem;
+  vertical-align: middle;
+  box-sizing: border-box;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.contacts_th_relationship,
+.contacts_td_relationship {
+  width: 8.25rem;
+  min-width: 7.75rem;
+  max-width: 8.75rem;
+  vertical-align: middle;
+  box-sizing: border-box;
+}
+
+.contacts_td_relationship {
+  white-space: nowrap;
+}
+
 .contacts_td_show_offerings {
   white-space: nowrap;
 }
@@ -2799,6 +3533,12 @@
   .um_table.deal_inv_table
   thead
   th.contacts_th_show_offerings
+  .um_sort_header_label,
+.contacts_page
+  .contacts_table_panel
+  .um_table.deal_inv_table
+  thead
+  th.contacts_th_relationship
   .um_sort_header_label,
 .contacts_page
   .contacts_table_panel
@@ -2945,6 +3685,67 @@
   background: #f3f4f6;
   border-color: #e5e7eb;
   font-weight: 500;
+}
+
+/* Platform Contacts: whether a self-signup opted in to be visible to users. */
+.contacts_platform_visible_badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 3.5rem;
+  min-width: 3.5rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.contacts_platform_visible_badge--yes {
+  color: #16a34a;
+  background: color-mix(in srgb, #16a34a 14%, #ffffff);
+  border-color: color-mix(in srgb, #16a34a 28%, #ffffff);
+}
+
+.contacts_platform_visible_badge--no {
+  color: #6b7280;
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  font-weight: 500;
+}
+
+.contacts_th_organization,
+.contacts_td_organization {
+  min-width: 8.5rem;
+  max-width: 14rem;
+}
+
+.contacts_organization {
+  display: inline-block;
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.contacts_th_invited_by,
+.contacts_td_invited_by {
+  min-width: 8.5rem;
+  max-width: 12rem;
+}
+
+.contacts_invited_by {
+  display: inline-block;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .contacts_toolbar_trailing {

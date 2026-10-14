@@ -22,7 +22,10 @@ import {
   fetchDealInvestors,
   fetchDealMembers,
 } from "../../api/dealsApi"
-import { parseViewerDealMemberRoleFromApi } from "../../utils/dealDetailTabVisibility"
+import {
+  parseViewerDealMemberRoleFromApi,
+  scopeDealInvestorRowsForViewer,
+} from "../../utils/dealDetailTabVisibility"
 import {
   loadEmailTemplates,
   type EmailTemplateRow,
@@ -33,8 +36,11 @@ import {
 } from "../../../contacts/components/SendMailEmailPreviewModal"
 import { DealMailRecipientPicker } from "./DealMailRecipientPicker"
 import {
+  appendDealRosterSponsorsAsRecipients,
   buildDealMailRecipients,
+  defaultDealMailRecipientIds,
   deliveryEmailsForRecipients,
+  filterDealMailRecipientsForCoSponsorViewer,
   mergeDealInvestorRowsForMail,
   type DealMailRecipient,
 } from "./dealMailRecipients"
@@ -51,6 +57,10 @@ export interface DealSendMailModalProps {
   onSent?: (mail: InvestorCommunicationMailRow) => void
   /** Pre-select recipients by email when opening (e.g. resend from mail log). */
   initialRecipientEmails?: string[]
+  /** Pre-select this template (e.g. co-sponsor releasing a no-intercept mail). */
+  initialTemplateId?: string | null
+  /** Co-sponsor releasing a held no-intercept email to their own LPs. */
+  releaseToOwnInvestors?: boolean
 }
 
 export function DealSendMailModal({
@@ -59,6 +69,8 @@ export function DealSendMailModal({
   onClose,
   onSent,
   initialRecipientEmails,
+  initialTemplateId,
+  releaseToOwnInvestors = false,
 }: DealSendMailModalProps) {
   const navigate = useNavigate()
   const [loadingRecipients, setLoadingRecipients] = useState(false)
@@ -85,6 +97,11 @@ export function DealSendMailModal({
   const selectedTemplate = useMemo(
     () => emailTemplates.find((t) => t.id === selectedTemplateId) ?? null,
     [emailTemplates, selectedTemplateId],
+  )
+
+  const selectedCanDeliver = useMemo(
+    () => selectedRecipients.some((r) => r.canDeliver),
+    [selectedRecipients],
   )
 
   const selectedDeliveryEmails = useMemo(
@@ -128,42 +145,50 @@ export function DealSendMailModal({
           fetchDealMembers(dealId.trim()),
         ])
       if (cancelled) return
-      setViewerIsCosponsor(
-        parseViewerDealMemberRoleFromApi(
-          membersPayload.viewerDealMemberRole,
-        ) === "co_sponsor",
+      const viewerRole = parseViewerDealMemberRoleFromApi(
+        membersPayload.viewerDealMemberRole,
       )
-      const merged = buildDealMailRecipients({
-        investors: mergeDealInvestorRowsForMail(
+      const viewerIsCo = viewerRole === "co_sponsor"
+      setViewerIsCosponsor(viewerIsCo)
+      const investors = scopeDealInvestorRowsForViewer(
+        mergeDealInvestorRowsForMail(
           lpPayload.investors,
           allPayload.investors,
         ),
+        viewerRole,
+        getSessionUserId(),
+      )
+      const built = buildDealMailRecipients({
+        investors,
         classes,
         viewerUserId: getSessionUserId(),
         viewerEmail: getSessionUserEmail(),
       })
+      const merged = viewerIsCo
+        ? filterDealMailRecipientsForCoSponsorViewer(built, {
+            viewerUserId: getSessionUserId(),
+            viewerEmail: getSessionUserEmail(),
+          })
+        : appendDealRosterSponsorsAsRecipients(
+            built,
+            membersPayload.members ?? [],
+          )
       setRecipients(merged)
-      const ids =
-        preselectEmails.size > 0
-          ? merged
-              .filter((r) => {
-                const email = r.email.trim().toLowerCase()
-                const sponsor = r.sponsorEmail.trim().toLowerCase()
-                return (
-                  (email && preselectEmails.has(email)) ||
-                  (sponsor && preselectEmails.has(sponsor))
-                )
-              })
-              .map((r) => r.id)
-          : []
-      setSelectedRecipientIds(new Set(ids))
+      setSelectedRecipientIds(
+        defaultDealMailRecipientIds(merged, {
+          preselectEmails: releaseToOwnInvestors ? [] : [...preselectEmails],
+        }),
+      )
       const active = templates.filter((t) => !t.archived)
       setEmailTemplates(active)
-      setSelectedTemplateId((prev) =>
-        prev && active.some((t) => t.id === prev)
-          ? prev
-          : (active[0]?.id ?? ""),
-      )
+      const preferredTemplateId = String(initialTemplateId ?? "").trim()
+      setSelectedTemplateId((prev) => {
+        if (preferredTemplateId && active.some((t) => t.id === preferredTemplateId)) {
+          return preferredTemplateId
+        }
+        if (prev && active.some((t) => t.id === prev)) return prev
+        return active[0]?.id ?? ""
+      })
       setSendMailCc("")
       setSendMailEmailPreview(null)
       setLoadingRecipients(false)
@@ -171,7 +196,7 @@ export function DealSendMailModal({
     return () => {
       cancelled = true
     }
-  }, [open, dealId, initialRecipientEmails])
+  }, [open, dealId, initialRecipientEmails, initialTemplateId, releaseToOwnInvestors])
 
   const closeModal = useCallback(() => {
     if (sending) return
@@ -191,10 +216,10 @@ export function DealSendMailModal({
         toast.error("Template required", "Choose an email template first.")
         return
       }
-      if (selectedDeliveryEmails.length === 0) {
+      if (!selectedCanDeliver) {
         toast.error(
           "No email recipients",
-          "Select investors with a valid email, or a cosponsor who can release the message.",
+          "Select investors with a valid email, or a co-sponsor who can receive this message.",
         )
         return
       }
@@ -206,13 +231,14 @@ export function DealSendMailModal({
         createdAt: template.createdAt,
         subject: template.subject,
         bodyHtml: template.body,
-        toEmails: selectedDeliveryEmails,
+        toEmails: senderEmail ? [senderEmail] : [],
         ccEmails: parseEmailInput(sendMailCc),
+        bccEmails: selectedDeliveryEmails,
         attachment: template.attachment,
         startInEditMode: mode === "edit",
       })
     },
-    [emailTemplates, selectedDeliveryEmails, selectedTemplateId, sendMailCc],
+    [emailTemplates, selectedCanDeliver, selectedDeliveryEmails, selectedTemplateId, sendMailCc, senderEmail],
   )
 
   const handleSendMailPreviewSaved = useCallback(
@@ -228,10 +254,10 @@ export function DealSendMailModal({
   )
 
   const handleSend = useCallback(async () => {
-    if (selectedDeliveryEmails.length === 0) {
+    if (!selectedCanDeliver) {
       toast.error(
         "No email recipients",
-        "Select investors with a valid email, or a cosponsor who can release the message.",
+        "Select investors with a valid email, or a co-sponsor who can receive this message.",
       )
       return
     }
@@ -269,6 +295,7 @@ export function DealSendMailModal({
     dealId,
     emailTemplates,
     onSent,
+    selectedCanDeliver,
     selectedDeliveryEmails,
     selectedRecipients,
     selectedTemplateId,
@@ -339,12 +366,14 @@ export function DealSendMailModal({
               {loadingRecipients
                 ? "Loading investors for this deal…"
                 : selectedRecipients.length === 0
-                  ? "Select limited partners or general partners to send this email."
+                  ? viewerIsCosponsor
+                    ? "Select your investors to send this email."
+                    : "Select limited partners or general partners to send this email."
                   : viewerIsCosponsor
-                    ? `${selectedRecipients.length} selected. Sending as a cosponsor releases this email to your investors.`
+                    ? `${selectedRecipients.length} selected. This email goes only to your investors.`
                     : selectedReleaseCount > 0
-                      ? `${selectedRecipients.length} selected · ${selectedReleaseCount} require cosponsor release.`
-                      : `Sending to ${selectedRecipients.length} selected investor${
+                      ? `${selectedRecipients.length} selected · ${selectedReleaseCount} held for co-sponsor (No interrupt).`
+                      : `Sending to ${selectedRecipients.length} selected recipient${
                           selectedRecipients.length === 1 ? "" : "s"
                         } on this deal.`}
             </span>
@@ -352,7 +381,7 @@ export function DealSendMailModal({
 
           <div className="contacts_suspend_reason_field deal_inv_comm_recipients_field">
             <label className="um_field_label_row deal_inv_comm_recipients_label">
-              <span>Recipients</span>
+              <span>Recipients (BCC)</span>
             </label>
             {loadingRecipients ? (
               <p className="deal_inv_comm_recipients_loading" role="status">
@@ -477,7 +506,8 @@ export function DealSendMailModal({
                 sending ||
                 loadingRecipients ||
                 !selectedTemplateId ||
-                selectedRecipients.length === 0
+                selectedRecipients.length === 0 ||
+                !selectedCanDeliver
               }
               onClick={requestSend}
             >

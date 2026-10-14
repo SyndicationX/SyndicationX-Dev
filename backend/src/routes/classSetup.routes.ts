@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { blockCrossOrgColleagueDealMutations } from "../middleware/crossOrgDealManage.middleware.js";
 import {
   deleteDealClassSetupClass,
   getDealClassSetup,
@@ -9,6 +10,8 @@ import {
 } from "../controllers/classSetup/classSetup.controller.js";
 
 const router = Router();
+
+router.use("/deals/:dealId", blockCrossOrgColleagueDealMutations);
 
 router.get("/deals/:dealId/class-setup", getDealClassSetup);
 router.put("/deals/:dealId/class-setup", putDealClassSetup);

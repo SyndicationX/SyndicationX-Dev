@@ -21,6 +21,33 @@ export type StripeBillingPlanId = "starter" | "running" | "growth";
 export type StripeBillingCycle = "monthly" | "annual";
 export type StripeBillingSeatBand = "5" | "10" | "10plus";
 
+/** Included company users (team members) per deal plan. Extra users are $10 each. */
+export const INCLUDED_COMPANY_USERS_BY_PLAN: Record<
+  StripeBillingPlanId,
+  number
+> = {
+  starter: 1,
+  running: 2,
+  growth: 3,
+};
+
+/** One-time fee in cents for each company user beyond the plan included count. */
+export const EXTRA_COMPANY_USER_FEE_CENTS = 1000;
+
+/** Self-serve cap; 25+ company users is custom / contact sales. */
+export const MAX_SELF_SERVE_COMPANY_USERS = 24;
+
+export const EXTRA_COMPANY_USER_PAYMENT_REQUIRED =
+  "EXTRA_COMPANY_USER_PAYMENT_REQUIRED";
+
+export function includedCompanyUsersForPlan(
+  planId: string | null | undefined,
+): number {
+  const plan = normalizeBillingPlanId(planId);
+  if (!plan) return INCLUDED_COMPANY_USERS_BY_PLAN.starter;
+  return INCLUDED_COMPANY_USERS_BY_PLAN[plan];
+}
+
 export const STRIPE_BILLING_PLAN_IDS: readonly StripeBillingPlanId[] = [
   "starter",
   "running",

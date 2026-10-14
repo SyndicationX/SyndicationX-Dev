@@ -36,6 +36,45 @@ export function secTypeDisplayLabel(code: string): string {
   return stripMostCommonFromLabel(label)
 }
 
+function compactSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "")
+}
+
+function fieldMatchesDealSearch(value: string | null | undefined, query: string, compactQuery: string): boolean {
+  const text = String(value ?? "").trim()
+  if (!text || text === "—") return false
+  if (text.toLowerCase().includes(query)) return true
+  return compactQuery.length >= 3 && compactSearchText(text).includes(compactQuery)
+}
+
+/**
+ * Dashboard and deals-page search. Matches the deal name, deal type, and SEC
+ * type, so "506(c)" matches a stored `506_c` offering.
+ */
+export function dealFieldsMatchSearch(
+  fields: {
+    name?: string | null
+    dealType?: string | null
+    secType?: string | null
+    location?: string | null
+  },
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const compactQuery = compactSearchText(q)
+  const dealType = String(fields.dealType ?? "")
+  const secType = String(fields.secType ?? "")
+  return [
+    fields.name,
+    fields.location,
+    dealType,
+    dealTypeDisplayLabel(dealType),
+    secType,
+    secTypeDisplayLabel(secType),
+  ].some((value) => fieldMatchesDealSearch(value, q, compactQuery))
+}
+
 const moneyFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",

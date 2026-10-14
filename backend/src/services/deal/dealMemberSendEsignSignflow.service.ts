@@ -44,9 +44,11 @@ import { fetchPrefilledOnboardingFields } from "../onboarding/onboardingFieldsPy
 import { isOnboardingFieldsServiceConfigured } from "../../config/onboardingFields.config.js";
 import { applySignflowInvestorDataFieldBindings } from "./dealEsignSignflow.service.js";
 import {
+  alignSignFlowRadioFieldSizeToChoiceBox,
   alignSignFlowTextFieldHeightsToDocument,
   getInvestorQuestionnaireSignatureSignFlowFields,
   isQuestionnaireSignatureFieldLabel,
+  normalizeSignFlowChoiceFieldOptionNumbers,
 } from "./esignPdfMerge.service.js";
 
 import type { InvestorW9FormData } from "./investorW9Form.service.js";
@@ -428,6 +430,8 @@ export async function createInvestorSignatureRequestSignflow(params: {
   // Always remask after any prefill path (Python may overwrite with raw answers).
   investorFields = maskSsnValuesOnSignFlowFields(investorFields);
   investorFields = alignSignFlowTextFieldHeightsToDocument(investorFields);
+  investorFields = alignSignFlowRadioFieldSizeToChoiceBox(investorFields);
+  investorFields = normalizeSignFlowChoiceFieldOptionNumbers(investorFields);
   investorFields = dedupeSignFlowFieldsByPlacement(investorFields);
 
   const includeSponsor = signFlowTemplateHasSponsorFields(templateDoc);
@@ -445,6 +449,8 @@ export async function createInvestorSignatureRequestSignflow(params: {
     );
     // Sponsors must never see full SSN on their signing fields.
     sponsorFields = maskSsnValuesOnSignFlowFields(sponsorFields);
+    sponsorFields = alignSignFlowRadioFieldSizeToChoiceBox(sponsorFields);
+    sponsorFields = normalizeSignFlowChoiceFieldOptionNumbers(sponsorFields);
   }
 
   const workflowType = resolveEsignSignflowWorkflowType(file);

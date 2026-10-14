@@ -1,4 +1,5 @@
 import { LineChart, TrendingUp } from "lucide-react"
+import { formatCount } from "@/common/utils/formatCount"
 import { useCallback, useEffect, useId, useMemo, useState } from "react"
 import {
   fetchPlatformFunding,
@@ -218,7 +219,7 @@ export function FundPerformanceChart({
                 strokeWidth={2}
               >
                 <title>
-                  {`${c.label}: ${formatPlatformUsd(c.amountUsd)} (${c.investmentCount} investments)`}
+                  {`${c.label}: ${formatPlatformUsd(c.amountUsd)} (${formatCount(c.investmentCount)} investments)`}
                 </title>
               </circle>
             ))}

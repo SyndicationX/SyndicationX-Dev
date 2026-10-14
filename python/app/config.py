@@ -6,9 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    fastapi_port: int = 6002
+    fastapi_port: int = 5008
     flask_port: int = 5009
-    cors_origins: str = "http://localhost:5173,http://localhost:6001"
+    cors_origins: str = "http://localhost:5173,http://localhost:5004"
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -95,6 +95,87 @@
   flex-shrink: 0;
 }
 
+.deal_offering_cosponsor_intercept {
+  margin-top: 1em;
+  padding: 0.95em 1em 1em;
+  border-radius: var(--portal-card-radius, 4px);
+  border: 1px solid var(--portal-border, #e2e8f0);
+  background: var(--portal-surface, #fff);
+}
+
+.deal_offering_cosponsor_intercept_head {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-bottom: 0.55em;
+}
+
+.deal_offering_cosponsor_intercept_badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2em 0.55em;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.deal_offering_cosponsor_intercept_badge_yes {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.deal_offering_cosponsor_intercept_badge_no {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.deal_offering_cosponsor_intercept_question {
+  margin: 0 0 0.35em;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--portal-text, #0f172a);
+  line-height: 1.35;
+}
+
+.deal_offering_cosponsor_intercept_help {
+  margin: 0 0 0.85em;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--portal-text-muted, #64748b);
+}
+
+.deal_offering_cosponsor_intercept_choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65em 1.25em;
+}
+
+.deal_offering_cosponsor_intercept_choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--portal-text, #0f172a);
+  cursor: pointer;
+}
+
+.deal_offering_cosponsor_intercept_choice input {
+  margin: 0;
+}
+
+:root[data-theme="dark"] .deal_offering_cosponsor_intercept_badge_yes {
+  background: color-mix(in srgb, #3b82f6 28%, transparent);
+  color: #93c5fd;
+}
+
+:root[data-theme="dark"] .deal_offering_cosponsor_intercept_badge_no {
+  background: color-mix(in srgb, #94a3b8 22%, transparent);
+  color: #cbd5e1;
+}
+
 /* Assets & Classes toolbars: search left, Export All + primary action right */
 .deal_offering_section_toolbar.um_toolbar:has(.um_search_wrap) {
   justify-content: flex-start;
@@ -4410,8 +4491,7 @@ a.deal_docs_name_link:hover {
 
 .deal_docs_ui_th_actions {
   width: 7rem;
-  text-align: right;
-  padding-right: 0.85rem;
+  text-align: center;
 }
 
 .deal_docs_ui_tr {
@@ -4458,7 +4538,7 @@ a.deal_docs_name_link:hover {
 .deal_docs_ui_doc_cell {
   display: flex;
   flex-wrap: nowrap;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.35rem 0.65rem;
   min-width: 0;
 }
@@ -4721,24 +4801,30 @@ a.deal_docs_name_link:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  gap: 0.3rem;
+  width: auto;
+  min-height: 1.85rem;
   margin: 0;
-  padding: 0;
-  border: 1px solid var(--portal-border, #e2e8f0);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #16a34a;
   border-radius: var(--portal-card-radius, 4px);
-  background: var(--portal-surface, #fff);
-  color: var(--portal-primary, #2563eb);
+  background: #16a34a;
+  color: #fff;
   cursor: pointer;
   flex-shrink: 0;
 }
 
+.deal_docs_shared_with_mail_btn_label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
 .deal_docs_shared_with_mail_btn:hover:not(:disabled) {
-  background: color-mix(
-    in srgb,
-    var(--portal-primary, #2563eb) 8%,
-    transparent
-  );
+  background: #15803d;
+  border-color: #15803d;
+  color: #fff;
 }
 
 .deal_docs_shared_with_mail_btn:disabled {
@@ -4886,15 +4972,15 @@ a.deal_docs_name_link:hover {
 }
 
 .deal_docs_ui_td_actions {
-  text-align: right;
-  padding-right: 0.85rem;
+  text-align: center;
 }
 
 .deal_docs_ui_row_actions {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 0.2rem;
+  width: 100%;
 }
 
 .deal_docs_ui_row_icon_btn {
@@ -5087,9 +5173,9 @@ a.deal_docs_name_link:hover {
 }
 
 :root[data-theme="dark"] .deal_docs_shared_with_mail_btn {
-  background: var(--portal-surface, #1e293b);
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #60a5fa;
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
 }
 
 

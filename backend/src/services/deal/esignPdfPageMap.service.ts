@@ -58,16 +58,20 @@ function resolveSigningPageForField(
   signingHashes: string[],
   referenceHashes: string[],
 ): number {
-  const pageHash = field.pageHash?.trim();
-  if (pageHash) {
-    const byHash = signingHashes.indexOf(pageHash);
-    if (byHash >= 0) return byHash + 1;
-  }
-
   const templatePage = Math.max(
     1,
     Math.floor(field.templatePage ?? field.page),
   );
+
+  const pageHash = field.pageHash?.trim();
+  const templatePageHash = referenceHashes[templatePage - 1];
+  // Only follow the anchor while it still describes the page the field sits on.
+  // A hash left over from an earlier page would pull the field back to it.
+  if (pageHash && (!templatePageHash || pageHash === templatePageHash)) {
+    const byHash = signingHashes.indexOf(pageHash);
+    if (byHash >= 0) return byHash + 1;
+  }
+
   const mapped = pageMap.get(templatePage);
   if (mapped != null) return mapped;
 
@@ -123,7 +127,7 @@ export async function remapSignFlowFieldsToSigningPdf(
       page,
       templatePage,
       pageHash:
-        field.pageHash?.trim() || referenceHashes[templatePage - 1] || undefined,
+        referenceHashes[templatePage - 1] || field.pageHash?.trim() || undefined,
     };
   });
 }

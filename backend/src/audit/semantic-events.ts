@@ -63,6 +63,8 @@ export function deriveSemanticAuditEvent(pathOnly: string, method: string): stri
     return "company.workspace_settings_read";
   if (s[0] === "companies" && s[2] === "workspace-settings" && s[3] && m === "PUT")
     return "company.workspace_settings_update";
+  if (s[0] === "companies" && s[1] === ":id" && s[2] === "name" && m === "PATCH")
+    return "company.rename";
   if (s[0] === "companies" && s[1] === ":id" && s.length === 2 && m === "PATCH")
     return "company.update";
 

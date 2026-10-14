@@ -18,7 +18,10 @@ import {
 } from "../../../distribution-setup/utils/distributionPeriod"
 import type { DealInvestorRow } from "../../../types/deal-investors.types"
 import { parseMoneyDigits } from "../../../utils/offeringMoneyFormat"
-import { parseStoredClassPercent } from "./investorDistributionAllocation"
+import {
+  parseStoredClassPercent,
+  resolvePercentOfDeal,
+} from "./investorDistributionAllocation"
 import { allocateInvestorsByPreferredDue } from "./investorPreferredAllocation"
 
 export type DistributionListMetrics = {
@@ -389,6 +392,7 @@ export type DistributionClassTableRow = {
   id: string
   name: string
   typeLabel: string
+  classType: string
   investorCount: number
   capital: number
   payment: number
@@ -474,6 +478,7 @@ export function classTableRowsForDistribution(params: {
       id: opt.id,
       name: opt.name,
       typeLabel: opt.typeLabel || classTypeLabel(setup?.classType) || "—",
+      classType: String(setup?.classType ?? "").trim().toLowerCase(),
       investorCount: a?.investorIds.size ?? 0,
       capital: a?.capital ?? 0,
       payment,
@@ -490,6 +495,7 @@ export type DistributionClassInvestorRow = {
   email: string
   capital: number
   percentOfClass: number
+  percentOfDeal: number
   payment: number
   required: number
   unpaid: number
@@ -540,7 +546,13 @@ export function investorRowsForDistributionClass(params: {
 
   const allocByInvestor = new Map<
     string,
-    { capital: number; percentOfClass: number; payment: number; required: number }
+    {
+      capital: number
+      percentOfClass: number
+      percentOfDeal: number
+      payment: number
+      required: number
+    }
   >()
   if (investors.length > 0 && setupClasses.length > 0) {
     const lines = allocateInvestorsByPreferredDue({
@@ -567,6 +579,7 @@ export function investorRowsForDistributionClass(params: {
       allocByInvestor.set(id, {
         capital: line.capital || 0,
         percentOfClass: line.percentOfClass || 0,
+        percentOfDeal: line.percentOfDeal || 0,
         payment: line.payment || 0,
         required: line.required || 0,
       })
@@ -583,12 +596,18 @@ export function investorRowsForDistributionClass(params: {
     email: string
     capital: number
     percentOfClass: number
+    percentOfDeal: number
     payment: number
     required: number
   }): DistributionClassInvestorRow => ({
     ...args,
     unpaid: Math.max(0, args.required - args.payment),
   })
+
+  const dealCapital = investors.reduce((s, row) => {
+    const n = parseMoneyDigits(row.committed)
+    return s + (Number.isFinite(n) && n > 0 ? n : 0)
+  }, 0)
 
   const mapped =
     stored.length > 0
@@ -604,12 +623,19 @@ export function investorRowsForDistributionClass(params: {
             parseStoredClassPercent(inv?.percentOfClassDistributions) ??
             alloc?.percentOfClass ??
             0
+          const percentOfDeal = resolvePercentOfDeal({
+            storedDealPercent: pay.percentOfDeal,
+            entityOwnershipPercent: inv?.entityOwnershipPercent,
+            capital,
+            dealCapital,
+          })
           return toRow({
             id: id || `${pay.investorName}-${pay.classId}`,
             name: investorDisplayName(inv, pay.investorName),
             email: String(inv?.userEmail ?? pay.userEmail ?? "").trim(),
             capital,
             percentOfClass,
+            percentOfDeal,
             payment,
             required: alloc?.required ?? 0,
           })
@@ -622,6 +648,7 @@ export function investorRowsForDistributionClass(params: {
             email: String(inv?.userEmail ?? "").trim(),
             capital: alloc.capital,
             percentOfClass: alloc.percentOfClass,
+            percentOfDeal: alloc.percentOfDeal,
             payment: alloc.payment,
             required: alloc.required,
           })

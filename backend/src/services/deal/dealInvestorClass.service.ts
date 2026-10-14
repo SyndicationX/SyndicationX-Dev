@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../../database/db.js";
 import {
   dealInvestorClass,
@@ -59,6 +59,34 @@ export async function listInvestorClassesByDealId(
     .from(dealInvestorClass)
     .where(eq(dealInvestorClass.dealId, dealId))
     .orderBy(asc(dealInvestorClass.createdAt));
+}
+
+/**
+ * `listInvestorClassesByDealId` for many deals in one query — the deals list needs classes
+ * for every row, and querying per row made load time scale with the number of deals.
+ */
+export async function mapInvestorClassesByDealIds(
+  dealIds: readonly string[],
+): Promise<Map<string, DealInvestorClassRow[]>> {
+  const byDealId = new Map<string, DealInvestorClassRow[]>();
+  const ids = [
+    ...new Set(dealIds.map((d) => String(d ?? "").trim()).filter(Boolean)),
+  ];
+  if (ids.length === 0) return byDealId;
+
+  const rows = await db
+    .select()
+    .from(dealInvestorClass)
+    .where(inArray(dealInvestorClass.dealId, ids))
+    .orderBy(asc(dealInvestorClass.createdAt));
+
+  for (const row of rows) {
+    const key = String(row.dealId);
+    const existing = byDealId.get(key);
+    if (existing) existing.push(row);
+    else byDealId.set(key, [row]);
+  }
+  return byDealId;
 }
 
 export async function insertInvestorClass(params: {

@@ -145,11 +145,12 @@ export default function DealInvitePage() {
   const signupHref = `/signup/${encodeURIComponent(token)}`;
   const afterAuthPath =
     nextPath ?? `/deals/${encodeURIComponent(ctx.dealId)}`;
-  const signinTo =
-    nextPath != null
-      ? `/signin?next=${encodeURIComponent(nextPath)}`
-      : "/signin";
-  const signinState = { from: afterAuthPath };
+  const signinParams = new URLSearchParams();
+  if (nextPath != null) signinParams.set("next", nextPath);
+  if (ctx.email.trim()) signinParams.set("email", ctx.email.trim());
+  const signinQuery = signinParams.toString();
+  const signinTo = `/signin${signinQuery ? `?${signinQuery}` : ""}`;
+  const signinState = { from: afterAuthPath, email: ctx.email.trim() };
   if (nextPath) {
     sessionStorage.setItem(AUTH_RETURN_NEXT_KEY, nextPath);
   }

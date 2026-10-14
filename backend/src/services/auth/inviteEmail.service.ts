@@ -24,6 +24,7 @@ export async function sendInviteSignupEmail(
   toEmail: string,
   signupUrl: string,
   expiresDescription: string,
+  options?: { persistentLink?: boolean },
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   const to = toEmail.trim().toLowerCase();
   if (!to || !to.includes("@")) {
@@ -57,8 +58,8 @@ export async function sendInviteSignupEmail(
         bcc: ccBcc.bcc,
       }),
       subject: "You're invited to SyndicationX",
-      text: buildInviteSignupEmailText(to, signupUrl, expiresDescription),
-      html: buildInviteSignupEmailHtml(to, signupUrl, expiresDescription),
+      text: buildInviteSignupEmailText(to, signupUrl, expiresDescription, options),
+      html: buildInviteSignupEmailHtml(to, signupUrl, expiresDescription, options),
     });
     return { ok: true };
   } catch (error: unknown) {

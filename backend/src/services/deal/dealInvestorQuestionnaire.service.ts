@@ -710,13 +710,17 @@ function syncStoredDefaultQuestion(
     changed = true;
   }
 
-  const catalogOpts = catalog.options ?? [];
-  const storedOpts = next.options ?? [];
-  if (catalogOpts.length > 0) {
-    if (
-      next.fieldType !== catalog.fieldType ||
-      storedOpts.join("\u0000") !== catalogOpts.join("\u0000")
-    ) {
+  // Built-in choice fields keep the sponsor's edited option list; the catalog
+  // list is only a starting point when nothing is stored.
+  if (next.fieldType === "radio" || next.fieldType === "checkboxes") {
+    const catalogOpts = catalog.options ?? [];
+    const storedOpts = (next.options ?? []).map((o) => o.trim()).filter(Boolean);
+    if (storedOpts.length > 0) {
+      if (storedOpts.join("\u0000") !== (next.options ?? []).join("\u0000")) {
+        next.options = storedOpts;
+        changed = true;
+      }
+    } else if (catalogOpts.length > 0) {
       next.options = [...catalogOpts];
       changed = true;
     }

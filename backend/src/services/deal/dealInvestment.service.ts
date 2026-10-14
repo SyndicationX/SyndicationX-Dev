@@ -11,7 +11,7 @@ import {
 } from "./dealStoragePaths.service.js";
 import { db, pool } from "../../database/db.js";
 import { users } from "../../schema/auth.schema/signin.js";
-import { companies } from "../../schema/schema.js";
+import { companies, userCompanyMembership } from "../../schema/schema.js";
 import { contact } from "../../schema/contact.schema.js";
 import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
 import {
@@ -28,6 +28,7 @@ import {
   isPortalUserSponsorOnDeal,
   listEquivalentPortalUserIdsForUser,
 } from "./dealMemberScope.service.js";
+import { loadCoSponsorEmailInterceptByUserLower } from "./dealCoSponsorEmailIntercept.service.js";
 import {
   isDocSignedEsignCompleted,
   isDocSignedEsignPending,
@@ -40,6 +41,11 @@ import {
 import { formatDdMmmYyyy } from "../../utils/formatDdMmmYyyy.js";
 import { formatPortalUserDisplayLabel } from "../../utils/portalUsernameDisplay.js";
 import { userInvestorProfiles } from "../../schema/investing.schema/userProfileBook.schema.js";
+import {
+  applyContactOverlaysById,
+  canonicalRosterPersonKey,
+  type RosterResolvedPerson,
+} from "./dealRosterPersonIdentity.js";
 
 const UPLOAD_SUBDIR = DEAL_ASSETS_UPLOAD_SUBDIR;
 
@@ -66,7 +72,12 @@ export function isGeneralPartnerStoredRole(
   raw: string | null | undefined,
 ): boolean {
   const s = String(raw ?? "").trim().toLowerCase();
-  return s === "general partner" || s === "general partners";
+  return (
+    s === "general partner" ||
+    s === "general partners" ||
+    s === "team member" ||
+    s === "team members"
+  );
 }
 
 /** Lead / Admin / Co-sponsor / Deal Member — stay on Deal Members, not General Partners. */
@@ -79,6 +90,17 @@ export function isDealTeamRosterRole(raw: string | null | undefined): boolean {
     s === "co sponsor" ||
     s === "deal member"
   );
+}
+
+/**
+ * Company users billed on the deal plan (Starter 1 / Running 2 / Growth 3).
+ * Includes Deal Members team roles and Team Member (stored as General Partner).
+ * LP investors are not company users.
+ */
+export function isDealCompanyUserStoredRole(
+  raw: string | null | undefined,
+): boolean {
+  return isDealTeamRosterRole(raw) || isGeneralPartnerStoredRole(raw);
 }
 
 export function isGpSubscriptionType(subscriptionType: string): boolean {
@@ -337,6 +359,11 @@ export type CreateDealInvestmentInput = {
   extraContributionAmounts: string[];
   documentStoragePath: string | null;
   fundingMethod?: string;
+  /**
+   * Autosaved (not yet saved by the user). Omit on update to leave the stored flag
+   * untouched; pass `false` on an explicit Save to promote a draft row.
+   */
+  isDraft?: boolean;
 };
 
 /** Matches PostgreSQL uuid text (any variant) — used for users.id lookups */
@@ -384,7 +411,7 @@ function emailFromContactIdLiteral(contactId: string): string | null {
 export async function resolveUsersByContactIds(
   rows: DealInvestmentRow[],
 ): Promise<Map<string, ResolvedPortalUser>> {
-  const m = new Map<string, ResolvedPortalUser>();
+  const m = new Map<string, RosterResolvedPerson>();
   const need = new Set<string>();
   for (const r of rows) {
     const id = r.contactId?.trim();
@@ -428,33 +455,24 @@ export async function resolveUsersByContactIds(
       lastName: String(u.lastName ?? "").trim(),
     });
   }
-  const notInUsers = ids.filter((id) => !m.has(id.toLowerCase()));
-  if (notInUsers.length > 0) {
-    const contactRows = await db
-      .select({
-        id: contact.id,
-        email: contact.email,
-        firstName: contact.firstName,
-        lastName: contact.lastName,
-      })
-      .from(contact)
-      .where(inArray(contact.id, notInUsers));
-    for (const c of contactRows) {
-      const key = String(c.id).toLowerCase();
-      const firstName = String(c.firstName ?? "").trim();
-      const lastName = String(c.lastName ?? "").trim();
-      const displayName =
-        [firstName, lastName].filter(Boolean).join(" ").trim() || "—";
-      const email = c.email?.trim() || "—";
-      m.set(key, {
-        displayName,
-        userDisplayName: "—",
-        userEmail: email,
-        firstName,
-        lastName,
-      });
-    }
+
+  const contactRows = await db
+    .select({
+      id: contact.id,
+      email: contact.email,
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      fullName: contact.fullName,
+    })
+    .from(contact)
+    .where(inArray(contact.id, ids));
+
+  const contactById = new Map<string, (typeof contactRows)[number]>();
+  for (const c of contactRows) {
+    contactById.set(String(c.id).toLowerCase(), c);
   }
+
+  applyContactOverlaysById(ids, m, contactById);
   return m;
 }
 
@@ -1076,8 +1094,7 @@ export async function mapContactIdsToCanonicalCommitmentKeys(
 
   for (const raw of cleaned) {
     const rk = rosterContactKey(raw);
-    const em = looksLikeUuid(raw) ? idToEmail.get(rk) : undefined;
-    out.set(rk, em ? `em:${em}` : `id:${rk}`);
+    out.set(rk, canonicalRosterPersonKey(rk, idToEmail));
   }
   return out;
 }
@@ -1150,7 +1167,7 @@ async function loadDealMemberRolesByContactForDeal(
       dealMemberRole: dealMember.dealMemberRole,
     })
     .from(dealMember)
-    .where(eq(dealMember.dealId, dealId));
+    .where(and(eq(dealMember.dealId, dealId), eq(dealMember.isDraft, false)));
   const map = new Map<string, string>();
   for (const r of rows) {
     const k = rosterContactKey(r.contactMemberId);
@@ -1166,7 +1183,9 @@ async function loadLpRosterContactKeysForDeal(dealId: string): Promise<Set<strin
   const rows = await db
     .select({ contactMemberId: dealLpInvestor.contactMemberId })
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId));
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    );
   const set = new Set<string>();
   for (const r of rows) {
     const k = rosterContactKey(r.contactMemberId);
@@ -1386,13 +1405,20 @@ async function resolvePortalUserIdLowerByContactMemberIds(
     ),
   ];
   const emailToUserLower = new Map<string, string>();
-  for (const em of emails) {
-    const [u] = await db
-      .select({ id: users.id })
+  if (emails.length > 0) {
+    const emailUserRows = await db
+      .select({ id: users.id, email: users.email })
       .from(users)
-      .where(sql`lower(trim(${users.email})) = ${em}`)
-      .limit(1);
-    if (u) emailToUserLower.set(em, String(u.id).toLowerCase());
+      .where(
+        sql`lower(trim(${users.email})) in (${sql.join(
+          emails.map((e) => sql`${e}`),
+          sql`, `,
+        )})`,
+      );
+    for (const u of emailUserRows) {
+      const em = String(u.email ?? "").trim().toLowerCase();
+      if (em) emailToUserLower.set(em, String(u.id).toLowerCase());
+    }
   }
   for (const c of contactRows) {
     const k = rosterContactKey(c.id);
@@ -1591,6 +1617,7 @@ export async function sumCommittedFromInvestorsAddedByMemberContacts(
            ) AS inv_sum
          FROM deal_investment di
          WHERE di.deal_id = $1::uuid
+           AND di.is_draft = false
            AND trim(coalesce(di.contact_id, '')) <> ''
            AND trim(di.contact_id) <> '__portal_investment_autosave__'
          GROUP BY 1
@@ -1605,6 +1632,7 @@ export async function sumCommittedFromInvestorsAddedByMemberContacts(
            )::double precision AS lp_amt
          FROM deal_lp_investor lp
          WHERE lp.deal_id = $1::uuid
+           AND lp.is_draft = false
            AND lp.added_by IS NOT NULL
            AND lower(lp.added_by::text) = ANY($2::text[])
        ),
@@ -1686,11 +1714,13 @@ export async function sumCommittedFromInvestorsAddedByMemberContacts(
          )::text AS amount
        FROM deal_investment di
        WHERE di.deal_id = $1::uuid
+         AND di.is_draft = false
          AND trim(coalesce(di.contact_id, '')) <> ''
          AND trim(di.contact_id) <> '__portal_investment_autosave__'
          AND NOT EXISTS (
            SELECT 1 FROM deal_lp_investor lp
            WHERE lp.deal_id = di.deal_id
+             AND lp.is_draft = false
              AND lower(trim(lp.contact_member_id)) = lower(trim(di.contact_id))
          )
        GROUP BY 1`,
@@ -1795,7 +1825,7 @@ function isLeadSponsorRoleLabel(role: string | null | undefined): boolean {
  * investment-only rows), fall back to the deal’s Lead Sponsor for the
  * Investors tab “Sponsor name” column.
  */
-async function resolveDealLeadSponsorFallback(dealId: string): Promise<{
+export async function resolveDealLeadSponsorFallback(dealId: string): Promise<{
   userId?: string;
   displayName?: string;
   email?: string;
@@ -1809,7 +1839,7 @@ async function resolveDealLeadSponsorFallback(dealId: string): Promise<{
       dealMemberRole: dealMember.dealMemberRole,
     })
     .from(dealMember)
-    .where(eq(dealMember.dealId, d));
+    .where(and(eq(dealMember.dealId, d), eq(dealMember.isDraft, false)));
 
   const lead = memberRows.find((m) =>
     isLeadSponsorRoleLabel(m.dealMemberRole),
@@ -1863,20 +1893,30 @@ async function resolveDealLeadSponsorFallback(dealId: string): Promise<{
 const INVESTOR_EMAIL_REDACTED = "Email unavailable";
 
 /**
- * Lead / admin sponsors see the full investor roster but must not see email for rows
- * added by a co-sponsor on this deal.
+ * Lead / admin see the full roster, but not emails on investors added by a
+ * co-sponsor. A viewer who is that investor's sponsor still sees the email.
  */
 export async function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer<
-  T extends { userEmail?: string; addedByIsCoSponsorOnDeal?: boolean },
+  T extends {
+    userEmail?: string;
+    addedByUserId?: string;
+    addedByIsCoSponsorOnDeal?: boolean;
+    addedByCoSponsorEmailIntercept?: string;
+  },
 >(dealId: string, viewerUserId: string, rows: T[]): Promise<T[]> {
   const viewer = String(viewerUserId ?? "").trim();
   if (!viewer || rows.length === 0) return rows;
   if (!(await isPortalUserLeadOrAdminSponsorOnDeal(dealId, viewer))) return rows;
-  return rows.map((row) =>
-    row.addedByIsCoSponsorOnDeal === true
-      ? { ...row, userEmail: INVESTOR_EMAIL_REDACTED }
-      : row,
+  const viewerIds = await listEquivalentPortalUserIdsForUser(viewer);
+  const viewerIdSet = new Set(
+    [...viewerIds, viewer].map((id) => String(id).trim().toLowerCase()),
   );
+  return rows.map((row) => {
+    if (row.addedByIsCoSponsorOnDeal !== true) return row;
+    const addedBy = String(row.addedByUserId ?? "").trim().toLowerCase();
+    if (addedBy && viewerIdSet.has(addedBy)) return row;
+    return { ...row, userEmail: INVESTOR_EMAIL_REDACTED };
+  });
 }
 
 /**
@@ -1922,6 +1962,112 @@ export async function filterInvestorRowsVisibleToCoSponsor(
   });
 }
 
+function appendCompanyName(
+  m: Map<string, string>,
+  key: string,
+  rawName: string | null | undefined,
+) {
+  const name = String(rawName ?? "").trim();
+  if (!name || name === "—") return;
+  const prev = m.get(key);
+  if (!prev) {
+    m.set(key, name);
+    return;
+  }
+  const parts = prev.split("||");
+  if (!parts.some((p) => p.toLowerCase() === name.toLowerCase())) {
+    m.set(key, `${prev}||${name}`);
+  }
+}
+
+/**
+ * Companies a sponsor belongs to. Portal `organization_id` is often empty;
+ * company membership (and the contact’s organization) is the usual source.
+ * Multiple names are joined with `||`.
+ */
+export async function resolveUserCompanyNamesByIds(
+  ids: (string | null | undefined)[],
+): Promise<Map<string, string>> {
+  const need = new Set<string>();
+  for (const raw of ids) {
+    const id = raw?.trim();
+    if (id && looksLikeUuid(id)) need.add(id.toLowerCase());
+  }
+  if (need.size === 0) return new Map();
+  const idList = [...need];
+  const m = new Map<string, string>();
+
+  const found = await db
+    .select({
+      id: users.id,
+      companyName: companies.name,
+    })
+    .from(users)
+    .leftJoin(companies, eq(users.organizationId, companies.id))
+    .where(inArray(users.id, idList));
+  for (const u of found) {
+    appendCompanyName(m, String(u.id).toLowerCase(), u.companyName);
+  }
+
+  try {
+    const memberships = await db
+      .select({
+        userId: userCompanyMembership.userId,
+        companyName: companies.name,
+      })
+      .from(userCompanyMembership)
+      .innerJoin(companies, eq(userCompanyMembership.companyId, companies.id))
+      .where(inArray(userCompanyMembership.userId, idList));
+    for (const row of memberships) {
+      appendCompanyName(m, String(row.userId).toLowerCase(), row.companyName);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('relation "user_company_membership" does not exist')) {
+      throw err;
+    }
+  }
+
+  const contactRows = await db
+    .select({
+      id: contact.id,
+      email: contact.email,
+      companyName: companies.name,
+    })
+    .from(contact)
+    .leftJoin(companies, eq(contact.organizationId, companies.id))
+    .where(inArray(contact.id, idList));
+  const emailToKeys = new Map<string, string[]>();
+  for (const row of contactRows) {
+    const key = String(row.id).toLowerCase();
+    appendCompanyName(m, key, row.companyName);
+    const email = String(row.email ?? "").trim().toLowerCase();
+    if (!email) continue;
+    const keys = emailToKeys.get(email) ?? [];
+    keys.push(key);
+    emailToKeys.set(email, keys);
+  }
+
+  const emails = [...emailToKeys.keys()];
+  if (emails.length > 0) {
+    const byEmail = await db
+      .select({
+        email: users.email,
+        companyName: companies.name,
+      })
+      .from(users)
+      .leftJoin(companies, eq(users.organizationId, companies.id))
+      .where(inArray(users.email, emails));
+    for (const row of byEmail) {
+      const keys = emailToKeys.get(String(row.email ?? "").trim().toLowerCase());
+      if (!keys) continue;
+      for (const key of keys) appendCompanyName(m, key, row.companyName);
+    }
+  }
+
+  return m;
+}
+
 /**
  * Adds Sponsor name fields from the Investor → Sponsor/Co-sponsor relationship
  * (`deal_lp_investor.added_by` wins, then `deal_member.added_by`).
@@ -1941,8 +2087,10 @@ export async function enrichInvestorApiRowsWithAddedBy<
     T & {
       addedByUserId?: string;
       addedByEmail?: string;
+      addedByCompanyName?: string;
       addedByIsSponsorOnDeal?: boolean;
       addedByIsCoSponsorOnDeal?: boolean;
+      addedByCoSponsorEmailIntercept?: string;
     }
   >
 > {
@@ -1951,8 +2099,10 @@ export async function enrichInvestorApiRowsWithAddedBy<
       T & {
         addedByUserId?: string;
         addedByEmail?: string;
+        addedByCompanyName?: string;
         addedByIsSponsorOnDeal?: boolean;
         addedByIsCoSponsorOnDeal?: boolean;
+        addedByCoSponsorEmailIntercept?: string;
       }
     >;
   const { byContactKey: rosterAddedByByContactKey, byLpRowId } =
@@ -1984,12 +2134,15 @@ export async function enrichInvestorApiRowsWithAddedBy<
     }
   }
   void viewerUserId;
-  const [names, emails] = await Promise.all([
+  const [names, emails, companyNames] = await Promise.all([
     resolveUserDisplayNamesByIds([...uidsNeeded]),
     resolveUserEmailsByIds([...uidsNeeded]),
+    resolveUserCompanyNamesByIds([...uidsNeeded]),
   ]);
   const sponsorByAdderLower = new Map<string, boolean>();
   const coSponsorByAdderLower = new Map<string, boolean>();
+  const interceptByAdderLower =
+    await loadCoSponsorEmailInterceptByUserLower(dealId);
   await Promise.all(
     [...uniqueAdderIds.values()].map(async (id) => {
       const low = String(id).toLowerCase();
@@ -2027,6 +2180,23 @@ export async function enrichInvestorApiRowsWithAddedBy<
   const leadFallback = needsLeadFallback
     ? await resolveDealLeadSponsorFallback(dealId)
     : {};
+  const [dealCompanyRow] = await db
+    .select({ companyName: companies.name })
+    .from(addDealForm)
+    .leftJoin(companies, eq(addDealForm.organizationId, companies.id))
+    .where(eq(addDealForm.id, dealId))
+    .limit(1);
+  const dealCompanyName = String(dealCompanyRow?.companyName ?? "").trim();
+
+  let leadCompanyName: string | undefined;
+  if (leadFallback.userId) {
+    const leadKey = String(leadFallback.userId).toLowerCase();
+    leadCompanyName = companyNames.get(leadKey);
+    if (!leadCompanyName) {
+      const extra = await resolveUserCompanyNamesByIds([leadFallback.userId]);
+      leadCompanyName = extra.get(leadKey);
+    }
+  }
 
   return rows.map((row) => {
     const uid = resolveInvestorRowAddedByUserId(
@@ -2055,12 +2225,24 @@ export async function enrichInvestorApiRowsWithAddedBy<
       if (!resolvedUid && leadFallback.userId)
         resolvedUid = leadFallback.userId;
     }
+    let companyName = nk ? companyNames.get(nk) : undefined;
+    if (!companyName && resolvedUid) {
+      companyName = companyNames.get(String(resolvedUid).toLowerCase());
+    }
+    if (!companyName && !uid && leadCompanyName) {
+      companyName = leadCompanyName;
+    }
+    if (!companyName && dealCompanyName) {
+      companyName = dealCompanyName;
+    }
     const patch: {
       addedByUserId?: string;
       addedByDisplayName?: string;
       addedByEmail?: string;
+      addedByCompanyName?: string;
       addedByIsSponsorOnDeal?: boolean;
       addedByIsCoSponsorOnDeal?: boolean;
+      addedByCoSponsorEmailIntercept?: string;
     } = {};
     if (resolvedUid) {
       const rnk = String(resolvedUid).toLowerCase();
@@ -2073,21 +2255,30 @@ export async function enrichInvestorApiRowsWithAddedBy<
           : false);
       patch.addedByIsCoSponsorOnDeal =
         coSponsorByAdderLower.get(rnk) ?? false;
+      if (patch.addedByIsCoSponsorOnDeal) {
+        patch.addedByCoSponsorEmailIntercept =
+          interceptByAdderLower.get(rnk) ?? "yes";
+      }
     }
     if (display) patch.addedByDisplayName = display;
     if (email) patch.addedByEmail = email;
+    if (companyName) patch.addedByCompanyName = companyName;
     if (Object.keys(patch).length === 0)
       return row as T & {
         addedByUserId?: string;
         addedByEmail?: string;
+        addedByCompanyName?: string;
         addedByIsSponsorOnDeal?: boolean;
         addedByIsCoSponsorOnDeal?: boolean;
+        addedByCoSponsorEmailIntercept?: string;
       };
     return { ...row, ...patch } as T & {
       addedByUserId?: string;
       addedByEmail?: string;
+      addedByCompanyName?: string;
       addedByIsSponsorOnDeal?: boolean;
       addedByIsCoSponsorOnDeal?: boolean;
+      addedByCoSponsorEmailIntercept?: string;
     };
   });
 }
@@ -2101,17 +2292,23 @@ export async function assertDealExists(dealId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Autosaved draft rows are hidden unless `includeDrafts` is set (modal resume only). */
 export async function listDealInvestmentsByDealId(
   dealId: string,
-  options?: { lpInvestorsOnly?: boolean },
+  options?: { lpInvestorsOnly?: boolean; includeDrafts?: boolean },
 ): Promise<DealInvestmentRow[]> {
+  const draftExpr =
+    options?.includeDrafts === true
+      ? undefined
+      : eq(dealInvestment.isDraft, false);
   const whereExpr =
     options?.lpInvestorsOnly === true
       ? and(
           eq(dealInvestment.dealId, dealId),
           inArray(dealInvestment.investor_role, [...LP_INVESTOR_ROLE_MATCH]),
+          draftExpr,
         )
-      : eq(dealInvestment.dealId, dealId);
+      : and(eq(dealInvestment.dealId, dealId), draftExpr);
   return db
     .select()
     .from(dealInvestment)
@@ -2125,6 +2322,43 @@ export async function sumCommittedAmountForDeal(dealId: string): Promise<number>
   let s = 0;
   for (const r of rows) s += rowCommittedNumeric(r);
   return s;
+}
+
+/**
+ * `sumCommittedAmountForDeal` for many deals in one query. Deals absent from
+ * `deal_investment` still get a `0` entry so callers can read the map directly.
+ */
+export async function sumCommittedAmountByDealIds(
+  dealIds: readonly string[],
+): Promise<Map<string, number>> {
+  const totals = new Map<string, number>();
+  const ids = [
+    ...new Set(dealIds.map((d) => String(d ?? "").trim()).filter(Boolean)),
+  ];
+  if (ids.length === 0) return totals;
+  for (const id of ids) totals.set(id, 0);
+
+  const rows = await db
+    .select({
+      dealId: dealInvestment.dealId,
+      commitmentAmount: dealInvestment.commitmentAmount,
+      extraContributionAmounts: dealInvestment.extraContributionAmounts,
+    })
+    .from(dealInvestment)
+    .where(
+      and(inArray(dealInvestment.dealId, ids), eq(dealInvestment.isDraft, false)),
+    );
+
+  for (const row of rows) {
+    const parts = committedAmountParts(
+      row.commitmentAmount,
+      row.extraContributionAmounts as string[] | null,
+    );
+    const sum = parts.reduce((a, b) => a + b, 0);
+    const key = String(row.dealId);
+    totals.set(key, (totals.get(key) ?? 0) + sum);
+  }
+  return totals;
 }
 
 /**
@@ -2229,6 +2463,7 @@ export async function insertDealInvestment(params: {
     extraContributionAmounts: params.input.extraContributionAmounts ?? [],
     documentStoragePath: params.input.documentStoragePath ?? null,
     fundingMethod: String(params.input.fundingMethod ?? "").trim(),
+    isDraft: params.input.isDraft === true,
   };
   const [row] = await db.insert(dealInvestment).values(insertRow).returning();
   if (!row) throw new Error("INSERT_FAILED");
@@ -2315,6 +2550,9 @@ export async function updateDealInvestment(params: {
       commitmentAmount: params.input.commitmentAmount,
       extraContributionAmounts: params.input.extraContributionAmounts ?? [],
       documentStoragePath: params.input.documentStoragePath ?? null,
+      ...(params.input.isDraft === undefined
+        ? {}
+        : { isDraft: params.input.isDraft }),
     })
     .where(
       and(
@@ -2347,6 +2585,7 @@ export async function countInvestmentsByDealIds(
     `SELECT deal_id::text, COUNT(*)::int AS cnt
      FROM deal_investment
      WHERE deal_id = ANY($1::uuid[])
+       AND is_draft = false
      GROUP BY deal_id`,
     [ids],
   );

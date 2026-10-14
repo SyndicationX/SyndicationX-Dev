@@ -126,7 +126,12 @@ function normalizeContactKey(raw: string | undefined): string {
  */
 export function isAddMemberSessionDraftRedundantWithApiRows(
   dealId: string,
-  apiRows: { id: string; contactId?: string }[],
+  apiRows: {
+    id: string
+    contactId?: string
+    userEmail?: string
+    displayName?: string
+  }[],
 ): boolean {
   const draft = loadAddMemberDraft(dealId)
   if (!draft || !addMemberDraftHasContent(draft)) return false
@@ -138,13 +143,26 @@ export function isAddMemberSessionDraftRedundantWithApiRows(
 
   const draftCid = normalizeContactKey(draft.form.contactId)
   if (
-    !draftCid ||
-    draftCid === normalizeContactKey(DEAL_INVESTMENT_AUTOSAVE_CONTACT_PLACEHOLDER)
-  )
-    return false
+    draftCid &&
+    draftCid !== normalizeContactKey(DEAL_INVESTMENT_AUTOSAVE_CONTACT_PLACEHOLDER) &&
+    apiRows.some((r) => {
+      const rc = normalizeContactKey(r.contactId)
+      return Boolean(rc && rc === draftCid)
+    })
+  ) {
+    return true
+  }
 
+  const draftEmail = normalizeContactKey(draft.form.contactEmail)
+  if (draftEmail) {
+    return apiRows.some((r) => normalizeContactKey(r.userEmail) === draftEmail)
+  }
+
+  const draftName = normalizeContactKey(draft.form.contactDisplayName)
+  if (!draftName) return false
   return apiRows.some((r) => {
-    const rc = normalizeContactKey(r.contactId)
-    return Boolean(rc && rc === draftCid)
+    const rowName = normalizeContactKey(r.displayName)
+    if (!rowName) return false
+    return rowName === draftName
   })
 }

@@ -23,6 +23,7 @@ export type CompanyBillingStatus = {
   canManage?: boolean
   canPay?: boolean
   viewerScope?: "all_deals" | "lead_sponsor"
+  saasBillingStartsAt?: string | null
   plansConfigured: Array<{
     id: StripeBillingPlanId | string
     monthlyReady: boolean
@@ -44,6 +45,9 @@ export type CompanyBillingInvoice = {
   invoiceNumber: string
   invoiceDate: string
   dueDate: string
+  periodStart?: string
+  periodEnd?: string
+  planId?: string | null
   status: string
   amount: string
   hostedInvoiceUrl: string | null
@@ -52,6 +56,8 @@ export type CompanyBillingInvoice = {
   paymentFailedAt?: string | null
   dealId?: string | null
   dealName?: string | null
+  billingScope?: "deal" | "extra_company_user" | null
+  comment?: string | null
 }
 
 export type CompanyBillingPaymentMethod = {
@@ -91,6 +97,19 @@ function messageFromBody(data: unknown, fallback: string): string {
   return fallback
 }
 
+const BILLING_DEAL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function normalizeBillingDealId(raw: unknown): string | null {
+  const s = String(raw ?? "").trim().toLowerCase()
+  return BILLING_DEAL_UUID_RE.test(s) ? s : null
+}
+
+function paidDealIdFromUnknown(data: unknown): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null
+  return normalizeBillingDealId((data as { paidDealId?: unknown }).paidDealId)
+}
+
 export async function fetchCompanyBillingStatus(
   companyId: string,
 ): Promise<
@@ -128,12 +147,75 @@ export async function fetchCompanyBillingStatus(
   }
 }
 
+export type BillingCouponPreview = {
+  code: string
+  promotionCodeId: string
+  name: string | null
+  percentOff: number | null
+  amountOffCents: number | null
+  currency: string | null
+  duration: string
+  durationInMonths: number | null
+}
+
+export async function previewBillingCoupon(
+  code: string,
+  dealId?: string,
+): Promise<{ ok: true; coupon: BillingCouponPreview } | { ok: false; message: string }> {
+  const base = getApiV1Base()
+  if (!base) return { ok: false, message: "API is not configured (VITE_BASE_URL)." }
+  try {
+    const res = await fetch(`${base}/billing/coupons/preview`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        code,
+        ...(dealId?.trim() ? { dealId: dealId.trim() } : {}),
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return { ok: false, message: messageFromBody(data, "That coupon code is not valid.") }
+    }
+    const raw =
+      data && typeof data === "object" ? (data as { coupon?: unknown }).coupon : null
+    if (!raw || typeof raw !== "object") {
+      return { ok: false, message: "That coupon code is not valid." }
+    }
+    const row = raw as Record<string, unknown>
+    const promoCode = typeof row.code === "string" ? row.code.trim() : ""
+    if (!promoCode) return { ok: false, message: "That coupon code is not valid." }
+    return {
+      ok: true,
+      coupon: {
+        code: promoCode,
+        promotionCodeId: typeof row.promotionCodeId === "string" ? row.promotionCodeId : "",
+        name: typeof row.name === "string" ? row.name : null,
+        percentOff: typeof row.percentOff === "number" ? row.percentOff : null,
+        amountOffCents: typeof row.amountOffCents === "number" ? row.amountOffCents : null,
+        currency: typeof row.currency === "string" ? row.currency : null,
+        duration: typeof row.duration === "string" ? row.duration : "once",
+        durationInMonths:
+          typeof row.durationInMonths === "number" ? row.durationInMonths : null,
+      },
+    }
+  } catch {
+    return { ok: false, message: "Could not reach the server." }
+  }
+}
+
 export async function startCompanyBillingCheckout(
   companyId: string,
   planId: string,
   billingCycle: "monthly" | "annually",
   seatBand: StripeBillingSeatBand = "5",
   dealId?: string,
+  extraCompanyUsers?: number,
+  promotionCode?: string,
 ): Promise<
   | { ok: true; url: string }
   | { ok: false; message: string; statusCode: number }
@@ -161,6 +243,10 @@ export async function startCompanyBillingCheckout(
           seatBand,
           billingCycle: billingCycle === "annually" ? "yearly" : "monthly",
           ...(dealId ? { dealId } : {}),
+          ...(extraCompanyUsers && extraCompanyUsers > 0
+            ? { extraCompanyUsers }
+            : {}),
+          ...(promotionCode?.trim() ? { promotionCode: promotionCode.trim() } : {}),
         }),
       },
     )
@@ -188,6 +274,97 @@ export async function startCompanyBillingCheckout(
     return {
       ok: false,
       message: "Network error starting checkout.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function releaseCompanyBillingPayment(
+  companyId: string,
+  dealId: string,
+): Promise<void> {
+  const base = getApiV1Base()
+  const id = dealId.trim()
+  if (!base || !companyId.trim() || !id) return
+  try {
+    await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/release-payment`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ dealId: id }),
+      },
+    )
+  } catch {
+    /* Best-effort: Checkout can still start if the hold already expired. */
+  }
+}
+
+export async function payCompanyBillingWithSavedMethod(
+  companyId: string,
+  planId: string,
+  billingCycle: "monthly" | "annually",
+  seatBand: StripeBillingSeatBand,
+  dealId: string,
+  paymentMethodId: string,
+  extraCompanyUsers?: number,
+  promotionCode?: string,
+): Promise<
+  | { ok: true; paidDealId: string | null; status: CompanyBillingStatus }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/pay-saved`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          planId,
+          seatBand,
+          billingCycle: billingCycle === "annually" ? "yearly" : "monthly",
+          dealId,
+          paymentMethodId,
+          ...(extraCompanyUsers && extraCompanyUsers > 0
+            ? { extraCompanyUsers }
+            : {}),
+          ...(promotionCode?.trim() ? { promotionCode: promotionCode.trim() } : {}),
+        }),
+      },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(data, `Payment failed (${res.status}).`),
+        statusCode: res.status,
+      }
+    }
+    return {
+      ok: true,
+      paidDealId: paidDealIdFromUnknown(data),
+      status: data as CompanyBillingStatus,
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error paying with this method.",
       statusCode: 0,
     }
   }
@@ -248,8 +425,9 @@ export async function openCompanyBillingPortal(
 export async function syncCompanyBillingCheckout(
   companyId: string,
   sessionId: string,
+  dealId?: string | null,
 ): Promise<
-  | { ok: true; status: CompanyBillingStatus }
+  | { ok: true; status: CompanyBillingStatus; paidDealId: string | null }
   | { ok: false; message: string; statusCode: number }
 > {
   const base = getApiV1Base()
@@ -270,7 +448,10 @@ export async function syncCompanyBillingCheckout(
           "Content-Type": "application/json",
         },
         credentials: "include",
-        body: JSON.stringify({ sessionId }),
+        body: JSON.stringify({
+          sessionId,
+          ...(dealId ? { dealId } : {}),
+        }),
       },
     )
     const data = await res.json().catch(() => ({}))
@@ -281,7 +462,11 @@ export async function syncCompanyBillingCheckout(
         statusCode: res.status,
       }
     }
-    return { ok: true, status: data as CompanyBillingStatus }
+    return {
+      ok: true,
+      status: data as CompanyBillingStatus,
+      paidDealId: paidDealIdFromUnknown(data),
+    }
   } catch {
     return {
       ok: false,
@@ -293,30 +478,266 @@ export async function syncCompanyBillingCheckout(
 
 export type CompanyDealBillingRow = {
   id: string
+  companyId?: string | null
+  companyName?: string | null
   dealName: string
   dealStage: string
   archived: boolean
   planId: string | null
   suggestedPlanId?: string | null
+  needsPlanUpgrade?: boolean
+  suggestedSeatBand?: "5" | "10" | "10plus" | string | null
+  needsCoGpUpgrade?: boolean
   billingCycle: string | null
   subscriptionStatus: string
   nextBillingDate: string | null
+  saasBillingStartsAt?: string | null
   billed: boolean
   billable?: boolean
+  payable?: boolean
+  includedCompanyUsers?: number
+  currentCompanyUsers?: number
+  extraCompanyUsersPaid?: number
+  extraCompanyUsersDue?: number
+  coGpCount?: number
+  seatBand?: "5" | "10" | "10plus" | string | null
+  includedCoGps?: number | null
+  extraUserFeeCents?: number
+  extraUserComment?: string | null
+  couponRedeemed?: boolean
 }
 
-export async function fetchCompanyBillingDeals(
-  companyId: string,
-): Promise<
+export type BillingOrganizationOption = {
+  id: string
+  name: string
+}
+
+type BillingDealsOk = {
+  ok: true
+  deals: CompanyDealBillingRow[]
+  canManage: boolean
+  canPay: boolean
+  viewerScope: "all_deals" | "lead_sponsor"
+}
+
+type BillingDealsErr = { ok: false; message: string; statusCode: number }
+
+function parseBillingDealsResponse(
+  data: unknown,
+  status: number,
+): BillingDealsOk | BillingDealsErr {
+  if (status < 200 || status >= 300) {
+    return {
+      ok: false,
+      message: messageFromBody(
+        data,
+        `Could not load deal billing (${status}).`,
+      ),
+      statusCode: status,
+    }
+  }
+  const list =
+    data &&
+    typeof data === "object" &&
+    Array.isArray((data as { deals?: unknown }).deals)
+      ? (data as { deals: CompanyDealBillingRow[] }).deals
+      : []
+  const canManage =
+    data &&
+    typeof data === "object" &&
+    (data as { canManage?: unknown }).canManage === false
+      ? false
+      : true
+  const canPay =
+    data &&
+    typeof data === "object" &&
+    (data as { canPay?: unknown }).canPay === false
+      ? false
+      : canManage ||
+        String((data as { viewerScope?: unknown }).viewerScope ?? "") ===
+          "lead_sponsor"
+  const scopeRaw =
+    data && typeof data === "object"
+      ? String((data as { viewerScope?: unknown }).viewerScope ?? "")
+      : ""
+  return {
+    ok: true,
+    deals: list,
+    canManage,
+    canPay,
+    viewerScope: scopeRaw === "lead_sponsor" ? "lead_sponsor" : "all_deals",
+  }
+}
+
+export async function fetchBillingOrganizations(): Promise<
+  | { ok: true; organizations: BillingOrganizationOption[] }
+  | { ok: false; message: string }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return { ok: false, message: "API is not configured (VITE_BASE_URL)." }
+  }
+  try {
+    const res = await fetch(`${base}/companies`, {
+      headers: authHeaders(),
+      credentials: "include",
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(data, "Could not load organizations."),
+      }
+    }
+    const raw =
+      data &&
+      typeof data === "object" &&
+      Array.isArray((data as { companies?: unknown }).companies)
+        ? (data as { companies: Array<{ id?: unknown; name?: unknown }> })
+            .companies
+        : []
+    const organizations = raw
+      .map((row) => ({
+        id: String(row.id ?? "")
+          .trim()
+          .toLowerCase(),
+        name: String(row.name ?? "").trim() || "Untitled organization",
+      }))
+      .filter((row) => BILLING_DEAL_UUID_RE.test(row.id))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      )
+    return { ok: true, organizations }
+  } catch {
+    return { ok: false, message: "Network error loading organizations." }
+  }
+}
+
+export type PlatformOrganizationBillingRow = {
+  id: string
+  name: string
+  dealCount: number
+  billedCount: number
+  totalPaidCents: number
+  totalPaid: string
+  deals: CompanyDealBillingRow[]
+}
+
+export async function fetchPlatformOrganizationBilling(): Promise<
   | {
       ok: true
-      deals: CompanyDealBillingRow[]
+      organizations: PlatformOrganizationBillingRow[]
       canManage: boolean
       canPay: boolean
       viewerScope: "all_deals" | "lead_sponsor"
     }
-  | { ok: false; message: string; statusCode: number }
+  | BillingDealsErr
 > {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(`${base}/billing/organizations`, {
+      headers: authHeaders(),
+      credentials: "include",
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(
+          data,
+          `Could not load organization billing (${res.status}).`,
+        ),
+        statusCode: res.status,
+      }
+    }
+    const raw =
+      data &&
+      typeof data === "object" &&
+      Array.isArray((data as { organizations?: unknown }).organizations)
+        ? (data as { organizations: PlatformOrganizationBillingRow[] })
+            .organizations
+        : []
+    const organizations = raw.map((row) => ({
+      id: String(row.id ?? "")
+        .trim()
+        .toLowerCase(),
+      name: String(row.name ?? "").trim() || "Untitled organization",
+      dealCount: Number(row.dealCount) || 0,
+      billedCount: Number(row.billedCount) || 0,
+      totalPaidCents: Number(row.totalPaidCents) || 0,
+      totalPaid:
+        String(row.totalPaid ?? "").trim() ||
+        new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+        }).format((Number(row.totalPaidCents) || 0) / 100),
+      deals: Array.isArray(row.deals) ? row.deals : [],
+    }))
+    const canManage =
+      data &&
+      typeof data === "object" &&
+      (data as { canManage?: unknown }).canManage === false
+        ? false
+        : true
+    const canPay =
+      data &&
+      typeof data === "object" &&
+      (data as { canPay?: unknown }).canPay === false
+        ? false
+        : canManage
+    return {
+      ok: true,
+      organizations,
+      canManage,
+      canPay,
+      viewerScope: "all_deals",
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error loading organization billing.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function fetchPlatformBillingDeals(): Promise<
+  BillingDealsOk | BillingDealsErr
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(`${base}/billing/deals`, {
+      headers: authHeaders(),
+      credentials: "include",
+    })
+    const data = await res.json().catch(() => ({}))
+    return parseBillingDealsResponse(data, res.status)
+  } catch {
+    return {
+      ok: false,
+      message: "Network error loading deal billing.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function fetchCompanyBillingDeals(
+  companyId: string,
+): Promise<BillingDealsOk | BillingDealsErr> {
   const base = getApiV1Base()
   if (!base) {
     return {
@@ -331,51 +752,192 @@ export async function fetchCompanyBillingDeals(
       { headers: authHeaders(), credentials: "include" },
     )
     const data = await res.json().catch(() => ({}))
+    return parseBillingDealsResponse(data, res.status)
+  } catch {
+    return {
+      ok: false,
+      message: "Network error loading deal billing.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function updateCompanyDealBillingCycle(
+  companyId: string,
+  dealId: string,
+  billingCycle: "monthly" | "annually",
+): Promise<
+  | { ok: true; deal: CompanyDealBillingRow }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/deals/${encodeURIComponent(dealId)}/cycle`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          billingCycle: billingCycle === "annually" ? "yearly" : "monthly",
+        }),
+      },
+    )
+    const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       return {
         ok: false,
         message: messageFromBody(
           data,
-          `Could not load deal billing (${res.status}).`,
+          `Could not update payment cycle (${res.status}).`,
         ),
         statusCode: res.status,
       }
     }
-    const list =
+    const deal =
       data &&
       typeof data === "object" &&
-      Array.isArray((data as { deals?: unknown }).deals)
-        ? (data as { deals: CompanyDealBillingRow[] }).deals
-        : []
-    const canManage =
+      (data as { deal?: CompanyDealBillingRow }).deal
+        ? (data as { deal: CompanyDealBillingRow }).deal
+        : null
+    if (!deal) {
+      return {
+        ok: false,
+        message: "Could not update payment cycle.",
+        statusCode: res.status,
+      }
+    }
+    return { ok: true, deal }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error updating payment cycle.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function updateCompanyDealBillingStartDate(
+  companyId: string,
+  dealId: string,
+  saasBillingStartsAt: string,
+): Promise<
+  | { ok: true; deal: CompanyDealBillingRow }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/deals/${encodeURIComponent(dealId)}/start-date`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ saasBillingStartsAt }),
+      },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(
+          data,
+          `Could not update billing start date (${res.status}).`,
+        ),
+        statusCode: res.status,
+      }
+    }
+    const deal =
       data &&
       typeof data === "object" &&
-      (data as { canManage?: unknown }).canManage === false
-        ? false
-        : true
-    const canPay =
-      data &&
-      typeof data === "object" &&
-      (data as { canPay?: unknown }).canPay === false
-        ? false
-        : canManage ||
-          String((data as { viewerScope?: unknown }).viewerScope ?? "") ===
-            "lead_sponsor"
-    const scopeRaw =
+      (data as { deal?: CompanyDealBillingRow }).deal
+        ? (data as { deal: CompanyDealBillingRow }).deal
+        : null
+    if (!deal) {
+      return {
+        ok: false,
+        message: "Could not update billing start date.",
+        statusCode: res.status,
+      }
+    }
+    return { ok: true, deal }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error updating billing start date.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function fetchPlatformBillingStartDate(): Promise<
+  | { ok: true; saasBillingStartsAt: string | null; updatedAt: string | null }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(`${base}/billing/start-date`, {
+      headers: authHeaders(),
+      credentials: "include",
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(
+          data,
+          `Could not load billing start date (${res.status}).`,
+        ),
+        statusCode: res.status,
+      }
+    }
+    const iso =
       data && typeof data === "object"
-        ? String((data as { viewerScope?: unknown }).viewerScope ?? "")
+        ? String(
+            (data as { saasBillingStartsAt?: unknown }).saasBillingStartsAt ??
+              "",
+          ).trim()
+        : ""
+    const updated =
+      data && typeof data === "object"
+        ? String((data as { updatedAt?: unknown }).updatedAt ?? "").trim()
         : ""
     return {
       ok: true,
-      deals: list,
-      canManage,
-      canPay,
-      viewerScope: scopeRaw === "lead_sponsor" ? "lead_sponsor" : "all_deals",
+      saasBillingStartsAt: iso || null,
+      updatedAt: updated || null,
     }
   } catch {
     return {
       ok: false,
-      message: "Network error loading deal billing.",
+      message: "Network error loading billing start date.",
       statusCode: 0,
     }
   }
@@ -822,6 +1384,184 @@ export async function syncCompanyBillingPayment(
     return {
       ok: false,
       message: "Network error syncing payment.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function startExtraCompanyUserCheckout(
+  companyId: string,
+  dealId: string,
+  quantity?: number,
+): Promise<
+  | { ok: true; url: string }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/extra-company-user`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          dealId,
+          ...(quantity && quantity > 0 ? { extraCompanyUsers: quantity } : {}),
+        }),
+      },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(data, `Checkout failed (${res.status}).`),
+        statusCode: res.status,
+      }
+    }
+    const url =
+      data && typeof data === "object"
+        ? String((data as { url?: unknown }).url ?? "").trim()
+        : ""
+    if (!url) {
+      return {
+        ok: false,
+        message: "Checkout did not return a Stripe URL.",
+        statusCode: res.status,
+      }
+    }
+    return { ok: true, url }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error starting extra user checkout.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function payExtraCompanyUserWithSavedMethod(
+  companyId: string,
+  dealId: string,
+  paymentMethodId: string,
+  quantity?: number,
+): Promise<
+  | { ok: true; extraUsersPaid: number; amountDueCents: number }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/extra-company-user/pay-saved`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          dealId,
+          paymentMethodId,
+          ...(quantity && quantity > 0 ? { extraCompanyUsers: quantity } : {}),
+        }),
+      },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(data, `Payment failed (${res.status}).`),
+        statusCode: res.status,
+      }
+    }
+    const extraUsersPaid =
+      data && typeof data === "object"
+        ? Number((data as { extraUsersPaid?: unknown }).extraUsersPaid ?? 0)
+        : 0
+    const amountDueCents =
+      data && typeof data === "object"
+        ? Number((data as { amountDueCents?: unknown }).amountDueCents ?? 0)
+        : 0
+    return {
+      ok: true,
+      extraUsersPaid: Number.isFinite(extraUsersPaid) ? extraUsersPaid : 0,
+      amountDueCents: Number.isFinite(amountDueCents) ? amountDueCents : 0,
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error paying for extra company users.",
+      statusCode: 0,
+    }
+  }
+}
+
+export async function syncExtraCompanyUserCheckout(
+  companyId: string,
+  sessionId: string,
+): Promise<
+  | { ok: true; extraUsersPaid: number }
+  | { ok: false; message: string; statusCode: number }
+> {
+  const base = getApiV1Base()
+  if (!base) {
+    return {
+      ok: false,
+      message: "API is not configured (VITE_BASE_URL).",
+      statusCode: 0,
+    }
+  }
+  try {
+    const res = await fetch(
+      `${base}/companies/${encodeURIComponent(companyId)}/billing/extra-company-user/sync-checkout`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ sessionId }),
+      },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: messageFromBody(data, `Could not sync extra user payment (${res.status}).`),
+        statusCode: res.status,
+      }
+    }
+    const extraUsersPaid =
+      data && typeof data === "object"
+        ? Number((data as { extraUsersPaid?: unknown }).extraUsersPaid ?? 0)
+        : 0
+    return {
+      ok: true,
+      extraUsersPaid: Number.isFinite(extraUsersPaid) ? extraUsersPaid : 0,
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Network error syncing extra user payment.",
       statusCode: 0,
     }
   }

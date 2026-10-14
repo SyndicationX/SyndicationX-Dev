@@ -16,9 +16,11 @@ import {
   X,
 } from "lucide-react"
 import { useEffect } from "react"
+import { isPlatformAdmin } from "../../../../common/auth/roleUtils"
 import { ViewReadonlyField } from "../../../../common/components/ViewReadonlyField"
 import { formatUsPhoneStoredForUi } from "../../../../common/phone/usPhoneNumber"
 import { displayEmail } from "../../../../common/utils/displayEmail"
+import { formatCount } from "@/common/utils/formatCount"
 import "../../Deals/tabs/investors/add-investment-modal.css"
 import "../../usermanagement/user_management.css"
 import "../contacts.css"
@@ -45,6 +47,7 @@ export function ViewContactModal({
   onEdit,
   loading = false,
 }: ViewContactModalProps) {
+  const platformAdmin = isPlatformAdmin()
   useEffect(() => {
     if (!contact) return
     const prev = document.body.style.overflow
@@ -175,11 +178,18 @@ export function ViewContactModal({
                 label="Deals"
                 value={
                   <span title="Distinct syndication deals where a portal member with this contact’s email has an investment.">
-                    {String(contact.dealCount ?? 0)}
+                    {formatCount(contact.dealCount ?? 0)}
                   </span>
                 }
               />
             ) : null}
+            <ViewReadonlyField
+              Icon={Users}
+              label="Relationship"
+              value={
+                contact.relationship506b === "YES" ? "506(b) Yes" : "506(b) No"
+              }
+            />
             <ViewReadonlyField
               Icon={FileText}
               label="Note"
@@ -224,6 +234,18 @@ export function ViewContactModal({
                 )
               }
             />
+            <ViewReadonlyField
+              Icon={User}
+              label="Invited by"
+              value={contact.invitedByDisplayName?.trim() || "—"}
+            />
+            {platformAdmin ? (
+              <ViewReadonlyField
+                Icon={Users}
+                label="Visible on platform"
+                value={contact.visibleToUsers === true ? "Yes" : "No"}
+              />
+            ) : null}
             <ViewReadonlyField
               Icon={User}
               label="Added by"

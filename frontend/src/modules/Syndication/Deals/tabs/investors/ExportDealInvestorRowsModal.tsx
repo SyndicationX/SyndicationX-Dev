@@ -1,4 +1,5 @@
 import { Download, Search, X } from "lucide-react"
+import { isPlatformAdmin } from "@/common/auth/roleUtils"
 import { ExportModalFooter } from "../../../../../common/components/modal/ExportModalFooter"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import "../../components/export-deals-modal.css"
@@ -45,7 +46,8 @@ function searchHaystack(row: DealInvestorRow): string {
     row.investorRole,
     row.investorClass,
     row.status,
-    row.addedByDisplayName,
+    row.addedByCompanyName,
+    ...(isPlatformAdmin() ? [row.addedByDisplayName] : []),
     row.committed,
   ]
     .map((x) => String(x ?? "").trim())

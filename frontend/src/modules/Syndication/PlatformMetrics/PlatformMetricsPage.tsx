@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
+import { formatCount } from "@/common/utils/formatCount"
 import { DonutChart, type DonutSegment } from "./components/DonutChart"
 import { MetricKpiCard } from "./components/MetricKpiCard"
 import { FundPerformanceChart } from "./components/FundPerformanceChart"
@@ -41,10 +42,6 @@ const ROLE_CHART_COLORS = [
 function pct(part: number, total: number): string {
   if (total <= 0) return "0%"
   return `${Math.round((part / total) * 100)}%`
-}
-
-function formatCount(n: number): string {
-  return new Intl.NumberFormat("en-US").format(n)
 }
 
 export default function PlatformMetricsPage() {
@@ -167,7 +164,7 @@ export default function PlatformMetricsPage() {
             loading={loading}
             footer={
               metrics
-                ? `${metrics.usersByRole.length} roles`
+                ? `${formatCount(metrics.userCount)} registered · ${formatCount(metrics.usersByRole.length)} roles`
                 : "All organizations"
             }
           />

@@ -407,18 +407,31 @@
 }
 
 .investments_page .investments_table_panel.deals_list_table_panel {
-  --investments-invested-as-col-width: 12rem;
+  --investments-invested-as-col-width: 8rem;
 }
 
 .investments_invested_as_name {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   max-width: 100%;
+  line-height: 1.35;
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--portal-text, #0f172a);
+  text-align: left;
+}
+
+/* Placeholder hyphen: center in the cell; real values keep column alignment */
+.investments_page .investments_table_panel .deal_inv_table .investments_empty_dash {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--portal-text-muted, #64748b);
 }
 
 .investments_page .investments_table_panel .deals_list_name_primary {
@@ -526,7 +539,7 @@
   );
 }
 
-/* Invested-as (profile name) — readable width under fixed table layout */
+/* Invested-as (profile name) — wrap onto extra row height instead of a wide column */
 .investments_page
   .investments_table_panel.deals_list_table_panel
   .deal_inv_table
@@ -541,13 +554,27 @@
   td.investments_col_profile_name {
   width: var(--investments-invested-as-col-width);
   min-width: var(--investments-invested-as-col-width) !important;
-  max-width: none;
+  max-width: var(--investments-invested-as-col-width);
   box-sizing: border-box;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   vertical-align: middle;
   color: var(--portal-text, #0f172a);
+}
+
+.investments_page
+  .investments_table_panel.deals_list_table_panel
+  .deal_inv_table
+  td.investments_col_invested_as,
+.investments_page
+  .investments_table_panel.deals_list_table_panel
+  .deal_inv_table
+  td.investments_col_profile_name {
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+  padding-top: 0.75em;
+  padding-bottom: 0.75em;
 }
 
 .investments_page
@@ -561,6 +588,10 @@
   td.investments_col_profile_name
   .investments_profile_name_text {
   display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
   color: var(--portal-text, #0f172a) !important;
   -webkit-text-fill-color: var(--portal-text, #0f172a);
   font-weight: 600;
@@ -600,11 +631,15 @@
 .investments_page
   .investments_table_panel
   .deal_inv_table
-  th:not(.data_table_col_sticky):not(.investments_col_progress),
+  th:not(.data_table_col_sticky):not(.investments_col_progress):not(
+    .investments_col_invested_as
+  ),
 .investments_page
   .investments_table_panel
   .deal_inv_table
-  td:not(.data_table_col_sticky):not(.investments_col_progress) {
+  td:not(.data_table_col_sticky):not(.investments_col_progress):not(
+    .investments_col_invested_as
+  ):not(.investments_col_profile_name) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -786,7 +821,12 @@
   color: var(--portal-text-muted);
 }
 
-:root[data-theme="dark"] .investments_page .um_status_muted {
+:root[data-theme="dark"] .investments_page .um_status_muted,
+:root[data-theme="dark"]
+  .investments_page
+  .investments_table_panel
+  .deal_inv_table
+  .investments_empty_dash {
   color: var(--portal-text-muted);
 }
 

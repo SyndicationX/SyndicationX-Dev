@@ -63,6 +63,8 @@ export function DealEsignTemplatesQuestionnaireTab({
 
   const saveGenerationRef = useRef(0)
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Fields added but not saved yet — kept out of every payload until saved. */
+  const unsavedFieldIdsRef = useRef<Set<string>>(new Set())
 
   const persist = useCallback(
     async (next: InvestorQuestionnaireConfig) => {
@@ -70,10 +72,23 @@ export function DealEsignTemplatesQuestionnaireTab({
       const generation = ++saveGenerationRef.current
       setSaving(true)
       try {
-        const result = await putDealInvestorQuestionnaire(dealId, next)
+        const unsavedIds = unsavedFieldIdsRef.current
+        const withheld = next.questions.filter((q) => unsavedIds.has(q.id))
+        const payload = withheld.length
+          ? {
+              ...next,
+              questions: next.questions.filter((q) => !unsavedIds.has(q.id)),
+            }
+          : next
+        const result = await putDealInvestorQuestionnaire(dealId, payload)
         if (generation !== saveGenerationRef.current) return true
         if (result.ok) {
-          setConfig(mergeQuestionnaireWithDefaults(result.config).config)
+          const merged = mergeQuestionnaireWithDefaults(result.config).config
+          setConfig(
+            withheld.length
+              ? { ...merged, questions: [...merged.questions, ...withheld] }
+              : merged,
+          )
           return true
         }
         toast.error("Could not save questionnaire", result.message)
@@ -231,7 +246,17 @@ export function DealEsignTemplatesQuestionnaireTab({
           | "investorProfileFieldKey"
         >
       >,
+      opts?: { persistNow?: boolean },
     ) => {
+      if (opts?.persistNow) unsavedFieldIdsRef.current.delete(questionId)
+      const inPendingSection = questionInPendingSection(questionId)
+      const persistOptions = inPendingSection
+        ? { persist: false }
+        : opts?.persistNow
+          ? { persistImmediate: true }
+          : editingPendingQuestionIds.has(questionId)
+            ? { persist: false }
+            : undefined
       updateConfig(
         (prev) => ({
           ...prev,
@@ -262,16 +287,17 @@ export function DealEsignTemplatesQuestionnaireTab({
             return next
           }),
         }),
-        questionInPendingSection(questionId) ? { persist: false } : undefined,
+        persistOptions,
       )
     },
-    [questionInPendingSection, updateConfig],
+    [editingPendingQuestionIds, questionInPendingSection, updateConfig],
   )
 
   const onDeleteQuestion = useCallback(
     (question: InvestorQuestionnaireQuestion) => {
-      if (question.isDefault) return
-      setEditingPendingQuestionIds((prev) => {
+    if (question.isDefault) return
+    unsavedFieldIdsRef.current.delete(question.id)
+    setEditingPendingQuestionIds((prev) => {
         const next = new Set(prev)
         next.delete(question.id)
         return next
@@ -329,24 +355,20 @@ export function DealEsignTemplatesQuestionnaireTab({
       activeQuestions.length,
     )
     setExpandQuestionId(question.id)
-    if (activeSection.id === pendingSectionId) {
-      markQuestionEditing(question.id)
-    }
+    markQuestionEditing(question.id)
+    unsavedFieldIdsRef.current.add(question.id)
     updateConfig(
       (prev) => ({
         ...prev,
         questions: [...prev.questions, question],
       }),
-      activeSection.id === pendingSectionId
-        ? { persist: false }
-        : { persistImmediate: true },
+      { persist: false },
     )
   }, [
     activeSection,
     activeQuestions.length,
     createCustomQuestion,
     markQuestionEditing,
-    pendingSectionId,
     updateConfig,
   ])
 
@@ -378,12 +400,17 @@ export function DealEsignTemplatesQuestionnaireTab({
     setEditingSectionId(id)
     setSectionLabelDraft("New section")
     setExpandQuestionId(firstQuestion.id)
-    setEditingPendingQuestionIds(new Set([firstQuestion.id]))
+    unsavedFieldIdsRef.current.add(firstQuestion.id)
+    setEditingPendingQuestionIds((prev) => new Set(prev).add(firstQuestion.id))
   }, [createCustomQuestion, pendingSectionId, updateConfig])
 
   const onSavePendingSection = useCallback(() => {
     if (!pendingSectionId) return
-    if (editingPendingQuestionIds.size > 0) {
+    const hasUnsavedField = config.questions.some(
+      (q) =>
+        q.sectionId === pendingSectionId && editingPendingQuestionIds.has(q.id),
+    )
+    if (hasUnsavedField) {
       toast.error(
         "Unsaved fields",
         "Save each field in this section before saving the section.",
@@ -404,7 +431,6 @@ export function DealEsignTemplatesQuestionnaireTab({
       if (!ok) return
       setPendingSectionId(null)
       setEditingSectionId(null)
-      setEditingPendingQuestionIds(new Set())
       toast.success("Section saved")
     })()
   }, [config, editingPendingQuestionIds, pendingSectionId, persist, sectionLabelDraft])
@@ -412,6 +438,11 @@ export function DealEsignTemplatesQuestionnaireTab({
   const onDiscardPendingSection = useCallback(() => {
     if (!pendingSectionId) return
     const discardId = pendingSectionId
+    const discardedQuestionIds = new Set(
+      config.questions
+        .filter((q) => q.sectionId === discardId)
+        .map((q) => q.id),
+    )
     setConfig((prev) => {
       const remaining = sortSections(
         prev.sections.filter((s) => s.id !== discardId),
@@ -426,13 +457,23 @@ export function DealEsignTemplatesQuestionnaireTab({
     setPendingSectionId(null)
     setEditingSectionId(null)
     setExpandQuestionId(null)
-    setEditingPendingQuestionIds(new Set())
-  }, [pendingSectionId])
+    setEditingPendingQuestionIds((prev) => {
+      const next = new Set(prev)
+      for (const id of discardedQuestionIds) {
+        next.delete(id)
+        unsavedFieldIdsRef.current.delete(id)
+      }
+      return next
+    })
+  }, [config.questions, pendingSectionId])
 
   const onRemoveSection = useCallback(
     (sectionId: string) => {
       const section = config.sections.find((s) => s.id === sectionId)
       if (!section || section.isDefault) return
+      for (const q of config.questions) {
+        if (q.sectionId === sectionId) unsavedFieldIdsRef.current.delete(q.id)
+      }
       updateConfig(
         (prev) => ({
           ...prev,
@@ -671,8 +712,7 @@ export function DealEsignTemplatesQuestionnaireTab({
           >
             {activeQuestions.map((question, index) => {
               const inPendingSection = question.sectionId === pendingSectionId
-              const fieldEditing =
-                inPendingSection && editingPendingQuestionIds.has(question.id)
+              const fieldEditing = editingPendingQuestionIds.has(question.id)
               return (
                 <QuestionnaireQuestionCard
                   key={question.id}
@@ -681,7 +721,7 @@ export function DealEsignTemplatesQuestionnaireTab({
                   canEdit={canEdit}
                   saving={saving}
                   defaultExpanded={question.id === expandQuestionId}
-                  pendingFieldWorkflow={inPendingSection}
+                  pendingFieldWorkflow={inPendingSection || fieldEditing}
                   fieldEditing={fieldEditing}
                   onToggleRequired={onToggleRequired}
                   onUpdateQuestion={onUpdateQuestion}

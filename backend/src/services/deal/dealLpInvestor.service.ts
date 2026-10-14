@@ -10,7 +10,7 @@ import {
   type DealInvestmentRow,
 } from "../../schema/deal.schema/deal-investment.schema.js";
 import { assertEligibleForNewDealRosterAdd } from "../user/portalUserRosterGuard.service.js";
-import { syncDealInvestorEsignStatusesForDeal } from "./dealMemberEsignCompletion.service.js";
+import { scheduleDealInvestorEsignSync } from "./dealMemberEsignCompletion.service.js";
 import { sqlPreserveSendInvitationMailOnUpsert } from "./dealMember.service.js";
 import {
   buildInvestorKpisFromRows,
@@ -35,13 +35,29 @@ import {
 } from "./dealInvestment.service.js";
 import { listInvestorClassesByDealId } from "./dealInvestorClass.service.js";
 import type { DealViewerScope } from "./dealForm.service.js";
-import { resolveViewerDealMemberRoleOnDeal } from "./dealMemberScope.service.js";
+import {
+  listDealIdsWhereViewerIsCoSponsor,
+  listDealIdsWhereViewerIsLeadOrAdminSponsor,
+  listEquivalentPortalUserIdsForUser,
+  resolveViewerDealMemberRoleOnDeal,
+} from "./dealMemberScope.service.js";
 import { resolveInvestNowViewerContactOnDeal } from "./dealInvestNowViewerContact.service.js";
+import {
+  loadStoredInvestorInviteSponsor,
+  retainInviteSponsorOnLpRoster,
+} from "../contact/investorInviteLink.service.js";
+import { resolveInvestNowAddedByUserId } from "./crossOrgColleagueDeal.service.js";
 
 function normalizeContactKey(raw: string): string {
   return String(raw ?? "")
     .trim()
     .toLowerCase();
+}
+
+function isUuidContactKey(raw: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    raw.trim(),
+  );
 }
 
 type LpRosterPercentFields = {
@@ -67,20 +83,27 @@ function percentFieldsFromLpRosterRow(
 }
 
 /**
- * Index LP roster percents by LP row id and by canonical contact key
- * (email-linked user UUID ↔ contact UUID), so investment rows still get DB %.
+ * Index LP roster fields by LP row id and by canonical contact key
+ * (email-linked user UUID ↔ contact UUID), so shadowing investment rows still
+ * receive the roster email and percentages.
  */
 async function indexLpRosterPercents(params: {
   roster: DealLpInvestorRow[];
   investorContactIds: string[];
 }): Promise<{
   byLpId: Map<string, LpRosterPercentFields>;
+  emailByLpId: Map<string, string>;
   lookupByContactId: (
     contactId: string | null | undefined,
   ) => LpRosterPercentFields | undefined;
+  lookupEmailByContactId: (
+    contactId: string | null | undefined,
+  ) => string | undefined;
 }> {
   const byLpId = new Map<string, LpRosterPercentFields>();
   const byCanonical = new Map<string, LpRosterPercentFields>();
+  const emailByLpId = new Map<string, string>();
+  const emailByCanonical = new Map<string, string>();
 
   const allRawIds: string[] = [];
   for (const m of params.roster) {
@@ -95,22 +118,100 @@ async function indexLpRosterPercents(params: {
   const rawToCanonical =
     await mapContactIdsToCanonicalCommitmentKeys(allRawIds);
 
+  const contactIds = [
+    ...new Set(
+      params.roster
+        .map((m) => String(m.contactMemberId ?? "").trim())
+        .filter(isUuidContactKey),
+    ),
+  ];
+  const currentContactEmailById = new Map<string, string>();
+  const currentContactEmailByName = new Map<string, string>();
+  const rosterNames = [
+    ...new Set(
+      params.roster
+        .map((m) => String(m.investorName ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  if (contactIds.length > 0 || rosterNames.length > 0) {
+    const contactRows = await db
+      .select({
+        id: contact.id,
+        email: contact.email,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        fullName: contact.fullName,
+      })
+      .from(contact)
+      .where(
+        contactIds.length > 0 && rosterNames.length > 0
+          ? sql`${inArray(contact.id, contactIds)} OR lower(trim(${contact.fullName})) in (${sql.join(
+              rosterNames.map((n) => sql`${n}`),
+              sql`, `,
+            )}) OR lower(trim(concat_ws(' ', ${contact.firstName}, ${contact.lastName}))) in (${sql.join(
+              rosterNames.map((n) => sql`${n}`),
+              sql`, `,
+            )})`
+          : contactIds.length > 0
+            ? inArray(contact.id, contactIds)
+            : sql`lower(trim(${contact.fullName})) in (${sql.join(
+                rosterNames.map((n) => sql`${n}`),
+                sql`, `,
+              )}) OR lower(trim(concat_ws(' ', ${contact.firstName}, ${contact.lastName}))) in (${sql.join(
+                rosterNames.map((n) => sql`${n}`),
+                sql`, `,
+              )})`,
+      );
+    for (const row of contactRows) {
+      const email = String(row.email ?? "").trim();
+      if (!email || /redacted/i.test(email) || !email.includes("@")) continue;
+      currentContactEmailById.set(String(row.id).toLowerCase(), email);
+      const name = `${String(row.firstName ?? "").trim()} ${String(row.lastName ?? "").trim()}`
+        .trim()
+        .toLowerCase();
+      const full = String(row.fullName ?? "").trim().toLowerCase();
+      if (name) currentContactEmailByName.set(name, email);
+      if (full) currentContactEmailByName.set(full, email);
+    }
+  }
+
   for (const m of params.roster) {
     const pct = percentFieldsFromLpRosterRow(m);
-    byLpId.set(String(m.id).toLowerCase(), pct);
+    const lpId = String(m.id).toLowerCase();
     const contactKey = normalizeContactKey(m.contactMemberId);
+    const stored = String(m.email ?? "").trim();
+    const storedUsable = stored.includes("@") && !/redacted/i.test(stored);
+    // CRM contact is the source of truth, including when the roster key is a
+    // portal-user id and the denormalized email was privacy-redacted.
+    const email =
+      currentContactEmailById.get(contactKey) ??
+      currentContactEmailByName.get(
+        String(m.investorName ?? "").trim().toLowerCase(),
+      ) ??
+      (storedUsable ? stored : "");
+    byLpId.set(lpId, pct);
+    if (email) emailByLpId.set(lpId, email);
     if (!contactKey) continue;
     const canonical = rawToCanonical.get(contactKey) ?? `id:${contactKey}`;
     byCanonical.set(canonical, pct);
+    if (email) emailByCanonical.set(canonical, email);
   }
 
   return {
     byLpId,
+    emailByLpId,
     lookupByContactId(contactId) {
       const contactKey = normalizeContactKey(String(contactId ?? ""));
       if (!contactKey) return undefined;
       const canonical = rawToCanonical.get(contactKey) ?? `id:${contactKey}`;
       return byCanonical.get(canonical);
+    },
+    lookupEmailByContactId(contactId) {
+      const contactKey = normalizeContactKey(String(contactId ?? ""));
+      if (!contactKey) return undefined;
+      const canonical = rawToCanonical.get(contactKey) ?? `id:${contactKey}`;
+      return emailByCanonical.get(canonical);
     },
   };
 }
@@ -145,6 +246,45 @@ export async function filterMergedLpInvestorsForCoSponsorViewer(
   merged: DealInvestmentRow[],
 ): Promise<DealInvestmentRow[]> {
   return filterInvestorRowsVisibleToCoSponsor(dealId, viewerUserId, merged);
+}
+
+export type CoSponsorVisibleInvestorMatchKeys = {
+  investmentIds: Set<string>;
+  contactIds: Set<string>;
+  emails: Set<string>;
+};
+
+/**
+ * Keys of investors a co-sponsor may pay out. Returns null when the viewer
+ * should see the full roster (lead / admin / not co-sponsor-scoped).
+ */
+export async function listCoSponsorVisibleInvestorMatchKeys(
+  dealId: string,
+  viewerUserId: string | null | undefined,
+): Promise<CoSponsorVisibleInvestorMatchKeys | null> {
+  const uid = String(viewerUserId ?? "").trim();
+  if (!uid) return null;
+  if (!(await shouldScopeInvestorsToCoSponsorAddedOnly(dealId, uid))) {
+    return null;
+  }
+  const rows = await listDealInvestmentsByDealId(dealId);
+  const visible = await filterInvestorRowsVisibleToCoSponsor(dealId, uid, rows);
+  const resolved = await resolveUsersByContactIds(visible);
+  const investmentIds = new Set<string>();
+  const contactIds = new Set<string>();
+  const emails = new Set<string>();
+  for (const row of visible) {
+    const mapped = mapRowToInvestorApi(row, resolved);
+    const invId = String(mapped.id ?? row.id ?? "").trim().toLowerCase();
+    const contactId = String(mapped.contactId ?? row.contactId ?? "")
+      .trim()
+      .toLowerCase();
+    const email = String(mapped.userEmail ?? "").trim().toLowerCase();
+    if (invId) investmentIds.add(invId);
+    if (contactId) contactIds.add(contactId);
+    if (email.includes("@")) emails.add(email);
+  }
+  return { investmentIds, contactIds, emails };
 }
 
 const LP_INVESTOR_TABLE_ROLE = "LP Investor";
@@ -190,6 +330,7 @@ export function syntheticInvestmentFromDealLpInvestor(
     profileId: m.profileId?.trim() ?? "",
     userInvestorProfileId: m.userInvestorProfileId ?? null,
     investor_role: investorRoleFromDealLpInvestorRow(m),
+    isDraft: m.isDraft,
     fundApproved: false,
     fundApprovedBy: null,
     fundApprovedAt: null,
@@ -202,6 +343,9 @@ export function syntheticInvestmentFromDealLpInvestor(
     investorW9FormJson: null,
     fundingMethod: "",
     commitmentAmount: m.committed_amount,
+    commitmentCompletedAt: null,
+    commitmentInvestorEmailSentAt: null,
+    commitmentSponsorEmailSentAt: null,
     extraContributionAmounts: [],
     documentStoragePath: null,
     createdAt: m.createdAt,
@@ -221,7 +365,9 @@ export async function mergeDealLpRosterIntoFullInvestorRows(
   const roster = await db
     .select()
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId));
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    );
 
   const withInvestmentContact = new Set<string>();
   const allRawContactIds: string[] = [];
@@ -299,7 +445,9 @@ export async function listMergedLpInvestorsForDeal(
   const roster = await db
     .select()
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId))
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    )
     .orderBy(desc(dealLpInvestor.updatedAt));
 
   const allRawContactIds: string[] = [];
@@ -425,7 +573,9 @@ export async function resolveLpRosterIdSet(
   const lpDb = await db
     .select({ id: dealLpInvestor.id })
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId));
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    );
   const allowed = new Set(lpDb.map((r) => String(r.id).toLowerCase()));
   const out = new Set<string>();
   for (const row of mergedRows) {
@@ -450,24 +600,24 @@ export async function buildLpInvestorsFromMerged(
   const roster = await db
     .select()
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId));
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    );
 
-  const rosterEmailByLpId = new Map<string, string>();
-  for (const m of roster) {
-    const em = String(m.email ?? "").trim();
-    if (em) rosterEmailByLpId.set(String(m.id).toLowerCase(), em);
-  }
-
-  const { byLpId, lookupByContactId } = await indexLpRosterPercents({
+  const {
+    byLpId,
+    emailByLpId,
+    lookupByContactId,
+    lookupEmailByContactId,
+  } = await indexLpRosterPercents({
     roster,
     investorContactIds: base.map((inv) => String(inv.contactId ?? "")),
   });
 
   const investorsMerged = base.map((inv) => {
     const id = String(inv.id ?? "").toLowerCase();
-    const storedEmail = lpRosterIds.has(id)
-      ? rosterEmailByLpId.get(id)
-      : undefined;
+    const storedEmail =
+      emailByLpId.get(id) ?? lookupEmailByContactId(inv.contactId);
     const emailPatch = storedEmail?.trim()
       ? { userEmail: storedEmail.trim() }
       : {};
@@ -551,17 +701,18 @@ export async function enrichFullInvestorApiFromLpRoster(
   const roster = await db
     .select()
     .from(dealLpInvestor)
-    .where(eq(dealLpInvestor.dealId, dealId));
+    .where(
+      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+    );
 
   if (roster.length === 0) return investors;
 
-  const rosterEmailByLpId = new Map<string, string>();
-  for (const m of roster) {
-    const em = String(m.email ?? "").trim();
-    if (em) rosterEmailByLpId.set(String(m.id).toLowerCase(), em);
-  }
-
-  const { byLpId, lookupByContactId } = await indexLpRosterPercents({
+  const {
+    byLpId,
+    emailByLpId,
+    lookupByContactId,
+    lookupEmailByContactId,
+  } = await indexLpRosterPercents({
     roster,
     investorContactIds: investors.map((inv) => String(inv.contactId ?? "")),
   });
@@ -569,9 +720,9 @@ export async function enrichFullInvestorApiFromLpRoster(
   return investors.map((inv) => {
     const id = String(inv.id ?? "").toLowerCase();
     const isLpRoster = lpRosterIds.has(id);
-    const storedEmail = isLpRoster
-      ? rosterEmailByLpId.get(id)?.trim()
-      : undefined;
+    const storedEmail = (
+      emailByLpId.get(id) ?? lookupEmailByContactId(inv.contactId)
+    )?.trim();
     const pct = byLpId.get(id) ?? lookupByContactId(inv.contactId);
     return {
       ...inv,
@@ -600,11 +751,7 @@ export async function getLpInvestorsTabPayload(
   kpis: ReturnType<typeof buildInvestorKpisFromRows>;
   investors: LpInvestorApiRow[];
 }> {
-  try {
-    await syncDealInvestorEsignStatusesForDeal(dealId);
-  } catch (err) {
-    console.warn("syncDealInvestorEsignStatusesForDeal:", err);
-  }
+  scheduleDealInvestorEsignSync(dealId);
 
   let merged = await listMergedLpInvestorsForDeal(dealId);
   const uid = viewerUserId?.trim();
@@ -638,6 +785,11 @@ export type UpsertDealLpInvestorInput = {
   entityOwnershipPercent?: string | null;
   /** Distribution Allocation % (optional). */
   distributionAllocationPercent?: string | null;
+  /**
+   * Autosave from the Add Investor modal. A draft write never demotes an existing
+   * saved investor; an explicit Save always clears the flag.
+   */
+  isDraft?: boolean;
 };
 
 export const LP_INVESTOR_ALREADY_ON_DEAL_MESSAGE =
@@ -659,6 +811,7 @@ export async function findDealLpInvestorByDealAndContact(
         eq(dealLpInvestor.contactMemberId, cid),
       ),
     )
+    .orderBy(desc(dealLpInvestor.updatedAt))
     .limit(1);
   return row;
 }
@@ -675,7 +828,7 @@ export async function upsertDealLpInvestor(
 
   const existing = await findDealLpInvestorByDealAndContact(dealId, cid);
   if (!existing) {
-    await assertEligibleForNewDealRosterAdd(cid);
+    await assertEligibleForNewDealRosterAdd(cid, input.addedByUserId);
   }
 
   const send =
@@ -703,6 +856,37 @@ export async function upsertDealLpInvestor(
     contactDisplayName: input.contactDisplayName,
   });
 
+  if (existing) {
+    const sendToStore =
+      send === "yes" ||
+      String(existing.sendInvitationMail ?? "").trim().toLowerCase() === "yes"
+        ? "yes"
+        : "no";
+    const [row] = await db
+      .update(dealLpInvestor)
+      .set({
+        investorName,
+        addedBy: existing.addedBy ?? input.addedByUserId,
+        email: resolvedEmail || null,
+        role: roleToStore,
+        profileId,
+        userInvestorProfileId: uip,
+        investorClass: input.investorClass?.trim() ?? "",
+        percentOfClassOwnership: ownershipPct,
+        percentOfClassDistributions: distributionsPct,
+        entityOwnershipPercent: entityOwnershipPct,
+        distributionAllocationPercent: distributionAllocationPct,
+        sendInvitationMail: sendToStore,
+        isDraft: input.isDraft === true ? existing.isDraft : false,
+        updatedAt: now,
+      })
+      .where(eq(dealLpInvestor.id, existing.id))
+      .returning();
+
+    if (!row) throw new Error("UPDATE_DEAL_LP_INVESTOR_FAILED");
+    return row;
+  }
+
   const [row] = await db
     .insert(dealLpInvestor)
     .values({
@@ -720,32 +904,12 @@ export async function upsertDealLpInvestor(
       entityOwnershipPercent: entityOwnershipPct,
       distributionAllocationPercent: distributionAllocationPct,
       sendInvitationMail: send,
+      isDraft: input.isDraft === true,
       updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [dealLpInvestor.dealId, dealLpInvestor.contactMemberId],
-      set: {
-        investorName,
-        addedBy: sql`COALESCE(${dealLpInvestor.addedBy}, ${input.addedByUserId}::uuid)`,
-        email: resolvedEmail || null,
-        role: roleToStore,
-        profileId,
-        userInvestorProfileId: uip,
-        investorClass: input.investorClass?.trim() ?? "",
-        percentOfClassOwnership: ownershipPct,
-        percentOfClassDistributions: distributionsPct,
-        entityOwnershipPercent: entityOwnershipPct,
-        distributionAllocationPercent: distributionAllocationPct,
-        sendInvitationMail: sqlPreserveSendInvitationMailOnUpsert(
-          input.sendInvitationMail,
-          dealLpInvestor.sendInvitationMail,
-        ),
-        updatedAt: now,
-      },
     })
     .returning();
 
-  if (!row) throw new Error("UPSERT_DEAL_LP_INVESTOR_FAILED");
+  if (!row) throw new Error("INSERT_DEAL_LP_INVESTOR_FAILED");
   return row;
 }
 
@@ -784,7 +948,7 @@ export async function updateDealLpInvestorById(
     .limit(1);
   const prevContactId = String(existing?.contactMemberId ?? "").trim();
   if (prevContactId.toLowerCase() !== cid.toLowerCase()) {
-    await assertEligibleForNewDealRosterAdd(cid);
+    await assertEligibleForNewDealRosterAdd(cid, input.addedByUserId);
   }
   const sendToStore =
     send === "yes"
@@ -819,6 +983,7 @@ export async function updateDealLpInvestorById(
       entityOwnershipPercent: entityOwnershipPct,
       distributionAllocationPercent: distributionAllocationPct,
       sendInvitationMail: sendToStore,
+      ...(input.isDraft === true ? {} : { isDraft: false }),
       updatedAt: now,
     })
     .where(
@@ -1020,7 +1185,12 @@ export async function countExtraLpRosterOnlyByDealIds(
     const rFull = await db
       .select({ contactMemberId: dealLpInvestor.contactMemberId })
       .from(dealLpInvestor)
-      .where(eq(dealLpInvestor.dealId, dealId));
+      .where(
+        and(
+          eq(dealLpInvestor.dealId, dealId),
+          eq(dealLpInvestor.isDraft, false),
+        ),
+      );
     let n = 0;
     for (const r of rFull) {
       const k = normalizeContactKey(r.contactMemberId);
@@ -1036,6 +1206,8 @@ const DEAL_ID_UUID_RE =
 
 /**
  * Distinct LP roster rows in `deal_lp_investor` per deal (one row per contact), scoped by viewer:
+ * - Co-sponsor on a deal (and not Lead/Admin on that deal): rows whose Sponsor name
+ *   (`added_by`) is this viewer or an equivalent portal account — not the full roster.
  * - Platform admin, unauthenticated-style callers (`scope` null), and LP-email–scoped investors:
  *   total rows per deal.
  * - Company users (sponsors, company admin, etc.): rows where `added_by` references a user whose
@@ -1057,6 +1229,40 @@ export async function countDealLpInvestorsByDealIdsForViewer(
   ];
   if (uuidIds.length === 0) return map;
 
+  const viewerUserId = String(scope?.userId ?? "").trim();
+  let coSponsorOnlyDealIds: string[] = [];
+  if (viewerUserId && scope && !scope.isPlatformAdmin) {
+    const [coIds, leadIds] = await Promise.all([
+      listDealIdsWhereViewerIsCoSponsor(viewerUserId),
+      listDealIdsWhereViewerIsLeadOrAdminSponsor(viewerUserId),
+    ]);
+    const leadSet = new Set(leadIds);
+    const coOnly = new Set(coIds.filter((id) => !leadSet.has(id)));
+    coSponsorOnlyDealIds = uuidIds.filter((id) => coOnly.has(id));
+  }
+
+  if (coSponsorOnlyDealIds.length > 0) {
+    const equiv = await listEquivalentPortalUserIdsForUser(viewerUserId);
+    const sponsorIds = equiv.length > 0 ? equiv : [viewerUserId];
+    const res = await pool.query<{ deal_id: string; cnt: string }>(
+      `SELECT lp.deal_id::text, COUNT(*)::int AS cnt
+       FROM deal_lp_investor lp
+       WHERE lp.deal_id = ANY($1::uuid[])
+         AND lp.added_by = ANY($2::uuid[])
+         AND lp.is_draft = false
+       GROUP BY lp.deal_id`,
+      [coSponsorOnlyDealIds, sponsorIds],
+    );
+    for (const row of res.rows) {
+      map.set(row.deal_id, Number(row.cnt));
+    }
+  }
+
+  const remainingIds = uuidIds.filter(
+    (id) => !coSponsorOnlyDealIds.includes(id),
+  );
+  if (remainingIds.length === 0) return map;
+
   const useTotalRosterCount =
     scope == null ||
     scope.isPlatformAdmin === true ||
@@ -1068,8 +1274,9 @@ export async function countDealLpInvestorsByDealIdsForViewer(
       `SELECT deal_id::text, COUNT(*)::int AS cnt
        FROM deal_lp_investor
        WHERE deal_id = ANY($1::uuid[])
+         AND is_draft = false
        GROUP BY deal_id`,
-      [uuidIds],
+      [remainingIds],
     );
     for (const row of res.rows) {
       map.set(row.deal_id, Number(row.cnt));
@@ -1088,8 +1295,9 @@ export async function countDealLpInvestorsByDealIdsForViewer(
      INNER JOIN users adder ON adder.id = lp.added_by
      WHERE lp.deal_id = ANY($1::uuid[])
        AND adder.organization_id = $2::uuid
+       AND lp.is_draft = false
      GROUP BY lp.deal_id`,
-    [uuidIds, orgId],
+    [remainingIds, orgId],
   );
   for (const row of res.rows) {
     map.set(row.deal_id, Number(row.cnt));
@@ -1199,6 +1407,33 @@ export async function updateMyCommittedAmountForLpDeal(params: {
   }
 
   const viewerUserId = String(params.viewerUserId ?? "").trim();
+  const storedInvite = await loadStoredInvestorInviteSponsor(viewerUserId);
+  const inviteSponsorUserId = storedInvite?.sponsorUserId ?? "";
+  const rosterAddedByUserId = viewerUserId
+    ? await resolveInvestNowAddedByUserId({
+        dealId: params.dealId,
+        investorUserId: viewerUserId,
+      })
+    : viewerUserId;
+  const assignedSponsorUserId =
+    rosterAddedByUserId.toLowerCase() !== viewerUserId.toLowerCase()
+      ? rosterAddedByUserId
+      : "";
+  const keepSameOrgSponsor = async (lpRowId: string | null | undefined) => {
+    if (!assignedSponsorUserId || !lpRowId) return;
+    await db
+      .update(dealLpInvestor)
+      .set({ addedBy: assignedSponsorUserId, updatedAt: new Date() })
+      .where(eq(dealLpInvestor.id, lpRowId));
+  };
+  const keepInviteSponsor = async (lpRowId: string | null | undefined) => {
+    if (!inviteSponsorUserId || !lpRowId) return;
+    await retainInviteSponsorOnLpRoster({
+      lpRowId,
+      viewerUserId,
+      sponsorUserId: inviteSponsorUserId,
+    });
+  };
   const resolvedContact = await resolveInvestNowViewerContactOnDeal({
       dealId: params.dealId,
       viewerEmailNorm: e,
@@ -1283,7 +1518,7 @@ export async function updateMyCommittedAmountForLpDeal(params: {
         profileId: profileOpt,
         investorClass: classRes.storedInvestorClass,
         sendInvitationMail: "no",
-        addedByUserId: viewerUserId,
+        addedByUserId: rosterAddedByUserId,
         emailFromClient: e,
         roleFromClient: LP_INVESTOR_TABLE_ROLE,
       });
@@ -1298,6 +1533,8 @@ export async function updateMyCommittedAmountForLpDeal(params: {
       })
       .where(eq(dealLpInvestor.id, target.id));
 
+    await keepInviteSponsor(target.id);
+    await keepSameOrgSponsor(target.id);
     return { ok: true };
   }
 
@@ -1332,7 +1569,7 @@ export async function updateMyCommittedAmountForLpDeal(params: {
         profileId: rowProfileId,
         investorClass: classRes.storedInvestorClass,
         sendInvitationMail: "no",
-        addedByUserId: viewerUserId,
+        addedByUserId: rosterAddedByUserId,
         emailFromClient: e,
         roleFromClient: LP_INVESTOR_TABLE_ROLE,
       });
@@ -1367,6 +1604,8 @@ export async function updateMyCommittedAmountForLpDeal(params: {
         profileId: rowProfileId,
       })
       .where(eq(dealLpInvestor.id, roster.id));
+    await keepInviteSponsor(roster.id);
+    await keepSameOrgSponsor(roster.id);
     return { ok: true };
   }
 
@@ -1436,7 +1675,7 @@ export async function updateMyCommittedAmountForLpDeal(params: {
       profileId: profileOpt ?? "",
       investorClass: classRes.storedInvestorClass,
       sendInvitationMail: "no",
-      addedByUserId: viewerUserId,
+      addedByUserId: rosterAddedByUserId,
       emailFromClient: e,
       roleFromClient: LP_INVESTOR_TABLE_ROLE,
     });
@@ -1451,5 +1690,7 @@ export async function updateMyCommittedAmountForLpDeal(params: {
     })
     .where(eq(dealLpInvestor.id, target.id));
 
+  await keepInviteSponsor(target.id);
+  await keepSameOrgSponsor(target.id);
   return { ok: true };
 }

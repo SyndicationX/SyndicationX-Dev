@@ -427,7 +427,7 @@ body:has(.authPage) {
 }
 
 .app_sidebar_link_active,
-.app_sidebar_link_active > span,
+.app_sidebar_link_active > span:not(.app_sidebar_sublink_badge):not(.app_sidebar_count_badge),
 .app_sidebar_link_active svg {
   color: var(--sidebar-active-text);
   /* font-weight: 600; */
@@ -443,7 +443,7 @@ body:has(.authPage) {
 }
 
 .app_sidebar_link_active:hover,
-.app_sidebar_link_active:hover > span,
+.app_sidebar_link_active:hover > span:not(.app_sidebar_sublink_badge):not(.app_sidebar_count_badge),
 .app_sidebar_link_active:hover svg {
   color: var(--sidebar-active-text);
 }

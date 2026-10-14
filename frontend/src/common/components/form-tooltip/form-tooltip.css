@@ -110,7 +110,7 @@
   z-index: 1080;
   display: inline-block;
   width: max-content;
-  max-width: min(18.5em, calc(100vw - 1.5em));
+  max-width: min(32rem, calc(100vw - 2rem));
   padding: 0;
   margin: 0;
   border: none;
@@ -194,6 +194,9 @@
   bottom: auto !important;
   right: auto !important;
   translate: none !important;
+  max-height: calc(100dvh - 1.5rem);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .form_tooltip_arrow_portaled_hide {
@@ -213,9 +216,9 @@
   font-size: 0.8125em;
   font-weight: 450;
   line-height: 1.45;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  hyphens: auto;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: none;
 }
 
 :root {

@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Lock, Pencil, Plus, Save, Trash2 } from "lucide-react"
-import { useCallback, useEffect, useId, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import {
   resolveQuestionForDisplay,
   type InvestorQuestionnaireQuestion,
@@ -19,6 +19,18 @@ type QuestionDraft = {
   subtext: string
   required: boolean
   options: string[]
+}
+
+const NO_OPTIONS: string[] = []
+
+function filledOptions(options: string[]): string[] {
+  return options.map((o) => o.trim()).filter(Boolean)
+}
+
+function sameFilledOptions(a: string[], b: string[]): boolean {
+  const left = filledOptions(a)
+  const right = filledOptions(b)
+  return left.length === right.length && left.every((v, i) => v === right[i])
 }
 
 function questionToDraft(question: InvestorQuestionnaireQuestion): QuestionDraft {
@@ -49,6 +61,7 @@ type QuestionnaireQuestionCardProps = {
         "label" | "fieldType" | "subtext" | "required" | "options"
       >
     >,
+    options?: { persistNow?: boolean },
   ) => void
   onDeleteQuestion: (question: InvestorQuestionnaireQuestion) => void
   onSaveField?: (questionId: string) => void
@@ -79,11 +92,16 @@ export function QuestionnaireQuestionCard({
     if (defaultExpanded) setExpanded(true)
   }, [defaultExpanded])
 
+  const wasEditingRef = useRef(false)
   useEffect(() => {
-    if (pendingFieldWorkflow && fieldEditing) {
+    const editing = pendingFieldWorkflow && fieldEditing
+    // Snapshot only when editing starts — a background save re-creates `question`
+    // and would otherwise discard in-progress edits.
+    if (editing && !wasEditingRef.current) {
       setDraft(questionToDraft(question))
       setExpanded(true)
     }
+    wasEditingRef.current = editing
   }, [pendingFieldWorkflow, fieldEditing, question])
 
   const baseId = useId()
@@ -98,12 +116,40 @@ export function QuestionnaireQuestionCard({
   const actionsDisabled = !canEdit || saving
   const defaultLocked = Boolean(q.isDefault)
   const coreDisabled = disabled || defaultLocked
-  const optionsLocked = defaultLocked
-  const showOptions = fieldTypeUsesOptions(
-    pendingFieldWorkflow && fieldEditing ? draft.fieldType : q.fieldType,
+  const viewMode = pendingFieldWorkflow && !fieldEditing
+  const editMode = pendingFieldWorkflow && fieldEditing
+  const showOptions = fieldTypeUsesOptions(editMode ? draft.fieldType : q.fieldType)
+
+  const committedOptions = useMemo(
+    () => (editMode ? draft.options : (q.options ?? NO_OPTIONS)),
+    [editMode, draft.options, q.options],
   )
-  const options =
-    pendingFieldWorkflow && fieldEditing ? draft.options : (q.options ?? [])
+  /** Blank rows live here only — saved config drops empty options. */
+  const [options, setOptions] = useState<string[]>(committedOptions)
+
+  useEffect(() => {
+    setOptions((rows) =>
+      sameFilledOptions(rows, committedOptions) ? rows : committedOptions,
+    )
+  }, [committedOptions])
+
+  useEffect(() => {
+    if (showOptions) {
+      setOptions((rows) => (rows.length > 0 ? rows : [""]))
+    }
+  }, [showOptions])
+
+  const changeOptions = useCallback(
+    (next: string[], persist = true) => {
+      setOptions(next)
+      if (editMode) {
+        setDraft((d) => ({ ...d, options: next }))
+      } else if (persist) {
+        onUpdateQuestion(question.id, { options: next })
+      }
+    },
+    [editMode, onUpdateQuestion, question.id],
+  )
 
   const applyDraft = useCallback(() => {
     const patch: Partial<
@@ -118,18 +164,18 @@ export function QuestionnaireQuestionCard({
       required: draft.required,
     }
     if (fieldTypeUsesOptions(draft.fieldType)) {
-      patch.options = draft.options.map((o) => o.trim()).filter(Boolean)
+      patch.options = filledOptions(draft.options)
     } else {
       patch.options = []
     }
-    onUpdateQuestion(question.id, patch)
+    onUpdateQuestion(question.id, patch, { persistNow: true })
   }, [draft, onUpdateQuestion, question.id])
 
   const handleSaveField = useCallback(() => {
     if (!draft.label.trim()) return
     if (
       fieldTypeUsesOptions(draft.fieldType) &&
-      draft.options.map((o) => o.trim()).filter(Boolean).length === 0
+      filledOptions(draft.options).length === 0
     ) {
       return
     }
@@ -137,9 +183,6 @@ export function QuestionnaireQuestionCard({
     onSaveField?.(question.id)
     setExpanded(false)
   }, [applyDraft, draft, onSaveField, question.id])
-
-  const viewMode = pendingFieldWorkflow && !fieldEditing
-  const editMode = pendingFieldWorkflow && fieldEditing
 
   return (
     <li
@@ -246,8 +289,8 @@ export function QuestionnaireQuestionCard({
           >
             {defaultLocked ? (
               <p className="deal_esign_questionnaire_default_hint" role="note">
-                Built-in field — label, type, and options are fixed. You can adjust
-                subtext and whether the field is required.
+                Built-in field — label and type are fixed. You can edit the
+                options and subtext.
               </p>
             ) : null}
             <div className="deal_esign_questionnaire_field">
@@ -294,22 +337,31 @@ export function QuestionnaireQuestionCard({
                 onChange={(next) => {
                   const fieldType = next as InvestorQuestionnaireFieldType
                   if (editMode) {
+                    const nextOptions = fieldTypeUsesOptions(fieldType)
+                      ? draft.options.length
+                        ? draft.options
+                        : [""]
+                      : []
                     setDraft((d) => ({
                       ...d,
                       fieldType,
-                      options: fieldTypeUsesOptions(fieldType)
-                        ? d.options.length
-                          ? d.options
-                          : [""]
-                        : [],
+                      options: nextOptions,
                     }))
+                    if (fieldTypeUsesOptions(fieldType)) {
+                      setOptions(nextOptions.length ? nextOptions : [""])
+                    }
                   } else if (fieldTypeUsesOptions(fieldType)) {
+                    const seeded =
+                      (question.options?.length ?? 0) > 0
+                        ? [...(question.options ?? [])]
+                        : [""]
+                    setOptions(seeded)
                     onUpdateQuestion(question.id, {
                       fieldType,
-                      options:
-                        question.options?.length ? question.options : [""],
+                      options: filledOptions(seeded),
                     })
                   } else {
+                    setOptions([])
                     onUpdateQuestion(question.id, { fieldType, options: [] })
                   }
                 }}
@@ -341,70 +393,59 @@ export function QuestionnaireQuestionCard({
                         htmlFor={`${q.id}-opt-input-${optionIndex}`}
                       >
                         Option {optionIndex + 1}
-                        <span className="deal_esign_questionnaire_field_required" aria-hidden>
-                          *
-                        </span>
                       </label>
                       <div className="deal_esign_questionnaire_option_input_row">
-                        {optionsLocked ? (
-                          <span className="deal_esign_questionnaire_option_readonly">
-                            {option}
-                          </span>
-                        ) : (
-                          <input
-                            id={`${q.id}-opt-input-${optionIndex}`}
-                            type="text"
-                            className="deal_esign_questionnaire_field_input deal_esign_questionnaire_option_input"
-                            value={option}
-                            placeholder={`Option ${optionIndex + 1}`}
-                            disabled={coreDisabled}
-                            aria-label={`Option ${optionIndex + 1}`}
-                            onChange={(e) => {
-                              const next = [...options]
-                              next[optionIndex] = e.target.value
-                              if (editMode) {
-                                setDraft((d) => ({ ...d, options: next }))
-                              } else {
-                                onUpdateQuestion(question.id, { options: next })
-                              }
-                            }}
-                          />
-                        )}
-                        {canEdit && !optionsLocked && options.length > 1 ? (
+                        <input
+                          id={`${q.id}-opt-input-${optionIndex}`}
+                          type="text"
+                          className="deal_esign_questionnaire_field_input deal_esign_questionnaire_option_input"
+                          value={option}
+                          placeholder={`Option ${optionIndex + 1}`}
+                          disabled={disabled}
+                          aria-label={`Option ${optionIndex + 1}`}
+                          onChange={(e) => {
+                            const next = [...options]
+                            next[optionIndex] = e.target.value
+                            changeOptions(next)
+                          }}
+                        />
+                        {canEdit && options.length > 1 ? (
                           <button
                             type="button"
                             className="deal_esign_questionnaire_option_remove"
-                            disabled={actionsDisabled}
+                            disabled={disabled}
                             aria-label={`Remove option ${optionIndex + 1}`}
-                            onClick={() => {
-                              const next = options.filter((_, i) => i !== optionIndex)
-                              if (editMode) {
-                                setDraft((d) => ({ ...d, options: next }))
-                              } else {
-                                onUpdateQuestion(question.id, { options: next })
-                              }
-                            }}
+                            onClick={() =>
+                              changeOptions(
+                                options.filter((_, i) => i !== optionIndex),
+                              )
+                            }
                           >
                             <Trash2 size={14} strokeWidth={2} aria-hidden />
+                          </button>
+                        ) : null}
+                        {canEdit && optionIndex === options.length - 1 ? (
+                          <button
+                            type="button"
+                            className="deal_esign_questionnaire_option_add_icon"
+                            disabled={disabled}
+                            aria-label="Add option"
+                            title="Add option"
+                            onClick={() => changeOptions([...options, ""], false)}
+                          >
+                            <Plus size={16} strokeWidth={2} aria-hidden />
                           </button>
                         ) : null}
                       </div>
                     </li>
                   ))}
                 </ol>
-                {canEdit && !optionsLocked ? (
+                {canEdit ? (
                   <button
                     type="button"
                     className="deal_esign_questionnaire_option_add"
-                    disabled={actionsDisabled}
-                    onClick={() => {
-                      const next = [...options, ""]
-                      if (editMode) {
-                        setDraft((d) => ({ ...d, options: next }))
-                      } else {
-                        onUpdateQuestion(question.id, { options: next })
-                      }
-                    }}
+                    disabled={disabled}
+                    onClick={() => changeOptions([...options, ""], false)}
                   >
                     <Plus size={16} strokeWidth={2} aria-hidden />
                     Add option
@@ -466,8 +507,7 @@ export function QuestionnaireQuestionCard({
                       actionsDisabled ||
                       !draft.label.trim() ||
                       (fieldTypeUsesOptions(draft.fieldType) &&
-                        draft.options.map((o) => o.trim()).filter(Boolean).length ===
-                          0)
+                        filledOptions(draft.options).length === 0)
                     }
                     onClick={handleSaveField}
                   >
