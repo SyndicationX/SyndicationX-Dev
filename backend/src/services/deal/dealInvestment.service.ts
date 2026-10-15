@@ -10,6 +10,11 @@ import {
   resolveDealStorageFolderName,
 } from "./dealStoragePaths.service.js";
 import { db, pool } from "../../database/db.js";
+import {
+  COMPANY_USER,
+  isCompanyAdminRole,
+  isPlatformAdminRole,
+} from "../../constants/roles.js";
 import { users } from "../../schema/auth.schema/signin.js";
 import { companies, userCompanyMembership } from "../../schema/schema.js";
 import { contact } from "../../schema/contact.schema.js";
@@ -26,8 +31,14 @@ import {
   isPortalUserCoSponsorOnDeal,
   isPortalUserLeadOrAdminSponsorOnDeal,
   isPortalUserSponsorOnDeal,
+  listCoSponsorPortalUserIdsOnDeal,
   listEquivalentPortalUserIdsForUser,
 } from "./dealMemberScope.service.js";
+import { redactCoSponsorInvestorEmailAndPhone } from "../privacy/coSponsorPiiRedaction.js";
+import {
+  resolvePortalRoleInOrganization,
+  userHasAccessToOrganization,
+} from "../org/orgResolution.service.js";
 import { loadCoSponsorEmailInterceptByUserLower } from "./dealCoSponsorEmailIntercept.service.js";
 import {
   isDocSignedEsignCompleted,
@@ -1890,15 +1901,56 @@ export async function resolveDealLeadSponsorFallback(dealId: string): Promise<{
   };
 }
 
-const INVESTOR_EMAIL_REDACTED = "Email unavailable";
+async function attachInvestorPhones<
+  T extends { contactId?: string; userPhone?: string },
+>(rows: T[]): Promise<T[]> {
+  const ids = [
+    ...new Set(
+      rows
+        .map((row) => String(row.contactId ?? "").trim())
+        .filter((id) => looksLikeUuid(id)),
+    ),
+  ];
+  if (ids.length === 0) return rows;
+  const [contactPhones, userPhones] = await Promise.all([
+    db
+      .select({ id: contact.id, phone: contact.phone })
+      .from(contact)
+      .where(inArray(contact.id, ids)),
+    db
+      .select({ id: users.id, phone: users.phone })
+      .from(users)
+      .where(inArray(users.id, ids)),
+  ]);
+  const byId = new Map<string, string>();
+  for (const row of userPhones) {
+    const phone = String(row.phone ?? "").trim();
+    if (phone) byId.set(String(row.id).toLowerCase(), phone);
+  }
+  for (const row of contactPhones) {
+    const phone = String(row.phone ?? "").trim();
+    if (phone) byId.set(String(row.id).toLowerCase(), phone);
+  }
+  return rows.map((row) => {
+    const key = String(row.contactId ?? "").trim().toLowerCase();
+    const phone = key ? byId.get(key) : undefined;
+    if (!phone) return row;
+    return { ...row, userPhone: phone };
+  });
+}
 
 /**
- * Lead / admin see the full roster, but not emails on investors added by a
- * co-sponsor. A viewer who is that investor's sponsor still sees the email.
+ * Lead / admin sponsors, and company staff of the deal's organization, see the
+ * full roster but not email or phone on investors a co-sponsor added. A viewer
+ * who is that investor's sponsor still sees both. Co-sponsors receive phone on
+ * the investors they are allowed to see. Platform admins are unchanged unless
+ * they are also lead or admin on this deal.
  */
 export async function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer<
   T extends {
+    contactId?: string;
     userEmail?: string;
+    userPhone?: string;
     addedByUserId?: string;
     addedByIsCoSponsorOnDeal?: boolean;
     addedByCoSponsorEmailIntercept?: string;
@@ -1906,16 +1958,58 @@ export async function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer<
 >(dealId: string, viewerUserId: string, rows: T[]): Promise<T[]> {
   const viewer = String(viewerUserId ?? "").trim();
   if (!viewer || rows.length === 0) return rows;
-  if (!(await isPortalUserLeadOrAdminSponsorOnDeal(dealId, viewer))) return rows;
-  const viewerIds = await listEquivalentPortalUserIdsForUser(viewer);
+  const [leadAdmin, coSponsor, actorRows, dealRows] = await Promise.all([
+    isPortalUserLeadOrAdminSponsorOnDeal(dealId, viewer),
+    isPortalUserCoSponsorOnDeal(dealId, viewer),
+    db
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, viewer))
+      .limit(1),
+    db
+      .select({ organizationId: addDealForm.organizationId })
+      .from(addDealForm)
+      .where(eq(addDealForm.id, dealId))
+      .limit(1),
+  ]);
+  const actorRole = String(actorRows[0]?.role ?? "").trim();
+  const dealOrgId = String(dealRows[0]?.organizationId ?? "").trim();
+  const roleInDealCompany =
+    dealOrgId.length > 0
+      ? await resolvePortalRoleInOrganization(viewer, dealOrgId, {
+          role: actorRole,
+          organizationId: null,
+        })
+      : actorRole;
+  const companyStaffOfDeal =
+    !isPlatformAdminRole(actorRole) &&
+    (isCompanyAdminRole(roleInDealCompany) ||
+      roleInDealCompany === COMPANY_USER) &&
+    dealOrgId.length > 0 &&
+    (await userHasAccessToOrganization(viewer, dealOrgId));
+  const shouldRedact = leadAdmin || companyStaffOfDeal;
+  const withPhone =
+    shouldRedact || coSponsor ? await attachInvestorPhones(rows) : rows;
+  if (!shouldRedact) return withPhone;
+  const [viewerIds, coSponsorIds] = await Promise.all([
+    listEquivalentPortalUserIdsForUser(viewer),
+    listCoSponsorPortalUserIdsOnDeal(dealId),
+  ]);
   const viewerIdSet = new Set(
     [...viewerIds, viewer].map((id) => String(id).trim().toLowerCase()),
   );
-  return rows.map((row) => {
-    if (row.addedByIsCoSponsorOnDeal !== true) return row;
+  const coSponsorIdSet = new Set(
+    coSponsorIds.map((id) => String(id).trim().toLowerCase()).filter(Boolean),
+  );
+  return withPhone.map((row) => {
     const addedBy = String(row.addedByUserId ?? "").trim().toLowerCase();
-    if (addedBy && viewerIdSet.has(addedBy)) return row;
-    return { ...row, userEmail: INVESTOR_EMAIL_REDACTED };
+    const addedByCoSponsor =
+      row.addedByIsCoSponsorOnDeal === true ||
+      (addedBy.length > 0 && coSponsorIdSet.has(addedBy));
+    return redactCoSponsorInvestorEmailAndPhone(
+      { ...row, addedByIsCoSponsorOnDeal: addedByCoSponsor },
+      viewerIdSet,
+    );
   });
 }
 
@@ -2141,6 +2235,11 @@ export async function enrichInvestorApiRowsWithAddedBy<
   ]);
   const sponsorByAdderLower = new Map<string, boolean>();
   const coSponsorByAdderLower = new Map<string, boolean>();
+  const coSponsorOnDeal = new Set(
+    (await listCoSponsorPortalUserIdsOnDeal(dealId)).map((id) =>
+      String(id).trim().toLowerCase(),
+    ),
+  );
   const interceptByAdderLower =
     await loadCoSponsorEmailInterceptByUserLower(dealId);
   await Promise.all(
@@ -2157,6 +2256,11 @@ export async function enrichInvestorApiRowsWithAddedBy<
       if (!isCoEffective) {
         const adderEquiv = await listEquivalentPortalUserIdsForUser(id);
         for (const eqId of adderEquiv) {
+          const eqLow = String(eqId).trim().toLowerCase();
+          if (coSponsorOnDeal.has(eqLow)) {
+            isCoEffective = true;
+            break;
+          }
           if (eqId === id) continue;
           if (await isPortalUserCoSponsorOnDeal(dealId, eqId)) {
             isCoEffective = true;
@@ -2164,7 +2268,10 @@ export async function enrichInvestorApiRowsWithAddedBy<
           }
         }
       }
-      coSponsorByAdderLower.set(low, isCoEffective);
+      coSponsorByAdderLower.set(
+        low,
+        isCoEffective || coSponsorOnDeal.has(low),
+      );
     }),
   );
 

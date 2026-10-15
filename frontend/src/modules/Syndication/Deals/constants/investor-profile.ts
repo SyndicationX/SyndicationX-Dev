@@ -101,13 +101,27 @@ export function investorProfileLabel(value: string): string {
 }
 
 /**
- * Profile column: Investing → Profiles `profile_name` only (not profile type).
+ * Profile column: the investor's saved profile name when they have one.
+ * Otherwise the profile the sponsor selected while adding them to the deal.
  */
 export function dealInvestorProfileDisplayName(row: {
   userInvestorProfileName?: string | null
+  entitySubtitle?: string | null
+  profileId?: string | null
 }): string {
   const named = String(row.userInvestorProfileName ?? "").trim()
-  return named || "—"
+  if (named && named !== "—") return named
+  const fromSponsor = String(row.entitySubtitle ?? "").trim()
+  if (
+    fromSponsor &&
+    fromSponsor !== "—" &&
+    fromSponsor.toLowerCase() !== "select"
+  ) {
+    return fromSponsor
+  }
+  const fromId = investorProfileLabel(String(row.profileId ?? ""))
+  if (fromId !== "—" && fromId.toLowerCase() !== "select") return fromId
+  return "—"
 }
 
 /** Resolve profile select `value` from a display label (e.g. when API only sent `entitySubtitle`). */

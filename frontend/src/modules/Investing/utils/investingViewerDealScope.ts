@@ -304,6 +304,7 @@ async function loadDealRosterForInvestingScope(row: DealListRow): Promise<{
   payload: DealInvestorsPayload
   members: DealInvestorRow[]
   leadSponsorDisplayName?: string
+  leadSponsorCompanyName?: string
 }> {
   if (!dealRowSupportsRosterApiPrefetch(row)) {
     return { payload: emptyDealInvestorsPayload(), members: [] }
@@ -316,6 +317,7 @@ async function loadDealRosterForInvestingScope(row: DealListRow): Promise<{
     payload,
     members: membersResult.members,
     leadSponsorDisplayName: membersResult.leadSponsorDisplayName,
+    leadSponsorCompanyName: membersResult.leadSponsorCompanyName,
   }
 }
 
@@ -419,6 +421,7 @@ export type InvestingDealsPageScopeEntry = {
   payload: DealInvestorsPayload
   members: DealInvestorRow[]
   leadSponsorDisplayName?: string
+  leadSponsorCompanyName?: string
 }
 
 /** Deals the viewer is invested in, invited to, or sponsoring. */
@@ -430,9 +433,9 @@ export async function mapInvestingDealsPageScope(
   const investorVisible = filterDealListRowsVisibleToInvestors(rows)
   const withPayload = await Promise.all(
     investorVisible.map(async (row) => {
-      const { payload, members, leadSponsorDisplayName } =
+      const { payload, members, leadSponsorDisplayName, leadSponsorCompanyName } =
         await loadDealRosterForInvestingScope(row)
-      return { row, payload, members, leadSponsorDisplayName }
+      return { row, payload, members, leadSponsorDisplayName, leadSponsorCompanyName }
     }),
   )
   return withPayload.filter(({ row, payload, members }) =>
@@ -453,9 +456,9 @@ export async function mapInvestingInvestmentsPageScope(
   const investorVisible = filterDealListRowsVisibleToInvestors(rows)
   const withPayload = await Promise.all(
     investorVisible.map(async (row) => {
-      const { payload, members, leadSponsorDisplayName } =
+      const { payload, members, leadSponsorDisplayName, leadSponsorCompanyName } =
         await loadDealRosterForInvestingScope(row)
-      return { row, payload, members, leadSponsorDisplayName }
+      return { row, payload, members, leadSponsorDisplayName, leadSponsorCompanyName }
     }),
   )
   return withPayload.filter(({ payload }) =>

@@ -94,6 +94,8 @@ export interface ContactRow {
   organizationId?: string
   /** Company (`companies.name`) this contact belongs to. */
   organizationName?: string
+  /** Company of the user who added this contact. */
+  addedByCompanyName?: string
   /** ISO timestamp when the contact was created (from API) */
   createdAt?: string
   /**

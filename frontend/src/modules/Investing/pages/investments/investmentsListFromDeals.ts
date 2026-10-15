@@ -226,6 +226,7 @@ function listRowFromDealAndInvestors(
   viewerEmailNorm: string,
   leadSponsorDisplayName?: string,
   distributedAmount = 0,
+  leadSponsorCompanyName?: string,
 ): InvestmentListRow {
   const dealId = listRow.id
   const profileId = inv ? String(inv.profileId ?? "").trim() : ""
@@ -290,10 +291,21 @@ function listRowFromDealAndInvestors(
     secType: listRow.secType,
     propertyName: listRow.propertyName,
     owningEntityName: listRow.owningEntityName,
-    dealSponsorName: pickInvestNowLeadSponsorDisplayName({
-      members,
-      leadSponsorDisplayName,
-    }),
+    dealSponsorName:
+      [inv?.addedByCompanyName, draftRow?.addedByCompanyName]
+        .map((value) =>
+          String(value ?? "")
+            .split("||")
+            .map((part) => part.trim())
+            .filter((part) => part && part !== "—")
+            .join(", "),
+        )
+        .find((value) => value.length > 0) ||
+      pickInvestNowLeadSponsorDisplayName({
+        members,
+        leadSponsorDisplayName,
+        leadSponsorCompanyName,
+      }),
     startDateDisplay: listRow.startDateDisplay ?? listRow.createdDateDisplay,
     viewerRolesLabel,
   }
@@ -327,7 +339,13 @@ export async function loadInvestmentListRowsFromDeals(
   ])
   const distributedByDeal = distributedAmountByDealId(myDistributions.distributions)
   const out: InvestmentListRow[] = []
-  for (const { row, payload, members, leadSponsorDisplayName } of scoped) {
+  for (const {
+    row,
+    payload,
+    members,
+    leadSponsorDisplayName,
+    leadSponsorCompanyName,
+  } of scoped) {
     const committed = committedAmountMatchingInvestorsTable(payload, emn)
     // `scoped` already passed `dealIsInViewerInvestmentsListScope` (invited, draft, or
     // visible commitment). Do not drop in-progress Invest Now drafts — they have no
@@ -358,6 +376,7 @@ export async function loadInvestmentListRowsFromDeals(
         emn,
         leadSponsorDisplayName,
         distributedAmount,
+        leadSponsorCompanyName,
       ),
     )
   }
@@ -474,6 +493,7 @@ export async function loadInvestmentDetailFromDeal(
   let payload: Awaited<ReturnType<typeof fetchDealInvestors>>
   let members: DealInvestorRow[]
   let leadSponsorDisplayName: string | undefined
+  let leadSponsorCompanyName: string | undefined
   try {
     const [dealRow, payloadRow, membersResult] = await Promise.all([
       fetchDealById(did),
@@ -484,6 +504,7 @@ export async function loadInvestmentDetailFromDeal(
     payload = payloadRow
     members = membersResult.members
     leadSponsorDisplayName = membersResult.leadSponsorDisplayName
+    leadSponsorCompanyName = membersResult.leadSponsorCompanyName
   } catch (err) {
     if (isDealSaasPaymentRequiredError(err)) throw err
     const resolvedDealId = await resolveDealIdFromInvestmentRowId(did)
@@ -499,6 +520,7 @@ export async function loadInvestmentDetailFromDeal(
       payload = payloadRow
       members = membersResult.members
       leadSponsorDisplayName = membersResult.leadSponsorDisplayName
+      leadSponsorCompanyName = membersResult.leadSponsorCompanyName
     } catch (retryErr) {
       if (isDealSaasPaymentRequiredError(retryErr)) throw retryErr
       return undefined
@@ -538,6 +560,7 @@ export async function loadInvestmentDetailFromDeal(
     emn,
     leadSponsorDisplayName,
     distributedAmount,
+    leadSponsorCompanyName,
   )
   const investedAsBreakdown = buildProfileBreakdownForDeal(profileRows, nameMap)
   return defaultDetailRecord(list, deal, investedAsBreakdown)

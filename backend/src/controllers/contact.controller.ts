@@ -5,6 +5,7 @@ import { isPlatformAdminRole } from "../constants/roles.js";
 import { db } from "../database/db.js";
 import { users } from "../schema/auth.schema/signin.js";
 import { companies } from "../schema/company.schema/company.js";
+import { userCompanyMembership } from "../schema/company.schema/userCompanyMembership.schema.js";
 import {
   ContactInvalidPhoneError,
   ContactScopeConflictError,
@@ -384,11 +385,71 @@ async function loadOrganizationNamesById(
   return names;
 }
 
+/**
+ * Company of the user who added the contact. Primary company wins. Membership
+ * companies fill in when the adder has no primary organization.
+ */
+async function loadAddedByCompanyNameByUserId(
+  creatorById: Map<string, { id: string; organizationId: string | null }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const creators = [...creatorById.values()];
+  if (creators.length === 0) return out;
+  const primaryNames = await loadOrganizationNamesById(
+    creators.map((creator) => creator.organizationId),
+  );
+  const needsMembership: string[] = [];
+  for (const creator of creators) {
+    const primary = primaryNames.get(
+      String(creator.organizationId ?? "").trim().toLowerCase(),
+    );
+    if (primary) {
+      out.set(creator.id, primary);
+    } else {
+      needsMembership.push(creator.id);
+    }
+  }
+  if (needsMembership.length === 0) return out;
+  let memberships: { userId: string; companyName: string | null }[] = [];
+  try {
+    memberships = await db
+      .select({
+        userId: userCompanyMembership.userId,
+        companyName: companies.name,
+      })
+      .from(userCompanyMembership)
+      .innerJoin(companies, eq(userCompanyMembership.companyId, companies.id))
+      .where(inArray(userCompanyMembership.userId, needsMembership));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('relation "user_company_membership" does not exist')) {
+      throw err;
+    }
+  }
+  const namesByUser = new Map<string, string[]>();
+  for (const row of memberships) {
+    const userId = String(row.userId);
+    const name = String(row.companyName ?? "").trim();
+    if (!name) continue;
+    const list = namesByUser.get(userId) ?? [];
+    if (!list.some((existing) => existing.toLowerCase() === name.toLowerCase())) {
+      list.push(name);
+    }
+    namesByUser.set(userId, list);
+  }
+  for (const userId of needsMembership) {
+    const names = namesByUser.get(userId);
+    if (names?.length) out.set(userId, names.join(", "));
+  }
+  return out;
+}
+
 async function mapContactsToJsonWithNames(
   rows: ContactRow[],
   dealCounts?: Map<string, number>,
   dealAdderNames?: Map<string, string>,
   organizationId?: string | null,
+  _viewerUserId?: string | null,
 ) {
   const orgNameByIdPromise = loadOrganizationNamesById(
     rows.map((row) => row.organizationId),
@@ -425,9 +486,12 @@ async function mapContactsToJsonWithNames(
     }),
   );
 
-  const orgNameById = await orgNameByIdPromise;
+  const [orgNameById, addedByCompanyByUserId] = await Promise.all([
+    orgNameByIdPromise,
+    loadAddedByCompanyNameByUserId(creatorById),
+  ]);
 
-  return rows.map((row) => {
+  const mapped = rows.map((row) => {
     const base = mapContactToJson(row);
     const { createdBy: _createdBy, ...rest } = base;
     const creator = creatorById.get(row.createdBy) ?? null;
@@ -450,6 +514,9 @@ async function mapContactsToJsonWithNames(
       owners: display.owners,
       organizationName,
       organization_name: organizationName,
+      addedByCompanyName: addedByCompanyByUserId.get(row.createdBy) || undefined,
+      added_by_company_name:
+        addedByCompanyByUserId.get(row.createdBy) || undefined,
       createdByUserId: row.createdBy,
       created_by_user_id: row.createdBy,
       createdByDisplayName: display.createdByDisplayName || undefined,
@@ -460,6 +527,7 @@ async function mapContactsToJsonWithNames(
       dealCount,
     };
   });
+  return mapped;
 }
 
 async function mapContactToJsonWithNames(
@@ -467,12 +535,14 @@ async function mapContactToJsonWithNames(
   dealCounts?: Map<string, number>,
   dealAdderNames?: Map<string, string>,
   organizationId?: string | null,
+  viewerUserId?: string | null,
 ) {
   const [mapped] = await mapContactsToJsonWithNames(
     [row],
     dealCounts,
     dealAdderNames,
     organizationId,
+    viewerUserId,
   );
   return mapped;
 }
@@ -659,6 +729,7 @@ export async function getMemberInviteeContacts(
       undefined,
       undefined,
       orgId,
+      user.id,
     );
     res.status(200).json({ contacts });
   } catch (err) {
@@ -737,6 +808,7 @@ export async function getContacts(
       dealCounts,
       dealAdderNames,
       organizationIdFromRequestQuery(req),
+      user.id,
     );
     logSocContactDirectoryView({
       actorUserId: user.id,
@@ -823,6 +895,7 @@ export async function getPlatformContacts(
       undefined,
       dealAdderNames,
       organizationId,
+      user.id,
     );
     logSocContactDirectoryView({
       actorUserId: user.id,
@@ -878,6 +951,7 @@ export async function getContactDealStats(
       dealCounts,
       dealAdderNames,
       organizationIdFromRequestQuery(req),
+      user.id,
     );
     res.status(200).json({ contacts });
   } catch (err) {
@@ -933,6 +1007,7 @@ export async function getContact(
         dealCounts,
         dealAdderNames,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {
@@ -1055,6 +1130,7 @@ export async function postContact(req: Request, res: Response): Promise<void> {
         owners,
       },
       createdByUserId: user.id,
+      organizationId: orgId,
     });
     invalidateContactDirectoryCache();
     const dealCounts = await countDealInvestmentsByContactIdForViewer({
@@ -1089,6 +1165,7 @@ export async function postContact(req: Request, res: Response): Promise<void> {
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
       invitationEmailSent: invitationResult === "sent",
     });
@@ -1291,6 +1368,7 @@ export async function postContactInvitation(
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
       invitationEmailSent: true,
     });
@@ -1414,6 +1492,7 @@ export async function patchContact(req: Request, res: Response): Promise<void> {
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {
@@ -1479,6 +1558,7 @@ export async function patchContactStatus(
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {
@@ -1571,6 +1651,7 @@ export async function patchContactShowOfferings(
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {
@@ -1636,6 +1717,7 @@ export async function patchContactAccreditationStatus(
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {
@@ -1699,6 +1781,7 @@ export async function patchContactKnownSince(
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {
@@ -1762,6 +1845,7 @@ export async function patchContactRelationship506b(
         dealCounts,
         undefined,
         organizationIdFromRequestQuery(req),
+        user.id,
       ),
     });
   } catch (err) {

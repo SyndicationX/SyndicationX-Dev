@@ -108,6 +108,33 @@ export async function listOrganizationIdsForUser(
   return [...ids];
 }
 
+/**
+ * Role that applies in one company. Primary `users.role` is used for the
+ * user's primary organization. Any other company uses that company's
+ * membership role, so a company admin of company A is not treated as an
+ * admin of company B.
+ */
+export async function resolvePortalRoleInOrganization(
+  userId: string,
+  organizationId: string | null | undefined,
+  primary?: UserOrgResolutionFields | null,
+): Promise<string> {
+  const uid = String(userId ?? "").trim();
+  const primaryRole = String(primary?.role ?? "").trim();
+  const active = normalizeOrganizationUuid(organizationId);
+  if (!uid || !active) return primaryRole;
+  const home = normalizeOrganizationUuid(
+    primary?.organizationId ?? (await resolveOrganizationIdForUserId(uid)),
+  );
+  if (home && home === active) return primaryRole;
+  const memberships = await listUserCompanyMemberships(uid);
+  const match = memberships.find(
+    (membership) => normalizeOrganizationUuid(membership.companyId) === active,
+  );
+  // A company-admin role in company A must not carry into company B.
+  return String(match?.role ?? "").trim();
+}
+
 /** Primary org on the user row or an explicit `user_company_membership` row. */
 export async function userHasAccessToOrganization(
   userId: string,

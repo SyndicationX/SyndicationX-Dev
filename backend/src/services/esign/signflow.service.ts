@@ -168,6 +168,8 @@ export type SignFlowField = {
   templatePage?: number;
   /** Content hash of the template page — anchors coordinates after PDF merges. */
   pageHash?: string;
+  /** Radios that share this id are one group. A newly placed radio has its own id. */
+  radioGroupId?: string;
 };
 
 export type SendSignFlowDocumentParams = {
@@ -264,6 +266,7 @@ export type SignFlowDocument = {
     value?: string;
     templatePage?: number;
     pageHash?: string;
+    radioGroupId?: string;
   }>;
   createdAt?: string;
   updatedAt?: string;
@@ -1069,6 +1072,9 @@ export function mapSignFlowTemplateFieldsForInvestor(
         required: f.dataKey?.trim() ? true : f.required !== false,
         ...(profileTypes ? { profileTypes } : {}),
         ...(profileType ? { profileType } : {}),
+        ...(String(f.radioGroupId ?? "").trim()
+          ? { radioGroupId: String(f.radioGroupId).trim() }
+          : {}),
       };
     });
 }
@@ -1138,6 +1144,9 @@ export function mapSignFlowTemplateFieldsForSponsor(
         ...(pageHash ? { pageHash } : {}),
         recipientId: sponsorRecipientId,
         required: f.required !== false,
+        ...(String(f.radioGroupId ?? "").trim()
+          ? { radioGroupId: String(f.radioGroupId).trim() }
+          : {}),
       };
     });
 }

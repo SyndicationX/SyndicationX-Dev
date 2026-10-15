@@ -236,23 +236,30 @@ const DEAL_TIERS: DealTier[] = [
   },
 ];
 
-const CO_SPONSOR_COUNTS = [5, 6, 7, 10, 11, 12] as const;
+const CO_SPONSOR_OPTIONS: readonly { id: SeatBand; label: string }[] = [
+  { id: "5", label: "5" },
+  { id: "10", label: "10" },
+  { id: "10plus", label: "10+" },
+];
 
-function selectableCoSponsorCount(count: number): number {
+/** 1–5 co-sponsors use the 5 package, 6–10 the 10 package, 11+ the 10+ package. */
+function seatBandForCoSponsors(count: number): SeatBand {
   const n = Math.floor(Number(count) || 0);
-  if (n <= 5) return 5;
-  if (n === 6) return 6;
-  if (n === 7) return 7;
-  if (n <= 10) return 10;
-  if (n === 11) return 11;
-  return 12;
+  if (n >= 11) return "10plus";
+  if (n >= 6) return "10";
+  return "5";
 }
 
-function seatBandForCoSponsors(count: number): SeatBand {
-  const selected = selectableCoSponsorCount(count);
-  if (selected >= 11) return "10plus";
-  if (selected >= 6) return "10";
-  return "5";
+/** Table row for the package: 5th price, 10th price, or 12th price. */
+function includedCoSponsorsForSeat(seat: SeatBand): number {
+  if (seat === "10plus") return 12;
+  if (seat === "10") return 10;
+  return 5;
+}
+
+/** 1–5 → 5th price, 6–10 → 10th price, 11+ → 12th price. */
+function pricingCountForCoSponsors(count: number): number {
+  return includedCoSponsorsForSeat(seatBandForCoSponsors(count));
 }
 
 /** Previous monthly price by co-sponsor count 1–12. Shown struck through. */
@@ -287,12 +294,11 @@ function coGpsForCatalog(
   coGpCount: number | null | undefined,
   seat: SeatBand,
 ): number {
-  const n = Number(coGpCount);
-  if (Number.isFinite(n) && n > 0) {
-    return Math.min(12, Math.max(1, Math.floor(n)));
+  if (seat === "5" || seat === "10" || seat === "10plus") {
+    return includedCoSponsorsForSeat(seat);
   }
-  if (seat === "10plus") return 12;
-  if (seat === "10") return 10;
+  const n = Number(coGpCount);
+  if (Number.isFinite(n) && n > 0) return pricingCountForCoSponsors(n);
   return 5;
 }
 
@@ -301,8 +307,22 @@ function priceFromTable(
   tierId: DealTier["id"],
   coGpCount: number,
 ): number {
-  const index = Math.min(12, Math.max(1, Math.floor(coGpCount))) - 1;
+  const index = pricingCountForCoSponsors(coGpCount) - 1;
   return table[tierId][index];
+}
+
+function coSponsorRangeLabel(seat: SeatBand): string {
+  if (seat === "10plus") return "10+ co-sponsors";
+  if (seat === "10") return "6 to 10 co-sponsors";
+  return "1 to 5 co-sponsors";
+}
+
+function coSponsorPackageCopy(seat: SeatBand): string {
+  const included = includedCoSponsorsForSeat(seat);
+  if (seat === "10plus") {
+    return `Includes up to ${included} co-sponsors. Each co-sponsor beyond 12 is $10.`;
+  }
+  return `Includes ${coSponsorRangeLabel(seat)}.`;
 }
 
 function planPrice(
@@ -534,7 +554,7 @@ function BillingCycleConfirmModal({
               <li>
                 <Check size={16} aria-hidden="true" />
                 <span>
-                  {`Includes ${coGpsForCatalog(row.coGpCount, seat)} co-sponsors`}
+                  {coSponsorPackageCopy(seat)}
                 </span>
               </li>
             </ul>
@@ -1072,9 +1092,7 @@ function BillingPricingPanel({
   const navigate = useNavigate();
   const wizardMode =
     allowPayment && Boolean((initialDealId ?? "").trim());
-  const [coSponsorCount, setCoSponsorCount] = useState<number | null>(5);
-  const seatBand: SeatBand | null =
-    coSponsorCount == null ? null : seatBandForCoSponsors(coSponsorCount);
+  const [seatBand, setSeatBand] = useState<SeatBand | null>("5");
   const [wizardCycle, setWizardCycle] = useState<"monthly" | "annually" | null>(
     null,
   );
@@ -1215,19 +1233,15 @@ function BillingPricingPanel({
     }
     const count = Number(selectedDeal.coGpCount);
     if (Number.isFinite(count) && count >= 1) {
-      setCoSponsorCount(selectableCoSponsorCount(count));
+      setSeatBand(seatBandForCoSponsors(count));
       return;
     }
     const currentSeat = selectedDeal.seatBand;
-    if (currentSeat === "10plus") {
-      setCoSponsorCount(12);
+    if (currentSeat === "10plus" || currentSeat === "10" || currentSeat === "5") {
+      setSeatBand(currentSeat);
       return;
     }
-    if (currentSeat === "10") {
-      setCoSponsorCount(10);
-      return;
-    }
-    setCoSponsorCount(5);
+    setSeatBand("5");
   }, [
     wizardMode,
     selectedDeal,
@@ -1621,11 +1635,11 @@ function BillingPricingPanel({
             aria-labelledby="cp-billing-seats-label"
             aria-disabled={!membersEnabled}
           >
-            {CO_SPONSOR_COUNTS.map((count) => {
-              const selected = coSponsorCount === count
+            {CO_SPONSOR_OPTIONS.map((option) => {
+              const selected = seatBand === option.id
               return (
                 <label
-                  key={count}
+                  key={option.id}
                   className={`cp_cosponsor_choice${
                     selected ? " cp_cosponsor_choice_active" : ""
                   }`}
@@ -1633,13 +1647,17 @@ function BillingPricingPanel({
                   <input
                     type="radio"
                     name="cp_billing_seats"
-                    value={count}
+                    value={option.id}
                     checked={selected}
                     disabled={!membersEnabled}
-                    aria-label={`${count} co-sponsors`}
-                    onChange={() => setCoSponsorCount(count)}
+                    aria-label={
+                      option.id === "10plus"
+                        ? "10 or more co-sponsors"
+                        : `${option.label} co-sponsors`
+                    }
+                    onChange={() => setSeatBand(option.id)}
                   />
-                  <span className="cp_cosponsor_choice_count">{count}</span>
+                  <span className="cp_cosponsor_choice_count">{option.label}</span>
                   <span className="cp_cosponsor_choice_label">Co-sponsors</span>
                 </label>
               )
@@ -1648,9 +1666,13 @@ function BillingPricingPanel({
           <p className="cp_billing_filter_hint" style={{ margin: 0 }}>
             {!membersEnabled
               ? "Choose a billing cycle first to pick Co-Sponsors."
-              : coSponsorCount == null
+              : seatBand == null
                 ? "Choose how many Co-Sponsors to include."
-                : `Includes ${coSponsorCount} co-sponsors. 8 or 9 use 10. Each co-sponsor past 12 is $10.`}
+                : seatBand === "10plus"
+                  ? "More than 10 co-sponsors use the 12 co-sponsor price. Each co-sponsor past 12 is $10."
+                  : seatBand === "10"
+                    ? "6 to 10 co-sponsors use the 10 co-sponsor price."
+                    : "1 to 5 co-sponsors use the 5 co-sponsor price."}
           </p>
         </div>
       </div>
@@ -1659,7 +1681,7 @@ function BillingPricingPanel({
         {DEAL_TIERS.filter(
           (tier) => !wizardMode || tier.id === appropriatePlanId,
         ).map((tier) => {
-          const pricedCoGps = coSponsorCount ?? 5;
+          const pricedCoGps = includedCoSponsorsForSeat(displaySeat);
           const listPrice = planPrice(tier.id, displayCycle, pricedCoGps);
           const previousPrice = previousPlanPrice(
             tier.id,
@@ -1770,7 +1792,7 @@ function BillingPricingPanel({
                 ) : null}
                 <p className="cp_billing_plan_price_calc">
                   {seatsSelected
-                    ? `${pricedCoGps} co-sponsor${pricedCoGps === 1 ? "" : "s"} · ACH or credit card`
+                    ? `${coSponsorRangeLabel(displaySeat)} · ACH or credit card`
                     : "Choose Co-Sponsors to see this price"}
                   {displayCycle === "annually" && seatsSelected
                     ? " · billed yearly"
@@ -1786,7 +1808,7 @@ function BillingPricingPanel({
                   <li>
                     <Check size={16} aria-hidden="true" />
                     <span>
-                      {`Includes ${pricedCoGps} co-sponsors. Each co-sponsor beyond 12 is $10.`}
+                      {coSponsorPackageCopy(displaySeat)}
                     </span>
                   </li>
                   <li>

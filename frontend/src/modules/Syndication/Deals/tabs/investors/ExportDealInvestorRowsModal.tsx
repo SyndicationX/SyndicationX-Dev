@@ -1,4 +1,6 @@
 import { Download, Search, X } from "lucide-react"
+import { RedactedPill } from "../../../../../common/components/redacted-pill/RedactedPill"
+import { isPrivacyRedacted } from "../../../../../common/utils/displayEmail"
 import { isPlatformAdmin } from "@/common/auth/roleUtils"
 import { ExportModalFooter } from "../../../../../common/components/modal/ExportModalFooter"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -242,7 +244,11 @@ export function ExportDealInvestorRowsModal({
                       {rowDisplayLabel(row)}
                     </span>
                     <span className="deals_export_modal_row_meta">
-                      {rowMetaLine(row)}
+                      {isPrivacyRedacted(row.userEmail) ? (
+                        <RedactedPill />
+                      ) : (
+                        rowMetaLine(row)
+                      )}
                     </span>
                   </label>
                 </li>

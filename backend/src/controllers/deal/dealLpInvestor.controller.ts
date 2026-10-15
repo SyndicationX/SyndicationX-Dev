@@ -21,7 +21,7 @@ import {
   findMergedInvestorForLpRosterRow,
   getLpInvestorsTabPayload,
   LP_INVESTOR_ALREADY_ON_DEAL_MESSAGE,
-  mapDealLpInvestorRowToEditApi,
+  mapDealLpInvestorRowToEditApiForViewer,
   resolveDealLpInvestorForEdit,
   updateDealLpInvestorById,
   updateMyCommittedAmountForLpDeal,
@@ -104,7 +104,11 @@ export async function getDealLpInvestor(
       return;
     }
 
-    const investor = await mapDealLpInvestorRowToEditApi(row);
+    const investor = await mapDealLpInvestorRowToEditApiForViewer(
+      dealId.trim(),
+      user.id,
+      row,
+    );
     res.status(200).json({ investor });
   } catch (err) {
     console.error("getDealLpInvestor:", err);

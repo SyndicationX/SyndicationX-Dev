@@ -13,8 +13,8 @@ import {
   type SignFlowField,
 } from "../esign/signflow.service.js";
 import {
-  alignSignFlowRadioFieldSizeToChoiceBox,
   esignDocumentAlignedTextFieldSize,
+  expandShrunkChoiceFieldsForEditor,
   getInvestorQuestionnaireSignatureSignFlowFields,
   isQuestionnaireSignatureFieldLabel,
   loadInvestorQuestionnaireSignaturePagePdf,
@@ -403,6 +403,7 @@ export async function startDealEsignSignflowTemplateDraft(params: {
       }
     }
     await applyTemplateSigningWorkflowToSignFlowDoc(file, existingDocId);
+    await restorePlacedChoiceFieldSizes(existingDocId);
     return {
       file,
       editUrl: buildSignFlowEditorUrl(existingDocId),
@@ -482,15 +483,31 @@ export async function startDealEsignSignflowTemplateDraft(params: {
   };
 }
 
-/** Choice fields placed in the embed can come back oversized; store + send compact boxes. */
+/**
+ * Boxes saved at the tiny signer size are put back to the size used when the
+ * sponsor added them. Larger boxes the sponsor resized are left as they are.
+ */
+async function restorePlacedChoiceFieldSizes(documentId: string): Promise<void> {
+  const doc = await getSignFlowDocument(documentId);
+  const existing = (doc.fields ?? []) as SignFlowField[];
+  const restored = expandShrunkChoiceFieldsForEditor(existing);
+  if (!signFlowFieldsPlacementChanged(existing, restored)) return;
+
+  await patchSignFlowDocument(documentId, {
+    fields: normalizeSignFlowFieldRecipientIds(doc, restored),
+  });
+}
+
+/**
+ * Renumber choice labels on save. The compact signer size is applied only when
+ * a document is sent, so reopening the editor keeps the boxes you placed.
+ */
 async function normalizeSignFlowChoiceFieldSizes(
   documentId: string,
   doc: Awaited<ReturnType<typeof getSignFlowDocument>>,
 ): Promise<Awaited<ReturnType<typeof getSignFlowDocument>>> {
   const existing = (doc.fields ?? []) as SignFlowField[];
-  const normalized = normalizeSignFlowChoiceFieldOptionNumbers(
-    alignSignFlowRadioFieldSizeToChoiceBox(existing),
-  );
+  const normalized = normalizeSignFlowChoiceFieldOptionNumbers(existing);
   if (!signFlowFieldsPlacementChanged(existing, normalized)) return doc;
 
   await patchSignFlowDocument(documentId, {

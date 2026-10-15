@@ -3,7 +3,13 @@ import {
   LP_INVESTOR_ROLE_VALUE,
 } from "../constants/investor-profile"
 import type { DealInvestorRow } from "../types/deal-investors.types"
-import { EMAIL_UNAVAILABLE_LABEL } from "../../../../common/utils/displayEmail"
+import {
+  COMPANY_USER,
+  getStoredUserRole,
+  isCompanyAdmin,
+  isPlatformAdmin,
+} from "../../../../common/auth/roleUtils"
+import { REDACTED_LABEL } from "../../../../common/utils/displayEmail"
 
 export {
   EMAIL_UNAVAILABLE_LABEL as INVESTOR_EMAIL_REDACTED_LABEL,
@@ -69,7 +75,7 @@ function roleStringIsAdminSponsor(raw: string): boolean {
 }
 
 function roleStringIsCoSponsor(raw: string): boolean {
-  const t = String(raw).trim().toLowerCase()
+  const t = String(raw).trim().toLowerCase().replace(/_/g, " ")
   return t === "co-sponsor" || t === "co sponsor"
 }
 
@@ -276,15 +282,24 @@ export function scopeDealInvestorRowsForViewer(
 }
 
 /**
- * Lead / admin see the full roster, but not emails on investors a co-sponsor added.
- * If the viewer is that investor's sponsor, the email stays visible.
+ * Lead / admin, and company staff who are not on the roster, see the full
+ * roster but not emails on investors a co-sponsor added. If the viewer is that
+ * investor's sponsor, the email stays visible. Platform admins are unchanged
+ * unless they are lead or admin on this deal.
  */
 export function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
   rows: DealInvestorRow[],
   viewerRole: ViewerDealMemberRole,
   sessionUserId?: string,
 ): DealInvestorRow[] {
-  if (viewerRole !== "lead_sponsor" && viewerRole !== "admin_sponsor") {
+  const companyStaff =
+    !isPlatformAdmin() &&
+    (isCompanyAdmin() || getStoredUserRole() === COMPANY_USER)
+  if (
+    viewerRole !== "lead_sponsor" &&
+    viewerRole !== "admin_sponsor" &&
+    !companyStaff
+  ) {
     return rows
   }
   const viewer = String(sessionUserId ?? "").trim().toLowerCase()
@@ -292,7 +307,11 @@ export function redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
     if (row.addedByIsCoSponsorOnDeal !== true) return row
     const addedBy = String(row.addedByUserId ?? "").trim().toLowerCase()
     if (viewer && addedBy && addedBy === viewer) return row
-    return { ...row, userEmail: EMAIL_UNAVAILABLE_LABEL }
+    return {
+      ...row,
+      userEmail: REDACTED_LABEL,
+      userPhone: REDACTED_LABEL,
+    }
   })
 }
 

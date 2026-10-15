@@ -1,5 +1,6 @@
 import { pool } from "../../database/db.js";
 import { viewerShouldSeeOnlySelfCreatedContacts } from "../deal/dealMemberScope.service.js";
+import { resolvePortalRoleInOrganization } from "../org/orgResolution.service.js";
 
 const ORG_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -251,9 +252,20 @@ export async function listContactOwnerSponsorsForViewer(params: {
   const contactId = String(params.contactId ?? "").trim();
 
   if (viewerUserId) {
+    const roleInCompany = params.organizationId
+      ? await resolvePortalRoleInOrganization(
+          viewerUserId,
+          params.organizationId,
+          {
+            role: params.viewerRole ?? null,
+            organizationId: null,
+          },
+        )
+      : params.viewerRole;
     const coSponsorViewer = await viewerShouldSeeOnlySelfCreatedContacts(
       viewerUserId,
-      params.viewerRole,
+      roleInCompany,
+      params.organizationId,
     );
     if (coSponsorViewer) {
       return {

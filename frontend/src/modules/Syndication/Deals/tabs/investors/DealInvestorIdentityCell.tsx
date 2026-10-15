@@ -1,9 +1,11 @@
 import { FilePenLine } from "lucide-react"
+import { RedactedPill } from "../../../../../common/components/redacted-pill/RedactedPill"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
   EMAIL_UNAVAILABLE_LABEL,
   displayEmail,
   isDisplayableEmail,
+  isPrivacyRedacted,
 } from "../../../../../common/utils/displayEmail"
 
 function investorInitials(r: DealInvestorRow): string {
@@ -47,8 +49,10 @@ export function DealInvestorIdentityCell({
     : email || !entitySubtitle
       ? displayEmail(email)
       : entitySubtitle
+  const emailRedacted = isPrivacyRedacted(email)
   const emailIsMuted =
-    emailLine === "—" || emailLine === EMAIL_UNAVAILABLE_LABEL
+    !emailRedacted &&
+    (emailLine === "—" || emailLine === EMAIL_UNAVAILABLE_LABEL)
   const emailTitle =
     emailUsable && entitySubtitle
       ? `${email} · ${entitySubtitle}`
@@ -99,14 +103,18 @@ export function DealInvestorIdentityCell({
             </span>
           ) : null}
         </div>
-        <span
-          className={`deal_inv_identity_line2 deal_inv_identity_ellipsis${
-            emailIsMuted ? " um_status_muted" : ""
-          }`}
-          title={emailTitle}
-        >
-          {emailLine}
-        </span>
+        {emailRedacted ? (
+          <RedactedPill />
+        ) : (
+          <span
+            className={`deal_inv_identity_line2 deal_inv_identity_ellipsis${
+              emailIsMuted ? " um_status_muted" : ""
+            }`}
+            title={emailTitle}
+          >
+            {emailLine}
+          </span>
+        )}
       </div>
     </div>
   )

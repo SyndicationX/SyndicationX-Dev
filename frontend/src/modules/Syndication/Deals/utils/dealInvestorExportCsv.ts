@@ -125,6 +125,7 @@ export function buildDealInvestorsExportMatrix(
       "Verified accreditation",
       "Username",
       "Email",
+      "Phone",
     ],
   ]
   for (const row of rows) {
@@ -174,6 +175,7 @@ export function buildDealInvestorsExportMatrix(
       String(row.verifiedAccLabel ?? ""),
       String(row.userDisplayName ?? ""),
       String(row.userEmail ?? ""),
+      String(row.userPhone ?? ""),
     ])
   }
   return matrix

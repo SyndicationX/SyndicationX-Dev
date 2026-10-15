@@ -166,9 +166,18 @@ function normalizeContact(raw: Record<string, unknown>): ContactRow {
         ? String(raw.createdByUserId ?? raw.created_by_user_id).trim() ||
           undefined
         : undefined,
+    organizationId:
+      raw.organizationId != null || raw.organization_id != null
+        ? String(raw.organizationId ?? raw.organization_id).trim() || undefined
+        : undefined,
     organizationName:
       raw.organizationName != null || raw.organization_name != null
         ? String(raw.organizationName ?? raw.organization_name).trim() ||
+          undefined
+        : undefined,
+    addedByCompanyName:
+      raw.addedByCompanyName != null || raw.added_by_company_name != null
+        ? String(raw.addedByCompanyName ?? raw.added_by_company_name).trim() ||
           undefined
         : undefined,
     createdAt:

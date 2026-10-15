@@ -34,6 +34,48 @@ import {
   esignTemplateDisplayNameForFile,
 } from "./dealMemberSendEsign.service.js";
 import { resolveEsignFilesForInvestorProfile } from "./dealEsignProfileTemplate.service.js";
+import {
+  getSignFlowDocument,
+  signFlowRecipientHasSigned,
+} from "../esign/signflow.service.js";
+import type { StoredDealInvestorEsignSend } from "../../constants/deal-investor-esign-status.js";
+
+/** True when the sponsor saved the template after this signing copy was created. */
+function templateSavedAfterSend(
+  files: EsignTemplateFileRecord[],
+  sentAt: string,
+): boolean {
+  const sentMs = Date.parse(sentAt);
+  if (!Number.isFinite(sentMs)) return false;
+  return files.some((file) => {
+    const savedMs = Date.parse(String(file.signflowSavedAt ?? ""));
+    return Number.isFinite(savedMs) && savedMs > sentMs;
+  });
+}
+
+/**
+ * Keep the existing signing copy when nobody has a newer template, or when
+ * someone has already signed it. Otherwise the investor should get a new copy.
+ */
+async function pendingSendStillMatchesTemplate(
+  send: StoredDealInvestorEsignSend,
+  files: EsignTemplateFileRecord[],
+): Promise<boolean> {
+  if (send.completedAt?.trim() || send.signedAt?.trim()) return true;
+  if (!templateSavedAfterSend(files, send.sentAt)) return true;
+
+  const sigId = send.signatureRequestId?.trim() ?? "";
+  if (getActiveEsignProvider() !== "signflow" || !sigId) return false;
+
+  try {
+    const doc = await getSignFlowDocument(sigId);
+    return (doc.recipients ?? []).some((recipient) =>
+      signFlowRecipientHasSigned(recipient),
+    );
+  } catch {
+    return true;
+  }
+}
 
 const LP_COMMITMENT_PROFILE_IDS = new Set([
   "individual",
@@ -223,7 +265,10 @@ export async function sendMyInvestNowEsignIfNeeded(params: {
     ? findEsignSendForCategoryAndFiles(bundle, sendCategoryId, selectedIds)
     : null;
 
-  if (existingSend?.sentAt?.trim()) {
+  if (
+    existingSend?.sentAt?.trim() &&
+    (await pendingSendStillMatchesTemplate(existingSend, selectedFiles))
+  ) {
     const sigId = existingSend.signatureRequestId?.trim() ?? "";
     const completed = Boolean(existingSend.completedAt?.trim());
     if (sigId) {

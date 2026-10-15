@@ -39,6 +39,11 @@ import {
   nationalTenDigitsFromRawInput,
 } from "../../../../common/phone/usPhoneNumber"
 import { focusFirstFormErrorAfterUpdate, scrollMultiStepFormToTopAfterUpdate } from "../../../../common/utils/scrollToFirstFormError"
+import { RedactedPill } from "../../../../common/components/redacted-pill/RedactedPill"
+import {
+  isDisplayableEmail,
+  isRedactedPhone,
+} from "../../../../common/utils/displayEmail"
 import { fetchMyProfile } from "../../../myaccount/accountApi"
 import { getSessionUserDisplayName } from "../../../../common/auth/sessionUserDisplayName"
 import { fetchContactOwnerSponsors } from "../api/contactsApi"
@@ -711,10 +716,24 @@ export function AddContactPanel({
     setter((prev) => (prev.includes(v) ? prev : [...prev, v]))
   }
 
+  const contactPiiLocked = Boolean(
+    contactToEdit &&
+      (!isDisplayableEmail(contactToEdit.email) ||
+        isRedactedPhone(contactToEdit.phone)),
+  )
+
   function validateStep1(): boolean {
     const err: typeof fieldError = {}
     if (!firstName.trim()) err.firstName = "This field is required."
     if (!lastName.trim()) err.lastName = "This field is required."
+    if (contactPiiLocked) {
+      setFieldError(err)
+      const ok = Object.keys(err).length === 0
+      if (!ok) {
+        focusFirstFormErrorAfterUpdate({ container: contactFormRef.current })
+      }
+      return ok
+    }
     if (!email.trim()) {
       err.email = "This field is required."
     } else if (!isValidEmailFormat(email)) {
@@ -1033,33 +1052,44 @@ export function AddContactPanel({
                           </span>
                         </span>
                       </label>
-                      <input
-                        id="contact-email"
-                        type="email"
-                        className={
-                          fieldError.email ? "um_field_input_invalid" : undefined
-                        }
-                        value={email}
-                        onChange={(e) => {
-                          setEmail(e.target.value)
-                          if (fieldError.email)
-                            setFieldError((f) => ({ ...f, email: undefined }))
-                        }}
-                        autoComplete="email"
-                        placeholder="name@company.com"
-                        aria-invalid={Boolean(fieldError.email)}
-                        aria-describedby={
-                          fieldError.email ? "contact-email-err" : undefined
-                        }
-                      />
-                      {fieldError.email ? (
-                        <p
-                          id="contact-email-err"
-                          className="um_field_hint um_field_hint_error"
-                        >
-                          {fieldError.email}
-                        </p>
-                      ) : null}
+                      {contactPiiLocked ? (
+                        <RedactedPill />
+                      ) : (
+                        <>
+                          <input
+                            id="contact-email"
+                            type="email"
+                            className={
+                              fieldError.email
+                                ? "um_field_input_invalid"
+                                : undefined
+                            }
+                            value={email}
+                            onChange={(e) => {
+                              setEmail(e.target.value)
+                              if (fieldError.email)
+                                setFieldError((f) => ({
+                                  ...f,
+                                  email: undefined,
+                                }))
+                            }}
+                            autoComplete="email"
+                            placeholder="name@company.com"
+                            aria-invalid={Boolean(fieldError.email)}
+                            aria-describedby={
+                              fieldError.email ? "contact-email-err" : undefined
+                            }
+                          />
+                          {fieldError.email ? (
+                            <p
+                              id="contact-email-err"
+                              className="um_field_hint um_field_hint_error"
+                            >
+                              {fieldError.email}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
                     </div>
 
                     <div className="um_field add_contact_field_tight">
@@ -1074,6 +1104,9 @@ export function AddContactPanel({
                         />
                         <span>Phone</span>
                       </label>
+                      {contactPiiLocked ? (
+                        <RedactedPill />
+                      ) : (
                       <UsPhoneInput
                         id="contact-phone"
                         name="phone"
@@ -1089,6 +1122,7 @@ export function AddContactPanel({
                         aria-invalid={Boolean(fieldError.phone)}
                         error={fieldError.phone ?? null}
                       />
+                      )}
                     </div>
                   </div>
 

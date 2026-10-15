@@ -18,8 +18,12 @@ import {
 import { useEffect } from "react"
 import { isPlatformAdmin } from "../../../../common/auth/roleUtils"
 import { ViewReadonlyField } from "../../../../common/components/ViewReadonlyField"
-import { formatUsPhoneStoredForUi } from "../../../../common/phone/usPhoneNumber"
-import { displayEmail } from "../../../../common/utils/displayEmail"
+import { RedactedPill } from "../../../../common/components/redacted-pill/RedactedPill"
+import {
+  displayEmail,
+  displayPhone,
+  isPrivacyRedacted,
+} from "../../../../common/utils/displayEmail"
 import { formatCount } from "@/common/utils/formatCount"
 import "../../Deals/tabs/investors/add-investment-modal.css"
 import "../../usermanagement/user_management.css"
@@ -111,11 +115,27 @@ export function ViewContactModal({
               label="Name"
               value={displayName}
             />
-            <ViewReadonlyField Icon={Mail} label="Email" value={displayEmail(contact.email)} />
+            <ViewReadonlyField
+              Icon={Mail}
+              label="Email"
+              value={
+                isPrivacyRedacted(contact.email) ? (
+                  <RedactedPill />
+                ) : (
+                  displayEmail(contact.email)
+                )
+              }
+            />
             <ViewReadonlyField
               Icon={Phone}
               label="Phone"
-              value={formatUsPhoneStoredForUi(contact.phone)}
+              value={
+                isPrivacyRedacted(contact.phone) ? (
+                  <RedactedPill />
+                ) : (
+                  displayPhone(contact.phone)
+                )
+              }
             />
             {isGhlContact && contact.companyName?.trim() ? (
               <ViewReadonlyField
@@ -221,7 +241,9 @@ export function ViewContactModal({
               Icon={Users}
               label="Owners"
               value={
-                contact.owners.length > 0 ? (
+                contact.addedByCompanyName?.trim() ? (
+                  contact.addedByCompanyName.trim()
+                ) : contact.owners.length > 0 ? (
                   <div className="contacts_cell_chips">
                     {contact.owners.map((o, i) => (
                       <span key={`${o}-${i}`} className="contacts_cell_chip">

@@ -33,6 +33,7 @@ import {
   Save,
 } from "lucide-react"
 import { FormHeadingWithInfo } from "@/common/components/form-heading/FormHeadingWithInfo"
+import { getSessionUserNameParts } from "@/common/auth/sessionUserDisplayName"
 import { scrollMultiStepFormToTopAfterUpdate } from "@/common/utils/scrollToFirstFormError"
 import { getApiV1Base } from "@/common/utils/apiBaseUrl"
 import {
@@ -217,14 +218,26 @@ const initialState = {
 
 type FormState = typeof initialState
 
+/** Fill blank profile first/last name from the signed-in user. Saved values stay editable. */
+function withSignedInUserName(form: FormState): FormState {
+  const { firstName, lastName } = getSessionUserNameParts()
+  if (!firstName && !lastName) return form
+  return {
+    ...form,
+    firstName: form.firstName.trim() ? form.firstName : firstName,
+    lastName: form.lastName.trim() ? form.lastName : lastName,
+  }
+}
+
 function mergeKnownSsnIntoForm(
   form: FormState,
   existingProfiles: InvestorProfileListRow[],
 ): FormState {
-  if (form.ssn.trim()) return form
+  const named = withSignedInUserName(form)
+  if (named.ssn.trim()) return named
   const knownSsn = ssnFromAnyInvestorProfile(existingProfiles)
-  if (!knownSsn) return form
-  return { ...form, ssn: knownSsn }
+  if (!knownSsn) return named
+  return { ...named, ssn: knownSsn }
 }
 
 function addProfileFormWithKnownSsn(
@@ -555,7 +568,7 @@ function formStateFromProfileRow(row: InvestorProfileListRow): FormState {
   ) {
     next = { ...next, beneficiary: null, beneficiaryPickId: "" }
   }
-  return next
+  return withSignedInUserName(next)
 }
 
 const REQUIRED_MSG = "This field is required."

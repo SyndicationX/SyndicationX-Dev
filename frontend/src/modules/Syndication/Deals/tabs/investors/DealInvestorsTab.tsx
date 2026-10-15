@@ -1329,7 +1329,11 @@ function DealInvestorsPopulated({
                 String(row.addedByDisplayName ?? "").toLowerCase(),
               tdClassName: "deal_inv_td_ellipsis",
               cell: (row: DealInvestorRow) => {
-                const s = String(row.addedByDisplayName ?? "").trim();
+                const s = String(row.addedByDisplayName ?? "")
+                  .split("||")
+                  .map((part) => part.trim())
+                  .filter((part) => part && part !== "—")
+                  .join(", ");
                 const display = s && s !== "—" ? s : "—";
                 const email = String(row.addedByEmail ?? "").trim();
                 if (display === "—" || !email)

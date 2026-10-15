@@ -541,6 +541,7 @@ export function DealInvestNowPage() {
           pickInvestNowSponsorDisplayName(members, {
             referringSponsorDisplayName: resolvedReferringSponsorName,
             investorAddedByDisplayName: selfInvestor?.addedByDisplayName,
+            investorAddedByCompanyName: selfInvestor?.addedByCompanyName,
           }),
         )
         if (referringSponsorRef?.trim() && resolvedReferringSponsorName?.trim()) {

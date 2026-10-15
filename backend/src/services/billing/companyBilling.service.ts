@@ -617,9 +617,29 @@ async function ensureDealPayerStripeCustomer(params: {
   return customer.id;
 }
 
+function stripeCustomerIdOf(
+  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
+): string {
+  if (!customer) return "";
+  return typeof customer === "string" ? customer : customer.id ?? "";
+}
+
+/** Same physical card or bank account, used to reuse a copy already on the lead sponsor. */
+function savedPaymentFingerprint(pm: Stripe.PaymentMethod): string {
+  if (pm.type === "card" && pm.card?.fingerprint) return `card:${pm.card.fingerprint}`;
+  if (pm.type === "us_bank_account" && pm.us_bank_account?.fingerprint) {
+    return `bank:${pm.us_bank_account.fingerprint}`;
+  }
+  return "";
+}
+
 /**
  * Bill the current lead sponsor. A card saved on an older customer stays there
  * for other deals; this payment uses a copy on the lead sponsor's customer.
+ *
+ * Stripe's share API takes the customer the card is already attached to, then
+ * the copy is attached to the lead sponsor. Passing the lead sponsor as
+ * `customer` makes Stripe reject the card.
  */
 async function customerForSavedDealPayment(params: {
   companyId: string;
@@ -630,8 +650,7 @@ async function customerForSavedDealPayment(params: {
   const payerCustomerId = await ensureDealPayerStripeCustomer(params);
   const stripe = getStripeClient();
   const pm = await stripe.paymentMethods.retrieve(params.paymentMethodId);
-  const attached =
-    typeof pm.customer === "string" ? pm.customer : pm.customer?.id ?? "";
+  const attached = stripeCustomerIdOf(pm.customer);
   if (!attached || attached === payerCustomerId) {
     if (!attached) {
       await stripe.paymentMethods.attach(params.paymentMethodId, {
@@ -644,11 +663,54 @@ async function customerForSavedDealPayment(params: {
     };
   }
   try {
+    const fingerprint = savedPaymentFingerprint(pm);
+    if (fingerprint && pm.type === "card") {
+      const existing = await stripe.paymentMethods.list({
+        customer: payerCustomerId,
+        type: "card",
+        limit: 100,
+      });
+      const reused = existing.data.find(
+        (row) => savedPaymentFingerprint(row) === fingerprint,
+      );
+      if (reused) {
+        return { customerId: payerCustomerId, paymentMethodId: reused.id };
+      }
+    }
+    if (fingerprint && pm.type === "us_bank_account") {
+      const existing = await stripe.paymentMethods.list({
+        customer: payerCustomerId,
+        type: "us_bank_account",
+        limit: 100,
+      });
+      const reused = existing.data.find(
+        (row) => savedPaymentFingerprint(row) === fingerprint,
+      );
+      if (reused) {
+        return { customerId: payerCustomerId, paymentMethodId: reused.id };
+      }
+    }
+
     const cloned = await stripe.paymentMethods.create({
-      customer: payerCustomerId,
+      customer: attached,
       payment_method: params.paymentMethodId,
+      metadata: {
+        clonedFromCustomer: attached,
+        clonedFromPaymentMethod: params.paymentMethodId,
+        dealPayerCustomerId: payerCustomerId,
+      },
     });
-    return { customerId: payerCustomerId, paymentMethodId: cloned.id };
+    let sharedId = cloned.id;
+    if (stripeCustomerIdOf(cloned.customer) !== payerCustomerId) {
+      if (stripeCustomerIdOf(cloned.customer)) {
+        await stripe.paymentMethods.detach(cloned.id);
+      }
+      const attachedCopy = await stripe.paymentMethods.attach(cloned.id, {
+        customer: payerCustomerId,
+      });
+      sharedId = attachedCopy.id;
+    }
+    return { customerId: payerCustomerId, paymentMethodId: sharedId };
   } catch (err) {
     console.warn("customerForSavedDealPayment clone:", err);
     throw new Error(

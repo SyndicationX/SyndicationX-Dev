@@ -375,20 +375,9 @@ function signFlowChoiceGroupKey(field: SignFlowField): string | null {
   return null;
 }
 
-function signFlowChoiceVisualGroupKey(
-  field: SignFlowField,
-  groupIndex: number,
-): string {
-  const type = signFlowChoiceFieldType(field) ?? "choice";
-  const recipient = String(field.recipientId ?? "").trim();
-  const page = Math.max(1, Math.floor(Number(field.page) || 1));
-  return `${type}|${recipient}|${page}|visual-${groupIndex}`;
-}
-
 /**
- * SignFlow's embed may keep counting choices globally (Radio 1, 2, 3, 4...) when
- * a sponsor adds another radio/checkbox group. Reset each stored group so every
- * newly placed group starts at 1 again.
+ * Number options only inside a group created with +. A radio or checkbox placed
+ * on its own stays option 1, no matter how close it sits to another field.
  */
 export function normalizeSignFlowChoiceFieldOptionNumbers(
   fields: SignFlowField[],
@@ -401,53 +390,21 @@ export function normalizeSignFlowChoiceFieldOptionNumbers(
       explicitGroup: signFlowChoiceGroupKey(field),
       page: Math.max(1, Math.floor(Number(field.page) || 1)),
       recipientId: String(field.recipientId ?? "").trim(),
-      x: Number(field.x) || 0,
-      y: Number(field.y) || 0,
-      h: Math.max(0.5, Number(field.height) || 1),
     }))
     .filter((entry): entry is typeof entry & { type: "radio" | "checkbox" } =>
       entry.type === "radio" || entry.type === "checkbox",
-    )
-    .sort((a, b) => {
-      const byType = a.type.localeCompare(b.type);
-      if (byType) return byType;
-      const byRecipient = a.recipientId.localeCompare(b.recipientId);
-      if (byRecipient) return byRecipient;
-      if (a.page !== b.page) return a.page - b.page;
-      if (Math.abs(a.x - b.x) > 0.5) return a.x - b.x;
-      if (Math.abs(a.y - b.y) > 0.5) return a.y - b.y;
-      return a.index - b.index;
-    });
+    );
 
   if (!choiceEntries.length) return fields;
 
-  let visualGroupIndex = 0;
   const groupByOriginalIndex = new Map<number, string>();
-  let previous: (typeof choiceEntries)[number] | null = null;
   for (const entry of choiceEntries) {
-    if (entry.explicitGroup) {
-      groupByOriginalIndex.set(
-        entry.index,
-        `${entry.type}|${entry.recipientId}|${entry.page}|explicit-${entry.explicitGroup}`,
-      );
-      previous = entry;
-      continue;
-    }
-
-    const xGap = previous ? Math.abs(entry.x - previous.x) : 0;
-    const newVisualGroup =
-      !previous ||
-      previous.type !== entry.type ||
-      previous.recipientId !== entry.recipientId ||
-      previous.page !== entry.page ||
-      xGap > Math.max(6, Math.max(previous.h, entry.h) * 3);
-
-    if (newVisualGroup) visualGroupIndex += 1;
     groupByOriginalIndex.set(
       entry.index,
-      signFlowChoiceVisualGroupKey(entry.field, visualGroupIndex),
+      entry.explicitGroup
+        ? `${entry.type}|${entry.recipientId}|${entry.page}|explicit-${entry.explicitGroup}`
+        : `${entry.type}|${entry.recipientId}|${entry.page}|field-${entry.index}`,
     );
-    previous = entry;
   }
 
   const optionCounts = new Map<string, number>();
@@ -535,7 +492,48 @@ export function alignSignFlowRadioFieldSizeToChoiceBox(
     ) {
       return field;
     }
-    return { ...field, width: target.width, height: target.height };
+    // Keep the box on the mark the sponsor centered. Shrinking from the
+    // top-left corner slides the control off to the side.
+    const centerX = (Number(field.x) || 0) + width / 2;
+    const centerY = (Number(field.y) || 0) + height / 2;
+    return {
+      ...field,
+      width: target.width,
+      height: target.height,
+      x: Math.max(0, centerX - target.width / 2),
+      y: Math.max(0, centerY - target.height / 2),
+    };
+  });
+}
+
+/** Editor boxes for radio/checkbox. Matches SignFlow getDefaultFieldSize. */
+const EDITOR_CHOICE_FIELD_SIZE = { width: 4, height: 3 };
+
+/**
+ * Saving used to store the tiny signer box. Reopening the editor then stacked
+ * the add and delete buttons on the label. Grow those boxes back to the editor
+ * size, still centered on the mark.
+ */
+export function expandShrunkChoiceFieldsForEditor(
+  fields: SignFlowField[],
+): SignFlowField[] {
+  return fields.map((field) => {
+    const type = String(field.type ?? "").trim().toLowerCase();
+    if (type !== "radio" && type !== "checkbox") return field;
+    const width = Number(field.width) || 0;
+    const height = Number(field.height) || 0;
+    if (width >= 2.5 && height >= 2) return field;
+    const centerX = (Number(field.x) || 0) + width / 2;
+    const centerY = (Number(field.y) || 0) + height / 2;
+    const nextWidth = EDITOR_CHOICE_FIELD_SIZE.width;
+    const nextHeight = EDITOR_CHOICE_FIELD_SIZE.height;
+    return {
+      ...field,
+      width: nextWidth,
+      height: nextHeight,
+      x: Math.max(0, Math.min(100 - nextWidth, centerX - nextWidth / 2)),
+      y: Math.max(0, Math.min(100 - nextHeight, centerY - nextHeight / 2)),
+    };
   });
 }
 

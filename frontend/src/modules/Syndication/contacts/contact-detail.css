@@ -173,6 +173,20 @@
   line-height: 1.25;
 }
 
+.cd_contact_channels {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.cd_contact_channels .cd_email,
+.cd_contact_channels .cd_phone {
+  margin: 0;
+}
+
 .cd_email {
   margin: 0.15rem 0 0;
   color: var(--portal-text-muted, #64748b);

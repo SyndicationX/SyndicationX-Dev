@@ -12,7 +12,8 @@ import {
   formatContactSinceLabel,
 } from "../utils/contactCsv"
 import { buildTableExportFilename } from "../../../../common/utils/tableExportFilename"
-import { displayEmail } from "../../../../common/utils/displayEmail"
+import { RedactedPill } from "../../../../common/components/redacted-pill/RedactedPill"
+import { displayEmail, isPrivacyRedacted } from "../../../../common/utils/displayEmail"
 
 interface ExportContactsModalProps {
   open: boolean
@@ -265,7 +266,11 @@ export function ExportContactsModal({
                     {contactDisplayName(row)}
                   </span>
                   <span className="deals_export_modal_row_meta">
-                    {displayEmail(row.email)}
+                    {isPrivacyRedacted(row.email) ? (
+                      <RedactedPill />
+                    ) : (
+                      displayEmail(row.email)
+                    )}
                   </span>
                 </label>
               </li>

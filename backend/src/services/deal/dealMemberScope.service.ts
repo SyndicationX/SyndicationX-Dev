@@ -8,8 +8,10 @@ import {
 } from "../../constants/roles.js";
 import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
 import { companies, users } from "../../schema/schema.js";
+import { viewerSeesOnlyOwnContactsInSelectedCompany } from "../privacy/coSponsorPiiRedaction.js";
 import {
   listOrganizationIdsForUser,
+  normalizeOrganizationUuid,
   userHasAccessToOrganization,
 } from "../org/orgResolution.service.js";
 
@@ -173,14 +175,14 @@ export async function listCoSponsorPortalUserIdsOnDeal(
        FROM deal_member dm
        WHERE dm.deal_id = $1::uuid
          AND dm.is_draft = false
-         AND lower(trim(dm.deal_member_role)) IN ('co-sponsor', 'co sponsor')
+         AND replace(replace(lower(trim(dm.deal_member_role)), '_', ' '), '-', ' ') = 'co sponsor'
          AND trim(coalesce(dm.contact_member_id, '')) <> ''
        UNION
        SELECT DISTINCT trim(both from di.contact_id) AS member_key
        FROM deal_investment di
        WHERE di.deal_id = $1::uuid
          AND di.is_draft = false
-         AND lower(trim(di.investor_role)) IN ('co-sponsor', 'co sponsor')
+         AND replace(replace(lower(trim(di.investor_role)), '_', ' '), '-', ' ') = 'co sponsor'
          AND trim(di.contact_id) <> $2
          AND trim(coalesce(di.contact_id, '')) <> ''
      ),
@@ -301,13 +303,24 @@ export async function resolveViewerDealMemberRoleOnDeal(
  */
 export async function listDealIdsWhereViewerIsCoSponsor(
   userId: string,
+  organizationId?: string | null,
 ): Promise<string[]> {
+  const orgId = normalizeOrganizationUuid(organizationId);
+  const inOrgMember = sqlDealInOrganization("dm.deal_id").replaceAll(
+    "$ORG$",
+    "$3",
+  );
+  const inOrgInvestment = sqlDealInOrganization("di.deal_id").replaceAll(
+    "$ORG$",
+    "$3",
+  );
   const res = await pool.query<{ deal_id: string }>(
     `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
      WHERE dm.is_draft = false
        AND lower(trim(dm.deal_member_role)) IN ('co-sponsor', 'co sponsor')
+       AND ${inOrgMember}
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -323,6 +336,7 @@ export async function listDealIdsWhereViewerIsCoSponsor(
      WHERE di.is_draft = false
        AND lower(trim(di.investor_role)) IN ('co-sponsor', 'co sponsor')
        AND trim(di.contact_id) <> $2
+       AND ${inOrgInvestment}
        AND (
          trim(di.contact_id) = u.id::text
          OR EXISTS (
@@ -331,7 +345,7 @@ export async function listDealIdsWhereViewerIsCoSponsor(
              AND lower(trim(c.email)) = lower(trim(u.email))
          )
        )`,
-    [userId, DEAL_INVESTMENT_AUTOSAVE_CONTACT],
+    [userId, DEAL_INVESTMENT_AUTOSAVE_CONTACT, orgId],
   );
   return [
     ...new Set(
@@ -343,21 +357,28 @@ export async function listDealIdsWhereViewerIsCoSponsor(
 }
 
 /**
- * Co-sponsors (not company admin, not Lead/Admin sponsor on any deal) get a
- * narrowed Contacts list from the Investor → Sponsor/Co-sponsor relationship
- * (Sponsor name on deal investors), plus contacts they created. Those contacts
- * remain editable. See `listContactsForViewerScoped`.
+ * Co-sponsors in the selected company (not company admin, not Lead/Admin
+ * sponsor on a deal of that company) get a narrowed Contacts list: investors
+ * whose Sponsor name is them, plus contacts they created. A lead role in
+ * another company does not widen this list.
  */
 export async function viewerShouldSeeOnlySelfCreatedContacts(
   userId: string,
   roleForScope?: string | null,
+  organizationId?: string | null,
 ): Promise<boolean> {
   const uid = String(userId ?? "").trim();
   if (!uid) return false;
-  if (isCompanyAdminRole(String(roleForScope ?? "").trim())) return false;
-  if (await viewerIsLeadOrAdminSponsorOnAnyDeal(uid)) return false;
-  const coDealIds = await listDealIdsWhereViewerIsCoSponsor(uid);
-  return coDealIds.length > 0;
+  const orgId = normalizeOrganizationUuid(organizationId);
+  const [leadOrAdmin, coDealIds] = await Promise.all([
+    viewerIsLeadOrAdminSponsorOnAnyDeal(uid, orgId),
+    listDealIdsWhereViewerIsCoSponsor(uid, orgId),
+  ]);
+  return viewerSeesOnlyOwnContactsInSelectedCompany({
+    roleInSelectedCompany: roleForScope,
+    isLeadOrAdminSponsorInSelectedCompany: leadOrAdmin,
+    isCoSponsorInSelectedCompany: coDealIds.length > 0,
+  });
 }
 
 /**
@@ -424,17 +445,40 @@ function sqlRoleIsLead(columnSql: string): string {
  * Distinct deal ids where this user is Lead Sponsor or Admin sponsor
  * (`deal_member` or `deal_investment`, portal user id or contact email match).
  */
+function sqlDealInOrganization(dealIdSql: string): string {
+  return `(
+    $ORG$::uuid IS NULL
+    OR EXISTS (
+      SELECT 1 FROM add_deal_form scoped_deal
+      WHERE scoped_deal.id = ${dealIdSql}
+        AND scoped_deal.organization_id = $ORG$::uuid
+    )
+  )`;
+}
+
 export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
   userId: string,
+  organizationId?: string | null,
 ): Promise<string[]> {
   const uid = String(userId ?? "").trim();
   if (!uid) return [];
+  const orgId = normalizeOrganizationUuid(organizationId);
+  const orgParam = orgId ?? null;
+  const inOrgMember = sqlDealInOrganization("dm.deal_id").replaceAll(
+    "$ORG$",
+    "$3",
+  );
+  const inOrgInvestment = sqlDealInOrganization("di.deal_id").replaceAll(
+    "$ORG$",
+    "$3",
+  );
   const res = await pool.query<{ deal_id: string }>(
     `SELECT DISTINCT dm.deal_id::text AS deal_id
      FROM deal_member dm
      INNER JOIN users u ON u.id = $1::uuid
      WHERE dm.is_draft = false
        AND ${sqlRoleIsLeadOrAdmin("dm.deal_member_role")}
+       AND ${inOrgMember}
        AND (
          trim(dm.contact_member_id) = u.id::text
          OR EXISTS (
@@ -450,6 +494,7 @@ export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
      WHERE di.is_draft = false
        AND ${sqlRoleIsLeadOrAdmin("di.investor_role")}
        AND trim(di.contact_id) <> $2
+       AND ${inOrgInvestment}
        AND (
          trim(di.contact_id) = u.id::text
          OR EXISTS (
@@ -458,7 +503,7 @@ export async function listDealIdsWhereViewerIsLeadOrAdminSponsor(
              AND lower(trim(c.email)) = lower(trim(u.email))
          )
        )`,
-    [uid, DEAL_INVESTMENT_AUTOSAVE_CONTACT],
+    [uid, DEAL_INVESTMENT_AUTOSAVE_CONTACT, orgParam],
   );
   return [
     ...new Set(
@@ -526,8 +571,12 @@ export async function listDealIdsWhereViewerIsLeadSponsor(
  */
 export async function viewerIsLeadOrAdminSponsorOnAnyDeal(
   userId: string,
+  organizationId?: string | null,
 ): Promise<boolean> {
-  const ids = await listDealIdsWhereViewerIsLeadOrAdminSponsor(userId);
+  const ids = await listDealIdsWhereViewerIsLeadOrAdminSponsor(
+    userId,
+    organizationId,
+  );
   return ids.length > 0;
 }
 

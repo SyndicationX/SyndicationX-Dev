@@ -2786,6 +2786,7 @@ function normalizeInvestorRowApi(
       firstDefined(raw, ["userEmail", "user_email", "email"]),
       "—",
     ),
+    userPhone: str(firstDefined(raw, ["userPhone", "user_phone", "phone"]), ""),
     firstName: str(
       firstDefined(raw, ["firstName", "first_name"]),
       "",
@@ -3067,10 +3068,22 @@ function normalizeDealMembersResponse(data: unknown): DealMembersPayload {
       "lead_sponsor_display_name",
     ]),
   )
+  const leadSponsorCompanyName = str(
+    firstDefined(d, [
+      "leadSponsorCompanyName",
+      "lead_sponsor_company_name",
+    ]),
+  )
   const referringSponsorDisplayName = str(
     firstDefined(d, [
       "referringSponsorDisplayName",
       "referring_sponsor_display_name",
+    ]),
+  )
+  const referringSponsorCompanyName = str(
+    firstDefined(d, [
+      "referringSponsorCompanyName",
+      "referring_sponsor_company_name",
     ]),
   )
   const referringSponsorRef = str(
@@ -3094,17 +3107,26 @@ function normalizeDealMembersResponse(data: unknown): DealMembersPayload {
       "onboarding_sponsor_display_name",
     ]),
   )
+  const onboardingSponsorCompanyName = str(
+    firstDefined(d, [
+      "onboardingSponsorCompanyName",
+      "onboarding_sponsor_company_name",
+    ]),
+  )
   return {
     members,
     ...(viewerDealMemberRole !== undefined ? { viewerDealMemberRole } : {}),
     ...(leadSponsorDisplayName ? { leadSponsorDisplayName } : {}),
+    ...(leadSponsorCompanyName ? { leadSponsorCompanyName } : {}),
     ...(referringSponsorDisplayName ? { referringSponsorDisplayName } : {}),
+    ...(referringSponsorCompanyName ? { referringSponsorCompanyName } : {}),
     ...(referringSponsorRef ? { referringSponsorRef } : {}),
     ...(inviteSponsorCompanyName ? { inviteSponsorCompanyName } : {}),
     ...(sameOrganizationSponsorDisplayName
       ? { sameOrganizationSponsorDisplayName }
       : {}),
     ...(onboardingSponsorDisplayName ? { onboardingSponsorDisplayName } : {}),
+    ...(onboardingSponsorCompanyName ? { onboardingSponsorCompanyName } : {}),
   }
 }
 

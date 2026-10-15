@@ -17,10 +17,12 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
-import { formatUsPhoneStoredForUi } from "../../../common/phone/usPhoneNumber"
+import { RedactedPill } from "../../../common/components/redacted-pill/RedactedPill"
 import {
   displayEmail,
+  displayPhone,
   isDisplayableEmail,
+  isPrivacyRedacted,
 } from "../../../common/utils/displayEmail"
 import { isPlatformAdmin } from "../../../common/auth/roleUtils"
 import { DealAvatarIconRing } from "../../../common/components/entity-avatar/EntityAvatarNameCell"
@@ -379,7 +381,7 @@ function ContactDetailPage() {
   }
 
   const displayName = contactDisplayName(contact)
-  const phoneShown = formatUsPhoneStoredForUi(contact.phone)
+  const phoneShown = displayPhone(contact.phone)
   const email = contact.email.trim()
   const isActive = contact.status !== "suspended"
   const filterLabel =
@@ -434,14 +436,22 @@ function ContactDetailPage() {
             {initialsFromContact(contact)}
           </div>
           <h1 className="cd_name">{displayName}</h1>
-          {isDisplayableEmail(email) ? (
-            <a href={`mailto:${encodeURIComponent(email)}`} className="cd_email">
-              {email}
-            </a>
-          ) : (
-            <span className="cd_email cd_muted">{displayEmail(email)}</span>
-          )}
-          <p className="cd_phone">{phoneShown || "—"}</p>
+          <div className="cd_contact_channels">
+            {isPrivacyRedacted(email) ? (
+              <RedactedPill />
+            ) : isDisplayableEmail(email) ? (
+              <a href={`mailto:${encodeURIComponent(email)}`} className="cd_email">
+                {email}
+              </a>
+            ) : (
+              <span className="cd_email cd_muted">{displayEmail(email)}</span>
+            )}
+            {isPrivacyRedacted(contact.phone) ? (
+              <RedactedPill />
+            ) : (
+              <p className="cd_phone">{phoneShown || "—"}</p>
+            )}
+          </div>
           <span
             className={`cd_status_badge${isActive ? "" : " cd_status_badge--muted"}`}
           >
@@ -540,9 +550,10 @@ function ContactDetailPage() {
                         <div>
                           <dt>Owners</dt>
                           <dd>
-                            {contact.owners.length
-                              ? contact.owners.join(", ")
-                              : "—"}
+                            {contact.addedByCompanyName?.trim() ||
+                              (contact.owners.length
+                                ? contact.owners.join(", ")
+                                : "—")}
                           </dd>
                         </div>
                         <div>

@@ -24,6 +24,11 @@ export interface DealInvestorRow {
   userDisplayName: string
   /** Portal user email — second line in identity cell */
   userEmail: string
+  /**
+   * Investor phone. Present for lead/admin sponsors and for a co-sponsor's own
+   * investors. Co-sponsor-added rows are `Phone unavailable` for lead/admin.
+   */
+  userPhone?: string
   /** Portal / contact first name — shown under email in Investor column */
   firstName?: string
   /** Portal / contact last name — shown under email in Investor column */
@@ -165,8 +170,12 @@ export interface DealMembersPayload {
   viewerDealMemberRole?: unknown
   /** Lead sponsor person name for investor-facing surfaces (Invest Now). */
   leadSponsorDisplayName?: string
+  /** Company of the deal lead sponsor. */
+  leadSponsorCompanyName?: string
   /** When `referring_sponsor_ref` is sent on GET members, the linked sponsor name. */
   referringSponsorDisplayName?: string
+  /** Company of the referring sponsor on the offering link. */
+  referringSponsorCompanyName?: string
   referringSponsorRef?: string
   /** Company from the investor's Invite Investor link, for onboarding Sponsor name. */
   inviteSponsorCompanyName?: string
@@ -174,6 +183,8 @@ export interface DealMembersPayload {
   sameOrganizationSponsorDisplayName?: string
   /** Outside-org sponsor, otherwise the user who invited this investor to the deal. */
   onboardingSponsorDisplayName?: string
+  /** Company of the sponsor shown in onboarding Sponsor name. */
+  onboardingSponsorCompanyName?: string
 }
 
 export function emptyDealMembersPayload(): DealMembersPayload {

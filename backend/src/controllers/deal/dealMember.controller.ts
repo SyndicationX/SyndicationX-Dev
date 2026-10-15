@@ -67,6 +67,10 @@ import {
   resolveReferringSponsorDisplayNameOnDeal,
 } from "../../services/deal/offeringPreviewSponsorRef.service.js";
 import { resolveInvestNowAddedByUserId } from "../../services/deal/crossOrgColleagueDeal.service.js";
+import {
+  resolveDealLeadSponsorFallback,
+  resolveUserCompanyNamesByIds,
+} from "../../services/deal/dealInvestment.service.js";
 import { loadInvestorInviteCompanyDisplayName } from "../../services/contact/investorInviteLink.service.js";
 
 /**
@@ -147,6 +151,29 @@ export async function getDealMembers(
             onboardingSponsorUserId,
           )
         : "";
+    const leadSponsor = await resolveDealLeadSponsorFallback(dealId);
+    const companyNameByUserId = await resolveUserCompanyNamesByIds([
+      onboardingSponsorUserId,
+      referringSponsor?.sponsorUserId,
+      leadSponsor.userId,
+    ]);
+    const companyLabelForUser = (userId: string | null | undefined): string => {
+      const key = String(userId ?? "").trim().toLowerCase();
+      if (!key) return "";
+      return String(companyNameByUserId.get(key) ?? "")
+        .split("||")
+        .map((part) => part.trim())
+        .filter((part) => part && part !== "—")
+        .join(", ");
+    };
+    const onboardingSponsorCompanyName =
+      onboardingSponsorUserId.toLowerCase() !== user.id.toLowerCase()
+        ? companyLabelForUser(onboardingSponsorUserId)
+        : "";
+    const referringSponsorCompanyName = companyLabelForUser(
+      referringSponsor?.sponsorUserId,
+    );
+    const leadSponsorCompanyName = companyLabelForUser(leadSponsor.userId);
     if (process.env.DEAL_MEMBERS_COMMIT_DEBUG === "1") {
       console.log(
         `[deal members commit debug] dealId=${dealId} rows=${members.length}`,
@@ -165,6 +192,9 @@ export async function getDealMembers(
         ? {
             referringSponsorDisplayName: referringSponsor.displayName,
             referringSponsorRef: sponsorRef,
+            ...(referringSponsorCompanyName
+              ? { referringSponsorCompanyName }
+              : {}),
           }
         : {}),
       ...(inviteSponsorCompanyName
@@ -173,6 +203,10 @@ export async function getDealMembers(
       ...(onboardingSponsorDisplayName && onboardingSponsorDisplayName !== "—"
         ? { onboardingSponsorDisplayName }
         : {}),
+      ...(onboardingSponsorCompanyName
+        ? { onboardingSponsorCompanyName }
+        : {}),
+      ...(leadSponsorCompanyName ? { leadSponsorCompanyName } : {}),
     });
   } catch (err) {
     console.error("getDealMembers:", err);

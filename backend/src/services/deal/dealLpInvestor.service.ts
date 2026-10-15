@@ -1147,6 +1147,30 @@ export async function mapDealLpInvestorRowToEditApi(
   };
 }
 
+/** Edit/detail payload with co-sponsor investor email redacted for other sponsors. */
+export async function mapDealLpInvestorRowToEditApiForViewer(
+  dealId: string,
+  viewerUserId: string,
+  row: DealLpInvestorRow,
+): Promise<Awaited<ReturnType<typeof mapDealLpInvestorRowToEditApi>>> {
+  const investor = await mapDealLpInvestorRowToEditApi(row);
+  const [redacted] = await redactCoSponsorAddedInvestorEmailsForLeadAdminViewer(
+    dealId,
+    viewerUserId,
+    [
+      {
+        ...investor,
+        contactId: investor.contactId,
+        addedByUserId: row.addedBy ?? undefined,
+      },
+    ],
+  );
+  return {
+    ...investor,
+    userEmail: redacted?.userEmail ?? investor.userEmail,
+  };
+}
+
 export async function deleteDealLpInvestorById(
   dealId: string,
   id: string,
