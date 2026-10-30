@@ -37,6 +37,7 @@ export async function upsertPendingInvitedUser(
   company: InviteCompanyContext,
   invitedRole: string,
   inviteExpiresAt: Date,
+  invitedByUserId?: string | null,
 ): Promise<UpsertPendingInviteResult> {
   const emailNorm = email.trim().toLowerCase();
   if (!emailNorm || !emailNorm.includes("@")) {
@@ -44,6 +45,7 @@ export async function upsertPendingInvitedUser(
   }
 
   const inviteOrg = company.companyId?.trim() ?? "";
+  const inviterId = String(invitedByUserId ?? "").trim() || null;
   if (!inviteOrg || !isCompanyMembershipRole(invitedRole)) {
     return {
       ok: false,
@@ -105,6 +107,16 @@ export async function upsertPendingInvitedUser(
     }
 
     await upsertUserCompanyMembership(existing.id, inviteOrg, invitedRole);
+    if (inviterId && !existing.invitedByUserId) {
+      await db
+        .update(users)
+        .set({
+          invitedByUserId: inviterId,
+          invitedAt: existing.invitedAt ?? new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, existing.id));
+    }
     try {
       await markContactsAsPortalUserByEmailNorm(emailNorm);
     } catch (e) {
@@ -131,6 +143,8 @@ export async function upsertPendingInvitedUser(
       userSignupCompleted: "false",
       organizationId: company.companyId ?? null,
       inviteExpiresAt,
+      invitedByUserId: inviterId,
+      invitedAt: new Date(),
     })
     .returning({ id: users.id });
 

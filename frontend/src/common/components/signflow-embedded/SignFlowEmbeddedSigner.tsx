@@ -119,13 +119,15 @@ export function SignFlowEmbeddedSigner({
 
     iframe.title = "SignFlow document signing"
 
-    iframe.className = "dropbox_sign_embedded_host_inline"
+    iframe.className = "signflow_embedded_signer_frame"
 
     iframe.style.width = "100%"
 
     iframe.style.height = "100%"
 
     iframe.style.border = "0"
+
+    iframe.setAttribute("scrolling", "yes")
 
     iframe.allow = "clipboard-write"
 

@@ -59,7 +59,8 @@ def _resolve_value_for_field(
         return val or None
 
     if key in COMPUTED_DATE_KEYS:
-        return datetime.now().strftime("%m/%d/%Y")
+        # Same DD-MMM-YYYY shape as the Node prefill. Sent as text so the signer can edit it.
+        return datetime.now().strftime("%d-%b-%Y")
 
     if key in COMPUTED_TITLE_KEYS:
         return answers.get("entity_signer_title") or answers.get("title") or None
@@ -67,8 +68,39 @@ def _resolve_value_for_field(
     if key in ("email", "email address"):
         return context.member_email or answers.get("email") or None
 
-    if key in ("investment amount", "commitment amount", "amount"):
-        return context.investment_amount or answers.get("investment_amount") or None
+    if key in (
+        "investment amount",
+        "commitment amount",
+        "amount",
+        "subscription amount",
+        "aggregate subscription amount",
+        "total subscription amount",
+        "subscription price",
+    ):
+        return (
+            context.subscription_amount
+            or context.investment_amount
+            or answers.get("investment_amount")
+            or None
+        )
+
+    if key in (
+        "unit amount",
+        "price per unit",
+        "unit price",
+        "purchase price per unit",
+    ):
+        return context.unit_amount or None
+
+    if key in (
+        "number of units",
+        "no. of units",
+        "no of units",
+        "units",
+        "units subscribed",
+        "units purchased",
+    ):
+        return context.unit_count or None
 
     question_id = FIELD_KEY_TO_QUESTION_ID.get(key) or key.replace(" ", "_")
     raw = answers.get(question_id, "")
@@ -94,10 +126,16 @@ def prefill_fields(
     result: list[PlacedField] = []
 
     for field in fields:
+        if field.type in ("radio", "checkbox"):
+            result.append(field)
+            continue
         value = _resolve_value_for_field(field, answer_map, context)
         if value:
             prefilled_count += 1
-            result.append(field.model_copy(update={"value": value}))
+            updates: dict[str, str] = {"value": value}
+            if _normalize_key(field.label) in COMPUTED_DATE_KEYS:
+                updates["type"] = "text"
+            result.append(field.model_copy(update=updates))
         else:
             result.append(field)
 

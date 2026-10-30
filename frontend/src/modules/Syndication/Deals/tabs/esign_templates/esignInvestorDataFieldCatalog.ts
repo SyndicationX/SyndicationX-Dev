@@ -8,7 +8,7 @@ export type EsignInvestorDataField = {
   section: string
   /** Exact label written onto the SignFlow PDF field. */
   esignLabel: string
-  signFlowType: "text" | "date"
+  signFlowType: "text" | "date" | "signature"
 }
 
 export const ESIGN_INVESTOR_DATA_FIELDS: EsignInvestorDataField[] = [
@@ -111,6 +111,20 @@ export const ESIGN_INVESTOR_DATA_FIELDS: EsignInvestorDataField[] = [
     signFlowType: "text",
   },
   {
+    key: "investmentAmount",
+    label: "Investment amount",
+    section: "Investment",
+    esignLabel: "Investment Amount",
+    signFlowType: "text",
+  },
+  {
+    key: "unitCount",
+    label: "Units",
+    section: "Investment",
+    esignLabel: "Units",
+    signFlowType: "text",
+  },
+  {
     key: "achRoutingNumber",
     label: "ACH routing number",
     section: "Distributions",
@@ -144,6 +158,13 @@ export const ESIGN_INVESTOR_DATA_FIELDS: EsignInvestorDataField[] = [
     section: "Beneficiary",
     esignLabel: "Beneficiary Name",
     signFlowType: "text",
+  },
+  {
+    key: "spouseSignature",
+    label: "Spouse signature",
+    section: "Signatures",
+    esignLabel: "Spouse Signature",
+    signFlowType: "signature",
   },
 ]
 

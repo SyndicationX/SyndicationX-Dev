@@ -39,6 +39,7 @@ function committedAmountForViewerLpRows(
   for (const inv of payload.investors) {
     const em = String(inv.userEmail ?? "").trim().toLowerCase()
     if (!em || em === "—" || em !== viewerEmailNorm) continue
+    if (inv.investorArchived) continue
     const n = parseMoneyDigits(String(inv.committed ?? ""))
     if (Number.isFinite(n)) sum += n
   }

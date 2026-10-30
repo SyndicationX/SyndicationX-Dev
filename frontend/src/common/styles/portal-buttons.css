@@ -147,14 +147,17 @@ button.um_btn_secondary {
   border-radius: 9999px !important;
 }
 
-/* Chips / status badges — align with card corner radius */
+/* Chips stay on the card corner. Status badges are pills. */
 .cp_tag_pill,
-.deal_inv_comm_status_badge,
 .lpdd_chip,
-.invest_now_sign_status_badge,
-.deal_stage_modal_badge,
 .deals_add_inv_field_locked_badge {
   border-radius: var(--ui-button-border-radius, 4px) !important;
+}
+
+.deal_inv_comm_status_badge,
+.invest_now_sign_status_badge,
+.deal_stage_modal_badge {
+  border-radius: 9999px !important;
 }
 
 /* Icon-only controls — centered layout */

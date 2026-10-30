@@ -570,6 +570,20 @@ async function ensureDealInvestmentInvestNowColumns(): Promise<void> {
 
   );
 
+  await pool.query(
+    `ALTER TABLE deal_investment ADD COLUMN IF NOT EXISTS investor_archived_at timestamp with time zone`,
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS investor_deal_participation (
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      deal_id uuid NOT NULL REFERENCES add_deal_form(id) ON DELETE CASCADE,
+      archived_at timestamp with time zone,
+      removed_at timestamp with time zone,
+      PRIMARY KEY (user_id, deal_id)
+    )
+  `);
+
 }
 
 
@@ -597,7 +611,8 @@ async function ensureDealSaasBillingColumns(): Promise<void> {
       ADD COLUMN IF NOT EXISTS stripe_current_period_end timestamp with time zone,
       ADD COLUMN IF NOT EXISTS saas_billing_starts_at timestamp with time zone,
       ADD COLUMN IF NOT EXISTS extra_company_users_paid integer NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS extra_company_users_last_payment_ref varchar(255)
+      ADD COLUMN IF NOT EXISTS extra_company_users_last_payment_ref varchar(255),
+      ADD COLUMN IF NOT EXISTS stripe_seat_band varchar(16)
   `);
   await pool.query(`
     ALTER TABLE companies DROP COLUMN IF EXISTS saas_billing_starts_at

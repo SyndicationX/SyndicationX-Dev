@@ -43,6 +43,28 @@ function scrollPortRect(scroller: HTMLElement): DOMRect {
   return new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 }
 
+function overflowXAmount(el: HTMLElement): number {
+  return el.scrollWidth - el.clientWidth
+}
+
+/**
+ * Investor and General Partner tables sit in a card that clips wide columns.
+ * The arrow buttons must move whichever box actually overflows — the region,
+ * or the table shell when the region has stretched to the full table width.
+ */
+function resolveHorizontalScroller(preferred: HTMLElement): HTMLElement {
+  if (overflowXAmount(preferred) > 2) return preferred
+  const shell = preferred.closest(".um_table_wrap, .data_table_hscroll_shell")
+  if (
+    shell instanceof HTMLElement &&
+    shell !== preferred &&
+    overflowXAmount(shell) > 2
+  ) {
+    return shell
+  }
+  return preferred
+}
+
 function readScrollMetrics(scroller: HTMLElement): ScrollMetrics {
   const view = scroller.clientWidth
   const content = scroller.scrollWidth
@@ -123,8 +145,9 @@ export function FloatingTableHScroll({
         hideSticky()
         return
       }
-      syncScrollState(node)
-      const hasOverflowX = node.scrollWidth - node.clientWidth > 2
+      const scrollTarget = resolveHorizontalScroller(node)
+      syncScrollState(scrollTarget)
+      const hasOverflowX = overflowXAmount(scrollTarget) > 2
       const rect = node.getBoundingClientRect()
       const port = scrollPortRect(node)
       const visible =
@@ -146,10 +169,16 @@ export function FloatingTableHScroll({
         pagination instanceof HTMLElement
           ? pagination.getBoundingClientRect().top
           : null
-      const limitBottom =
-        paginationTop == null
-          ? port.bottom
-          : Math.min(port.bottom, paginationTop)
+      const commitBar = node.closest(".deals_dist_setup_page")?.querySelector(
+        ":scope > .ds_commit_bar",
+      )
+      const commitTop =
+        commitBar instanceof HTMLElement
+          ? commitBar.getBoundingClientRect().top
+          : null
+      let limitBottom = port.bottom
+      if (paginationTop != null) limitBottom = Math.min(limitBottom, paginationTop)
+      if (commitTop != null) limitBottom = Math.min(limitBottom, commitTop)
       const tableBottomInView = rect.bottom <= limitBottom + 1
       const fitsBelowTable =
         tableBottomInView &&
@@ -180,8 +209,10 @@ export function FloatingTableHScroll({
     function onScrollerScroll() {
       const node = scrollerRef.current
       if (!node) return
-      syncScrollState(node)
+      syncScrollState(resolveHorizontalScroller(node))
     }
+
+    const shell = scroller.closest(".um_table_wrap, .data_table_hscroll_shell")
 
     updateSticky()
     const port = scroller.closest(
@@ -190,8 +221,12 @@ export function FloatingTableHScroll({
     port?.addEventListener("scroll", updateSticky, { passive: true })
     window.addEventListener("resize", updateSticky)
     scroller.addEventListener("scroll", onScrollerScroll, { passive: true })
+    if (shell instanceof HTMLElement && shell !== scroller)
+      shell.addEventListener("scroll", onScrollerScroll, { passive: true })
     const resizeObserver = new ResizeObserver(updateSticky)
     resizeObserver.observe(scroller)
+    if (shell instanceof HTMLElement && shell !== scroller)
+      resizeObserver.observe(shell)
     if (scroller.firstElementChild)
       resizeObserver.observe(scroller.firstElementChild)
 
@@ -199,18 +234,27 @@ export function FloatingTableHScroll({
       port?.removeEventListener("scroll", updateSticky)
       window.removeEventListener("resize", updateSticky)
       scroller.removeEventListener("scroll", onScrollerScroll)
+      if (shell instanceof HTMLElement && shell !== scroller)
+        shell.removeEventListener("scroll", onScrollerScroll)
       resizeObserver.disconnect()
       syncScrollerFade(scroller, false, false)
     }
   }, [active, scrollerRef, syncScrollState, syncKey])
 
   function scrollByDir(dir: -1 | 1) {
-    const scroller = scrollerRef.current
-    if (!scroller) return
-    scroller.scrollBy({
-      left: dir * Math.max(240, scroller.clientWidth * 0.7),
-      behavior: "smooth",
-    })
+    const preferred = scrollerRef.current
+    if (!preferred) return
+    const scroller = resolveHorizontalScroller(preferred)
+    const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth)
+    if (max <= 2) return
+    const delta = dir * Math.max(240, Math.round(scroller.clientWidth * 0.7))
+    const next = Math.min(max, Math.max(0, scroller.scrollLeft + delta))
+    /* Instant move. Smooth scrollBy is cancelled when the fade class toggles
+       on these sticky investor / general-partner tables, so the arrows appear
+       to do nothing. */
+    scroller.scrollLeft = next
+    scroller.dispatchEvent(new Event("data-table-hscroll-seek"))
+    syncScrollState(scroller)
   }
 
   const thumbRatio =
@@ -221,9 +265,12 @@ export function FloatingTableHScroll({
     metrics.max > 0 ? (metrics.left / metrics.max) * travelPct : 0
 
   function scrollToTrackRatio(ratio: number) {
-    const scroller = scrollerRef.current
-    if (!scroller || metrics.max <= 0) return
-    scroller.scrollLeft = Math.min(metrics.max, Math.max(0, ratio * metrics.max))
+    const preferred = scrollerRef.current
+    if (!preferred || metrics.max <= 0) return
+    const scroller = resolveHorizontalScroller(preferred)
+    const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth)
+    scroller.scrollLeft = Math.min(max, Math.max(0, ratio * max))
+    scroller.dispatchEvent(new Event("data-table-hscroll-seek"))
   }
 
   function pointerToScroll(clientX: number) {
@@ -254,8 +301,9 @@ export function FloatingTableHScroll({
     e.preventDefault()
     e.stopPropagation()
     const track = trackRef.current
-    const scroller = scrollerRef.current
-    if (!track || !scroller || metrics.max <= 0) return
+    const preferred = scrollerRef.current
+    if (!track || !preferred || metrics.max <= 0) return
+    const scroller = resolveHorizontalScroller(preferred)
     const rect = track.getBoundingClientRect()
     const trackWidth = rect.width
     const thumbWidth = Math.max(THUMB_MIN_PX, (thumbPct / 100) * trackWidth)
@@ -272,8 +320,9 @@ export function FloatingTableHScroll({
 
   function onThumbPointerMove(e: ReactPointerEvent<HTMLButtonElement>) {
     const drag = dragRef.current
-    const scroller = scrollerRef.current
-    if (!drag || drag.pointerId !== e.pointerId || !scroller) return
+    const preferred = scrollerRef.current
+    if (!drag || drag.pointerId !== e.pointerId || !preferred) return
+    const scroller = resolveHorizontalScroller(preferred)
     const travel = Math.max(1, drag.trackWidth - drag.thumbWidth)
     const dx = e.clientX - drag.startX
     const next = drag.startLeft + (dx / travel) * drag.max

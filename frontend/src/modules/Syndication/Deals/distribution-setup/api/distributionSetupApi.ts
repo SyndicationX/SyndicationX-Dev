@@ -106,6 +106,12 @@ function parseDistributionFee(raw: unknown): DistributionFeeConfig | undefined {
   const typeOptions = typeOptionsRaw
     .map((item) => str(item))
     .filter(Boolean)
+  const excludedRaw = Array.isArray(o.excludedClassIds)
+    ? o.excludedClassIds
+    : Array.isArray(o.excluded_class_ids)
+      ? o.excluded_class_ids
+      : []
+  const excludedClassIds = excludedRaw.map((item) => str(item)).filter(Boolean)
   return {
     name,
     type,
@@ -115,6 +121,7 @@ function parseDistributionFee(raw: unknown): DistributionFeeConfig | undefined {
     periodStart: resolvedStart,
     periodEnd: resolvedEnd,
     classSplits,
+    ...(excludedClassIds.length > 0 ? { excludedClassIds } : {}),
   }
 }
 

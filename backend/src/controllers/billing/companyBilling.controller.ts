@@ -17,7 +17,6 @@ import {
   syncCompanyPaymentMethodsFromStripe,
   syncCompanySubscriptionPayment,
   syncExtraCompanyUserFromCheckoutSession,
-  userCanManageCompanyBilling,
 } from "../../services/billing/companyBilling.service.js";
 import {
   listDealBillingForAllOrganizations,
@@ -26,7 +25,6 @@ import {
   updateDealBillingCycle,
   updateDealSaasBillingStartsAt,
   getPlatformSaasBillingStartAlert,
-  dealHasRedeemedSaasCoupon,
 } from "../../services/billing/dealBilling.service.js";
 import { getStripePublicConfig } from "../../config/stripe.config.js";
 import { releaseBillingPaymentHold } from "../../middleware/billingPaymentLock.js";
@@ -188,6 +186,11 @@ export async function postCompanyBillingCheckout(
   const dealId = bodyString(body.dealId ?? body.deal_id);
   const extraCompanyUsers = extraCompanyUsersFromBody(body);
   const promotionCode = bodyString(body.promotionCode ?? body.promotion_code);
+  const upgradeModeRaw = bodyString(body.upgradeMode ?? body.upgrade_mode);
+  const upgradeMode =
+    upgradeModeRaw === "difference" || upgradeModeRaw === "plan"
+      ? upgradeModeRaw
+      : undefined;
 
   const result = await createCompanyCheckoutSession({
     companyId,
@@ -198,13 +201,17 @@ export async function postCompanyBillingCheckout(
     dealId,
     extraCompanyUsers,
     promotionCode: promotionCode || undefined,
+    upgradeMode,
     allowedDealIds: access.dealIds,
   });
   if (!result.ok) {
     res.status(result.status).json({ message: result.message });
     return;
   }
-  res.status(200).json({ url: result.url });
+  res.status(200).json({
+    url: result.url,
+    upgraded: result.upgraded === true,
+  });
 }
 
 /**
@@ -296,6 +303,7 @@ export async function postCompanyBillingPaySaved(
   res.status(200).json({
     ...(result.status ?? {}),
     paidDealId: result.paidDealId,
+    ...(result.checkoutUrl ? { url: result.checkoutUrl } : {}),
   });
 }
 
@@ -374,12 +382,12 @@ export async function postCompanyBillingSetupIntent(
     return;
   }
   const companyId = paramStr(req.params.companyId);
-  const can = await userCanManageCompanyBilling(
+  const access = await resolveCompanyBillingAccess(
     user.id,
     user.userRole,
     companyId,
   );
-  if (!can) {
+  if (!access.canPay && !access.canManage) {
     res.status(403).json({ message: "Forbidden" });
     return;
   }
@@ -436,6 +444,7 @@ export async function postCompanyBillingSyncPayment(
     companyId,
     subscriptionId: subscriptionId || undefined,
     paymentIntentId: paymentIntentId || undefined,
+    actorUserId: user.id,
   });
   if (!result.ok) {
     res.status(result.status).json({ message: result.message });
@@ -782,6 +791,7 @@ export async function getCompanyBillingPaymentMethods(
 
   const paymentMethods = await listCompanyPaymentMethods(companyId, {
     includeDetached,
+    userId: user.id,
   });
   res.status(200).json({ paymentMethods });
 }
@@ -800,17 +810,19 @@ export async function postCompanyBillingSyncPaymentMethods(
     return;
   }
   const companyId = paramStr(req.params.companyId);
-  const can = await userCanManageCompanyBilling(
+  const access = await resolveCompanyBillingAccess(
     user.id,
     user.userRole,
     companyId,
   );
-  if (!can) {
+  if (!access.canPay && !access.canManage) {
     res.status(403).json({ message: "Forbidden" });
     return;
   }
 
-  const result = await syncCompanyPaymentMethodsFromStripe(companyId);
+  const result = await syncCompanyPaymentMethodsFromStripe(companyId, {
+    actorUserId: user.id,
+  });
   if (!result.ok) {
     res.status(result.status).json({ message: result.message });
     return;
@@ -956,10 +968,29 @@ function optionalPositiveInt(raw: unknown): number | undefined {
 }
 
 function stripeErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof Stripe.errors.StripeInvalidRequestError) {
-    return err.message || fallback;
+  const raw =
+    err instanceof Stripe.errors.StripeInvalidRequestError
+      ? err.message || fallback
+      : err instanceof Error
+        ? err.message
+        : fallback;
+  const text = raw.toLowerCase();
+  if (text.includes("already used a coupon")) return fallback;
+  if (
+    text.includes("promotion code") &&
+    (text.includes("already exists") || text.includes("duplicate"))
+  ) {
+    return "That coupon code is already in use.";
   }
-  return err instanceof Error ? err.message : fallback;
+  if (text.includes("expired")) return "Expired";
+  if (
+    text.includes("redeemed") ||
+    text.includes("redemption limit") ||
+    text.includes("maximum number of times")
+  ) {
+    return "Coupon redeemed";
+  }
+  return raw;
 }
 
 async function requirePlatformAdmin(
@@ -990,12 +1021,7 @@ export async function postPreviewPlatformCoupon(
   }
   const body = (req.body ?? {}) as Record<string, unknown>;
   const code = bodyString(body.code ?? body.promotionCode ?? body.promotion_code);
-  const dealId = bodyString(body.dealId ?? body.deal_id);
   try {
-    if (dealId && (await dealHasRedeemedSaasCoupon(dealId))) {
-      res.status(400).json({ message: "This deal has already used a coupon." });
-      return;
-    }
     const looked = await lookupActivePromotionCode(code);
     if (!looked.ok) {
       res.status(400).json({ message: looked.message });
@@ -1053,7 +1079,7 @@ export async function postPlatformCoupon(
   }
   if (!/^[A-Z0-9-]{3,40}$/.test(code)) {
     res.status(400).json({
-      message: "Code must be 3–40 letters, numbers, or dashes.",
+      message: "Coupon code must be 3–40 letters, numbers, or dashes.",
     });
     return;
   }
@@ -1066,7 +1092,9 @@ export async function postPlatformCoupon(
     body.durationInMonths ?? body.duration_in_months,
   );
   if (duration === "repeating" && !durationInMonths) {
-    res.status(400).json({ message: "Enter how many months the discount repeats." });
+    res.status(400).json({
+      message: "Enter how many months or years the discount repeats.",
+    });
     return;
   }
 
@@ -1074,29 +1102,57 @@ export async function postPlatformCoupon(
   let amountOffCents: number | undefined;
   if (discountType === "amount") {
     const dollars = Number(body.amountOff ?? body.amount_off);
-    if (!Number.isFinite(dollars) || dollars <= 0) {
-      res.status(400).json({ message: "Enter an amount off greater than zero." });
+    if (!Number.isFinite(dollars) || dollars <= 0 || !Number.isInteger(dollars)) {
+      res.status(400).json({
+        message: "Amount off must be a whole number greater than zero.",
+      });
       return;
     }
-    amountOffCents = Math.round(dollars * 100);
+    amountOffCents = dollars * 100;
   } else {
     const pct = Number(body.percentOff ?? body.percent_off);
     if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-      res.status(400).json({ message: "Percent off must be between 1 and 100." });
+      res.status(400).json({ message: "Percent off must be between 0.01 and 100." });
       return;
     }
-    percentOff = pct;
+    const decimals = (String(body.percentOff ?? body.percent_off).split(".")[1] ?? "").length;
+    if (decimals > 2) {
+      res.status(400).json({ message: "Percent off can have at most 2 decimal places." });
+      return;
+    }
+    percentOff = Math.round(pct * 100) / 100;
   }
 
   let redeemBy: number | undefined;
   const redeemByRaw = bodyString(body.redeemBy ?? body.redeem_by);
-  if (redeemByRaw) {
-    const end = new Date(`${redeemByRaw}T23:59:59.000Z`);
-    if (Number.isNaN(end.getTime()) || end.getTime() <= Date.now()) {
-      res.status(400).json({ message: "Redeem-by date must be in the future." });
-      return;
-    }
-    redeemBy = Math.floor(end.getTime() / 1000);
+  if (!redeemByRaw) {
+    res.status(400).json({ message: "Enter a redeem-by date." });
+    return;
+  }
+  const end = new Date(`${redeemByRaw}T23:59:59.000Z`);
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  if (Number.isNaN(end.getTime()) || redeemByRaw < todayUtc) {
+    res.status(400).json({ message: "Redeem-by date cannot be in the past." });
+    return;
+  }
+  redeemBy = Math.floor(end.getTime() / 1000);
+
+  const maxRaw = body.maxRedemptions ?? body.max_redemptions;
+  const maxProvided =
+    maxRaw != null && !(typeof maxRaw === "string" && maxRaw.trim() === "");
+  const maxRedemptions = maxProvided
+    ? optionalPositiveInt(maxRaw)
+    : 1;
+  if (
+    maxProvided &&
+    (maxRedemptions == null ||
+      (typeof maxRaw === "number" && !Number.isInteger(maxRaw)) ||
+      (typeof maxRaw === "string" && !/^\d+$/.test(maxRaw.trim())))
+  ) {
+    res.status(400).json({
+      message: "Max redemptions must be a positive whole number.",
+    });
+    return;
   }
 
   try {
@@ -1107,17 +1163,17 @@ export async function postPlatformCoupon(
       amountOffCents,
       duration,
       durationInMonths,
-      maxRedemptions: optionalPositiveInt(
-        body.maxRedemptions ?? body.max_redemptions,
-      ),
+      maxRedemptions: maxRedemptions ?? 1,
       redeemBy,
     });
     res.status(201).json({ coupon });
   } catch (err) {
-    console.error("[billing] create coupon failed:", err);
-    res.status(502).json({
-      message: stripeErrorMessage(err, "Could not create the coupon."),
-    });
+    const message = stripeErrorMessage(err, "Could not create the coupon.");
+    const taken =
+      message === "That coupon code is already in use." ||
+      message === "That name is already in use.";
+    if (!taken) console.error("[billing] create coupon failed:", err);
+    res.status(taken ? 409 : 502).json({ message });
   }
 }
 

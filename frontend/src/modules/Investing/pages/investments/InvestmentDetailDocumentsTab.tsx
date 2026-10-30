@@ -1,11 +1,23 @@
-import { Download, Eye, FileSignature, FileText, Search } from "lucide-react"
+import {
+  ChevronDown,
+  Download,
+  Eye,
+  FileSignature,
+  FileText,
+  Pencil,
+  Search,
+  Trash2,
+} from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { InvestmentEsignSignModal } from "./InvestmentEsignSignModal"
 import { InvestorOfferingDocumentsList } from "./components/InvestorOfferingDocumentsList"
+import { DocumentsTableScroll } from "@/modules/Syndication/Deals/tabs/documents/DocumentsTableScroll"
 import {
   fetchDealMyEsignDocuments,
+  postDealMyEsignWithdrawSignature,
   type DealMyEsignScopeQuery,
 } from "@/modules/Syndication/Deals/api/dealsApi"
+import { ConfirmDeleteModal } from "@/common/components/ConfirmDeleteModal"
 import "@/modules/Syndication/Deals/deal-offering-details.css"
 import { OFFERING_PREVIEW_SECTIONS_CHANGED_EVENT } from "@/modules/Syndication/Deals/utils/offeringPreviewDocSections"
 import type { DealInvestorRow } from "@/modules/Syndication/Deals/types/deal-investors.types"
@@ -123,13 +135,6 @@ function buildEsignCommitmentSlots(
   return slots
 }
 
-function esignProfileCardStatus(
-  card: EsignProfileCardData,
-): "pending" | "signed" | null {
-  if (card.esignCompleted) return "signed"
-  return cardAggregateEsignStatus(card.documents)
-}
-
 function mapMyEsignApiDocuments(
   docs: Awaited<ReturnType<typeof fetchDealMyEsignDocuments>>["documents"],
   cardKey: string,
@@ -153,6 +158,8 @@ function mapMyEsignApiDocuments(
       canSign: !signed && Boolean(d.signatureRequestId?.trim()),
       signatureRequestId: d.signatureRequestId?.trim() || undefined,
       categoryId: categoryId || undefined,
+      canRevise: Boolean(d.canRevise) && signed,
+      sponsorSigned: Boolean(d.sponsorSigned),
     }
   })
 }
@@ -165,15 +172,6 @@ function esignScopeForSlot(slot: EsignCommitmentSlot): DealMyEsignScopeQuery {
     userInvestorProfileId: slot.userInvestorProfileId || undefined,
     profileId: slot.commitmentProfileId || undefined,
   }
-}
-
-function cardAggregateEsignStatus(
-  documents: InvestmentDetailDocumentRow[],
-): "pending" | "signed" | null {
-  if (documents.length === 0) return null
-  if (documents.every((d) => d.esignStatus === "signed")) return "signed"
-  if (documents.some((d) => d.esignStatus === "pending")) return "pending"
-  return null
 }
 
 /** One card per saved profile commitment that has e-sign on this deal. */
@@ -321,6 +319,14 @@ export function InvestmentDetailDocumentsTab({
   const [signModalEsignScope, setSignModalEsignScope] = useState<
     DealMyEsignScopeQuery | undefined
   >(undefined)
+  const [revisePrompt, setRevisePrompt] = useState<{
+    mode: "edit" | "remove"
+    documentName: string
+    signatureRequestId: string
+    esignScope: DealMyEsignScopeQuery
+  } | null>(null)
+  const [reviseBusy, setReviseBusy] = useState(false)
+  const [reviseError, setReviseError] = useState<string | null>(null)
   const fetchGenRef = useRef(0)
   const autoEsignTabRef = useRef(false)
 
@@ -360,6 +366,66 @@ export function InvestmentDetailDocumentsTab({
     },
     [],
   )
+
+  const requestEsignRevise = useCallback(
+    (
+      mode: "edit" | "remove",
+      doc: InvestmentDetailDocumentRow,
+      esignScope: DealMyEsignScopeQuery,
+    ) => {
+      const signatureRequestId = doc.signatureRequestId?.trim()
+      if (!signatureRequestId || !doc.canRevise || reviseBusy) return
+      setReviseError(null)
+      setRevisePrompt({
+        mode,
+        documentName: doc.name,
+        signatureRequestId,
+        esignScope,
+      })
+    },
+    [reviseBusy],
+  )
+
+  const confirmEsignRevise = useCallback(async () => {
+    const prompt = revisePrompt
+    const id = dealId.trim()
+    if (!prompt || !id || reviseBusy) return
+    setReviseBusy(true)
+    setReviseError(null)
+    const result = await postDealMyEsignWithdrawSignature(
+      id,
+      prompt.signatureRequestId,
+      prompt.esignScope,
+      prompt.mode === "edit" ? { preserveFieldValues: true } : undefined,
+    )
+    if (!result.ok) {
+      setReviseError(result.message)
+      setReviseBusy(false)
+      return
+    }
+    let aud = audience
+    try {
+      aud = await buildInvestmentDocumentAudience(id)
+      setAudience(aud)
+    } catch {
+      /* keep prior audience */
+    }
+    await reloadEsignProfileCards(id, aud.viewerRows, profileNameByBookId)
+    setSectionsRevision((n) => n + 1)
+    setReviseBusy(false)
+    setRevisePrompt(null)
+    if (prompt.mode === "edit") {
+      openSignModal(prompt.signatureRequestId, prompt.esignScope)
+    }
+  }, [
+    revisePrompt,
+    dealId,
+    reviseBusy,
+    audience,
+    reloadEsignProfileCards,
+    profileNameByBookId,
+    openSignModal,
+  ])
 
   useEffect(() => {
     const id = dealId.trim()
@@ -458,6 +524,11 @@ export function InvestmentDetailDocumentsTab({
     [esignProfileCards, query],
   )
 
+  const esignDocumentCount = useMemo(
+    () => esignProfileCards.reduce((n, card) => n + card.documents.length, 0),
+    [esignProfileCards],
+  )
+
   const firstPendingSign = useMemo(() => {
     for (const card of esignProfileCards) {
       for (const doc of card.documents) {
@@ -547,9 +618,9 @@ export function InvestmentDetailDocumentsTab({
               />
               <span className="deals_tabs_label um_segmented_tab_label">
                 E-signatures
-                {esignProfileCards.length > 0 ? (
+                {esignDocumentCount > 0 ? (
                   <span className="investment_detail_docs_tab_count">
-                    {esignProfileCards.length}
+                    {esignDocumentCount}
                   </span>
                 ) : null}
               </span>
@@ -589,6 +660,7 @@ export function InvestmentDetailDocumentsTab({
               onSearchQueryChange={setQuery}
               firstPendingSign={firstPendingSign}
               onOpenSignModal={openSignModal}
+              onRequestRevise={requestEsignRevise}
             />
           )}
         </div>
@@ -617,6 +689,34 @@ export function InvestmentDetailDocumentsTab({
             await reloadEsignProfileCards(id, aud.viewerRows, profileNameByBookId)
             setSectionsRevision((n) => n + 1)
           })()
+        }}
+      />
+
+      <ConfirmDeleteModal
+        open={revisePrompt != null}
+        title={
+          revisePrompt?.mode === "edit" ? "Edit signature" : "Remove signature"
+        }
+        message={
+          revisePrompt?.mode === "edit"
+            ? `Your filled information stays on this document so you can update it. This stays available until the sponsor signs.${
+                reviseError ? ` ${reviseError}` : ""
+              }`
+            : `This removes your completed signature. The document stays here so you can sign it again. This stays available until the sponsor signs.${
+                reviseError ? ` ${reviseError}` : ""
+              }`
+        }
+        itemLabel={revisePrompt?.documentName}
+        busy={reviseBusy}
+        confirmLabel={revisePrompt?.mode === "edit" ? "Edit" : "Remove"}
+        busyLabel={revisePrompt?.mode === "edit" ? "Opening…" : "Removing…"}
+        onCancel={() => {
+          if (reviseBusy) return
+          setRevisePrompt(null)
+          setReviseError(null)
+        }}
+        onConfirm={() => {
+          void confirmEsignRevise()
         }}
       />
     </div>
@@ -703,13 +803,6 @@ function OfferingDocumentsPanel({
             </p>
           ) : null}
 
-          {!hasVisibleDocs && showOfferingList && !searchQuery.trim() ? (
-            <p className="investment_detail_offering_docs_notice" role="status">
-              No offering documents match your visibility or Shared With settings
-              on this deal yet.
-            </p>
-          ) : null}
-
           {showOfferingList ? (
             <InvestorOfferingDocumentsList
               dealId={dealId}
@@ -725,144 +818,237 @@ function OfferingDocumentsPanel({
 function EsignProfileTypeCardsGrid({
   cards,
   onOpenSignModal,
+  onRequestRevise,
 }: {
   cards: EsignProfileCardData[]
   onOpenSignModal: (
     signatureRequestId?: string | null,
     esignScope?: DealMyEsignScopeQuery,
   ) => void
+  onRequestRevise: (
+    mode: "edit" | "remove",
+    doc: InvestmentDetailDocumentRow,
+    esignScope: DealMyEsignScopeQuery,
+  ) => void
 }) {
+  const [expandedSections, setExpandedSections] = useState<
+    Record<string, boolean>
+  >({})
+
+  const toggleSection = (cardKey: string) => {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [cardKey]: !(prev[cardKey] ?? true),
+    }))
+  }
+
   return (
-    <div
-      className={`deal_esign_profile_cards_grid investment_detail_esign_profile_cards${
-        cards.length === 1 ? " investment_detail_esign_profile_cards--single" : ""
-      }`}
-      role="list"
-      aria-label="E-sign documents by investor profile"
-    >
+    <div className="deal_docs_ui_root" aria-label="E-sign documents">
       {cards.map((card) => {
-        const status = esignProfileCardStatus(card)
+        const title = esignProfileCardTitle(card)
+        const isOpen = expandedSections[card.cardKey] ?? true
+        const visibleCount = card.documents.length
+        const panelId = `inv-esign-${card.cardKey}-panel`
 
         return (
-          <article
-            key={card.cardKey}
-            className="deal_esign_profile_card investment_detail_esign_profile_card"
-            role="listitem"
-            aria-labelledby={`inv-esign-card-${card.cardKey}`}
-          >
-            <header className="deal_esign_profile_card_head">
-              <div className="investment_detail_esign_profile_card_head_row">
-                <h3
-                  id={`inv-esign-card-${card.cardKey}`}
-                  className="deal_esign_profile_card_title"
-                  title={esignProfileCardTitle(card)}
+          <div key={card.cardKey} className="deal_docs_ui_bundle">
+            <div
+              className="deal_docs_ui_banner"
+              role="region"
+              aria-label={title}
+            >
+              <div className="deal_docs_ui_banner_left">
+                <button
+                  type="button"
+                  className="deal_docs_ui_banner_chevron_btn"
+                  aria-expanded={isOpen}
+                  aria-controls={panelId}
+                  onClick={() => toggleSection(card.cardKey)}
+                  aria-label={isOpen ? "Collapse section" : "Expand section"}
                 >
-                  {esignProfileCardTitle(card)}
-                </h3>
-                {status ? (
-                  <span
-                    className={`${investmentEsignStatusClassName(status)} investment_detail_esign_profile_card_status`}
-                  >
-                    {investmentEsignStatusLabel(status, card.esignCompleted)}
-                  </span>
-                ) : null}
+                  <ChevronDown
+                    size={14}
+                    strokeWidth={2.75}
+                    aria-hidden
+                    className={`deal_docs_ui_banner_chevron${isOpen ? " deal_docs_ui_banner_chevron_open" : ""}`}
+                  />
+                </button>
+                <div className="deal_docs_ui_banner_heading">
+                  <span className="deal_docs_ui_banner_title">{title}</span>
+                </div>
               </div>
-            </header>
-            <div className="investment_detail_esign_profile_card_body">
-              <ul
-                className="investment_detail_esign_card_doc_list"
-                aria-label={`Documents for ${esignProfileCardTitle(card)}`}
-              >
-                {card.documents.map((doc) => {
-                  const url = doc.url?.trim() || ""
-                  const canSign = Boolean(doc.canSign)
-
-                  return (
-                    <li
-                      key={doc.id}
-                      className="investment_detail_esign_card_doc_item"
-                    >
-                      <div className="deal_docs_ui_doc_cell investment_detail_esign_card_doc_row">
-                        <div className="deal_docs_ui_doc_name_wrap investment_detail_esign_card_doc_name_wrap">
-                          <span
-                            className="deal_docs_ui_doc_name_text investment_detail_esign_card_doc_name"
-                            title={doc.name}
-                          >
-                            <FileSignature
-                              className="investment_detail_esign_card_doc_icon"
-                              size={15}
-                              strokeWidth={2}
-                              aria-hidden
-                            />
-                            {doc.name}
-                          </span>
-                        </div>
-                        <div
-                          className="deal_docs_ui_doc_quick investment_detail_esign_card_doc_actions"
-                          role="group"
-                          aria-label={`${doc.name} actions`}
-                        >
-                          {url ? (
-                            <>
-                              <a
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="deal_docs_ui_doc_icon_btn deal_docs_ui_doc_icon_link"
-                                title="View"
-                                aria-label={`View ${doc.name}`}
-                              >
-                                <Eye size={16} strokeWidth={2} aria-hidden />
-                              </a>
-                              <a
-                                href={url}
-                                download={safeDownloadFilename(doc.name)}
-                                rel="noopener noreferrer"
-                                className="deal_docs_ui_doc_icon_btn deal_docs_ui_doc_icon_link"
-                                title="Download"
-                                aria-label={`Download ${doc.name}`}
-                              >
-                                <Download
-                                  size={16}
-                                  strokeWidth={2}
-                                  aria-hidden
-                                />
-                              </a>
-                            </>
-                          ) : null}
-                          {canSign ? (
-                            <button
-                              type="button"
-                              className="investment_detail_esign_card_doc_sign_btn"
-                              aria-label={`Sign ${doc.name}`}
-                              onClick={() =>
-                                onOpenSignModal(
-                                  doc.signatureRequestId ?? null,
-                                  card.esignScope,
-                                )
-                              }
-                            >
-                              <FileSignature
-                                size={15}
-                                strokeWidth={2}
-                                aria-hidden
-                              />
-                              Sign
-                            </button>
-                          ) : null}
-                          {!url && !canSign ? (
-                            <span className="investment_detail_offering_doc_unavailable">
-                              Unavailable
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
+              <div className="deal_docs_ui_banner_right">
+                <span className="deal_docs_ui_banner_count" aria-live="polite">
+                  {visibleCount} document{visibleCount === 1 ? "" : "s"}
+                </span>
+              </div>
             </div>
-          </article>
+
+            <div id={panelId} className="deal_docs_ui_panel" hidden={!isOpen}>
+              <DocumentsTableScroll active={isOpen}>
+                <table className="deal_docs_ui_table investment_detail_esign_docs_table">
+                  <thead>
+                    <tr>
+                      <th
+                        className="deal_docs_ui_th deal_docs_ui_th_doc"
+                        scope="col"
+                      >
+                        Document
+                      </th>
+                      <th
+                        className="deal_docs_ui_th investment_detail_esign_th_status"
+                        scope="col"
+                      >
+                        Status
+                      </th>
+                      <th
+                        className="deal_docs_ui_th investment_detail_esign_th_actions"
+                        scope="col"
+                      >
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {card.documents.map((doc, docIndex) => {
+                      const url = doc.url?.trim() || ""
+                      const canSign = Boolean(doc.canSign)
+                      const canRevise = Boolean(
+                        doc.canRevise && doc.signatureRequestId?.trim(),
+                      )
+                      const viewOnly =
+                        doc.esignStatus === "signed" && !canRevise
+                      const canViewFile =
+                        Boolean(url) &&
+                        (doc.source !== "esign" || doc.esignStatus === "signed")
+                      const status = doc.esignStatus === "signed" ? "signed" : "pending"
+                      const statusLabel = doc.visibilityLabel?.trim()
+                        || investmentEsignStatusLabel(status, card.esignCompleted)
+
+                      return (
+                        <tr
+                          key={`${doc.id}-${doc.signatureRequestId ?? docIndex}`}
+                          className="deal_docs_ui_tr"
+                        >
+                          <td className="deal_docs_ui_td deal_docs_ui_td_doc">
+                            <div className="deal_docs_ui_doc_cell">
+                              <div className="deal_docs_ui_doc_name_wrap">
+                                {canViewFile ? (
+                                  <a
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="deal_docs_ui_doc_name_link"
+                                    title={doc.name}
+                                    aria-label={`View ${doc.name}`}
+                                  >
+                                    <span className="deal_docs_ui_doc_name_text">
+                                      {doc.name}
+                                    </span>
+                                  </a>
+                                ) : (
+                                  <span
+                                    className="deal_docs_ui_doc_name_text"
+                                    title={doc.name}
+                                  >
+                                    {doc.name}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="deal_docs_ui_td investment_detail_esign_td_status">
+                            <span className={investmentEsignStatusClassName(status)}>
+                              {statusLabel}
+                            </span>
+                          </td>
+                          <td className="deal_docs_ui_td investment_detail_esign_td_actions">
+                            <div
+                              className="deal_docs_ui_doc_quick investment_detail_esign_doc_actions"
+                              role="group"
+                              aria-label={`${doc.name} actions`}
+                            >
+                              {canViewFile ? (
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="deal_docs_ui_doc_icon_btn deal_docs_ui_doc_icon_link"
+                                  title="View"
+                                  aria-label={`View ${doc.name}`}
+                                >
+                                  <Eye size={16} strokeWidth={2} aria-hidden />
+                                </a>
+                              ) : null}
+                              {canViewFile && !viewOnly ? (
+                                <a
+                                  href={url}
+                                  download={safeDownloadFilename(doc.name)}
+                                  rel="noopener noreferrer"
+                                  className="deal_docs_ui_doc_icon_btn deal_docs_ui_doc_icon_link"
+                                  title="Download"
+                                  aria-label={`Download ${doc.name}`}
+                                >
+                                  <Download size={16} strokeWidth={2} aria-hidden />
+                                </a>
+                              ) : null}
+                              {canRevise ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="deal_docs_ui_doc_icon_btn"
+                                    aria-label={`Edit ${doc.name}`}
+                                    title="Edit signature before the sponsor signs"
+                                    onClick={() =>
+                                      onRequestRevise("edit", doc, card.esignScope)
+                                    }
+                                  >
+                                    <Pencil size={15} strokeWidth={2} aria-hidden />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="deal_docs_ui_doc_icon_btn investment_detail_esign_doc_icon_btn--remove"
+                                    aria-label={`Remove ${doc.name}`}
+                                    title="Remove your signature before the sponsor signs"
+                                    onClick={() =>
+                                      onRequestRevise("remove", doc, card.esignScope)
+                                    }
+                                  >
+                                    <Trash2 size={15} strokeWidth={2} aria-hidden />
+                                  </button>
+                                </>
+                              ) : null}
+                              {canSign ? (
+                                <button
+                                  type="button"
+                                  className="investment_detail_esign_doc_sign_btn"
+                                  aria-label={`Sign ${doc.name}`}
+                                  onClick={() =>
+                                    onOpenSignModal(
+                                      doc.signatureRequestId ?? null,
+                                      card.esignScope,
+                                    )
+                                  }
+                                >
+                                  <FileSignature size={15} strokeWidth={2} aria-hidden />
+                                  Sign
+                                </button>
+                              ) : null}
+                              {!url && !canSign && !canRevise ? (
+                                <span className="investment_detail_offering_doc_unavailable">
+                                  Unavailable
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </DocumentsTableScroll>
+            </div>
+          </div>
         )
       })}
     </div>
@@ -880,6 +1066,7 @@ function EsignaturesDocumentsPanel({
   onSearchQueryChange,
   firstPendingSign,
   onOpenSignModal,
+  onRequestRevise,
 }: {
   esignPending: boolean
   esignLoadError: string | null
@@ -896,6 +1083,11 @@ function EsignaturesDocumentsPanel({
   onOpenSignModal: (
     signatureRequestId?: string | null,
     esignScope?: DealMyEsignScopeQuery,
+  ) => void
+  onRequestRevise: (
+    mode: "edit" | "remove",
+    doc: InvestmentDetailDocumentRow,
+    esignScope: DealMyEsignScopeQuery,
   ) => void
 }) {
   const hasAny = esignProfileCards.length > 0
@@ -1007,6 +1199,7 @@ function EsignaturesDocumentsPanel({
               <EsignProfileTypeCardsGrid
                 cards={esignProfileCards}
                 onOpenSignModal={onOpenSignModal}
+                onRequestRevise={onRequestRevise}
               />
             </>
           )}

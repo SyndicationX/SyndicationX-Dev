@@ -21,6 +21,7 @@ import {
   applyDealsSearchToParams,
   readDealsSearchQuery,
 } from "@/common/deals/dealsSearchQuery"
+import { coSponsorMayOpenDeal } from "@/common/auth/coSponsorCompanyGate"
 import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
 import {
   isDealSponsorSessionUser,
@@ -720,7 +721,10 @@ export function DealsListPage({
 
   const openSyndicatingDeal = useCallback(
     (row: DealListRow) => {
-      navigate(`/deals/${encodeURIComponent(row.id)}`)
+      void coSponsorMayOpenDeal().then((allowed) => {
+        if (!allowed) return
+        navigate(`/deals/${encodeURIComponent(row.id)}`)
+      })
     },
     [navigate],
   )

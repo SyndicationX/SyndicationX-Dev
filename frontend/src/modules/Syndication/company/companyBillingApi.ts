@@ -58,6 +58,7 @@ export type CompanyBillingInvoice = {
   dealName?: string | null
   billingScope?: "deal" | "extra_company_user" | null
   comment?: string | null
+  paidByName?: string | null
 }
 
 export type CompanyBillingPaymentMethod = {
@@ -216,8 +217,9 @@ export async function startCompanyBillingCheckout(
   dealId?: string,
   extraCompanyUsers?: number,
   promotionCode?: string,
+  upgradeMode?: "difference" | "plan",
 ): Promise<
-  | { ok: true; url: string }
+  | { ok: true; url: string; upgraded?: boolean }
   | { ok: false; message: string; statusCode: number }
 > {
   const base = getApiV1Base()
@@ -247,6 +249,7 @@ export async function startCompanyBillingCheckout(
             ? { extraCompanyUsers }
             : {}),
           ...(promotionCode?.trim() ? { promotionCode: promotionCode.trim() } : {}),
+          ...(upgradeMode ? { upgradeMode } : {}),
         }),
       },
     )
@@ -262,14 +265,18 @@ export async function startCompanyBillingCheckout(
       data && typeof data === "object"
         ? String((data as { url?: unknown }).url ?? "").trim()
         : ""
-    if (!url) {
+    const upgraded =
+      data &&
+      typeof data === "object" &&
+      (data as { upgraded?: unknown }).upgraded === true
+    if (!url && !upgraded) {
       return {
         ok: false,
         message: "Checkout did not return a Stripe URL.",
         statusCode: res.status,
       }
     }
-    return { ok: true, url }
+    return { ok: true, url, upgraded }
   } catch {
     return {
       ok: false,
@@ -314,7 +321,7 @@ export async function payCompanyBillingWithSavedMethod(
   extraCompanyUsers?: number,
   promotionCode?: string,
 ): Promise<
-  | { ok: true; paidDealId: string | null; status: CompanyBillingStatus }
+  | { ok: true; paidDealId: string | null; status: CompanyBillingStatus; url?: string }
   | { ok: false; message: string; statusCode: number }
 > {
   const base = getApiV1Base()
@@ -356,10 +363,15 @@ export async function payCompanyBillingWithSavedMethod(
         statusCode: res.status,
       }
     }
+    const url =
+      data && typeof data === "object"
+        ? String((data as { url?: unknown }).url ?? "").trim()
+        : ""
     return {
       ok: true,
       paidDealId: paidDealIdFromUnknown(data),
       status: data as CompanyBillingStatus,
+      ...(url ? { url } : {}),
     }
   } catch {
     return {
@@ -480,6 +492,9 @@ export type CompanyDealBillingRow = {
   id: string
   companyId?: string | null
   companyName?: string | null
+  /** Platform admin grouping when the deal has no company. */
+  displayGroupId?: string | null
+  displayGroupName?: string | null
   dealName: string
   dealStage: string
   archived: boolean
@@ -505,6 +520,7 @@ export type CompanyDealBillingRow = {
   extraUserFeeCents?: number
   extraUserComment?: string | null
   couponRedeemed?: boolean
+  amountPaidCents?: number | null
 }
 
 export type BillingOrganizationOption = {

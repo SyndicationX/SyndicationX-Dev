@@ -9,6 +9,7 @@ import {
   sectionDisplayLabel,
   sectionSharedWithDisplay,
   sectionVisibleOnOfferingPreview,
+  workspaceListsOfferingDocuments,
   type SectionSharedWithScope,
 } from "@/modules/Syndication/Deals/utils/offeringPreviewDocSections"
 import { readOfferingPreviewDocuments } from "@/modules/Syndication/Deals/utils/offeringPreviewDocuments"
@@ -38,6 +39,10 @@ export type InvestmentDetailDocumentRow = {
   categoryId?: string
   /** Per-document signature state (E-signatures sub-tab only). */
   esignStatus?: "pending" | "signed"
+  /** Investor finished signing and the sponsor has not. */
+  canRevise?: boolean
+  /** Sponsor signature is stored. View only. */
+  sponsorSigned?: boolean
 }
 
 export type InvestmentDetailDocumentSectionGroup = {
@@ -113,7 +118,9 @@ function pushRow(
 ): void {
   const scope = args.scope
   const source: InvestmentDetailDocumentRow["source"] =
-    scope === "offering_page" ? "offering_link" : "assigned"
+    scope === "offering_page" || scope === "offering_link_only"
+      ? "offering_link"
+      : "assigned"
   out.push({
     id: args.id,
     name: args.name,
@@ -131,6 +138,10 @@ function documentVisibleToInvestorOnLpPortal(
   sec: OfferingPreviewSection,
   audience: InvestmentDocumentAudienceContext,
 ): boolean {
+  // Signed packets stay with the investor they were shared with, never the whole offering.
+  if (doc.id.trim().startsWith("esign-promoted-") && doc.sharedInvestorIds.length === 0) {
+    return false
+  }
   const scope = effectiveDocumentSharedWithScope(doc, sec)
   if (!sectionVisibleOnOfferingPreview(scope, LP_PORTAL_DOCUMENT_CTX)) return false
   return nestedDocumentVisibleToInvestor(doc, audience)
@@ -190,7 +201,7 @@ export function listInvestmentDetailDocumentSectionGroups(
     }
   }
 
-  if (groups.length === 0) {
+  if (groups.length === 0 && !workspaceListsOfferingDocuments(sections)) {
     const legacyRows: InvestmentDetailDocumentRow[] = []
     const seenLegacyIds = new Set<string>()
     for (const d of readOfferingPreviewDocuments(id)) {

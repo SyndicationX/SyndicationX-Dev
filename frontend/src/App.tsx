@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import "./App.css";
 import "./common/theme/portal-tabs.css";
@@ -11,9 +12,12 @@ import {
   canAccessCompanyPage,
   canAccessFeedback,
   isDealSponsorSessionUser,
+  isLeadSponsorSessionFlagKnown,
+  isLeadSponsorSessionUser,
   isLpInvestorSessionUser,
   isPlatformAdmin,
 } from "./common/auth/roleUtils";
+import { refreshLeadSponsorSessionIfNeeded } from "./common/auth/refreshLeadSponsorSession";
 import PlatformMetricsPage from "./modules/Syndication/PlatformMetrics/PlatformMetricsPage";
 import SigninPage from "./modules/auth/pages/SigninPage";
 import SignupPage from "./modules/auth/pages/SignupPage";
@@ -96,14 +100,34 @@ function SettingsRoute() {
   const { mode } = usePortalMode();
   const location = useLocation();
   const token = sessionStorage.getItem(SESSION_BEARER_KEY);
+  const [leadFlagReady, setLeadFlagReady] = useState(
+    () => !isDealSponsorSessionUser() || isLeadSponsorSessionFlagKnown(),
+  );
+
+  useEffect(() => {
+    if (leadFlagReady) return;
+    let cancelled = false;
+    void refreshLeadSponsorSessionIfNeeded().finally(() => {
+      if (!cancelled) setLeadFlagReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadFlagReady]);
+
   if (!token) return <Navigate to="/signin" replace />;
   if (mode === "investing" || isLpInvestorSessionUser()) {
     return <Navigate to="/account" replace />;
   }
+  if (!leadFlagReady) return null;
   const billing = new URLSearchParams(location.search).get("billing");
   const leadSponsorPaying =
-    billing === "pay" && isDealSponsorSessionUser();
-  if (!canAccessCompanyPage() && !leadSponsorPaying) {
+    (billing === "pay" || billing === "upgrade") && isDealSponsorSessionUser();
+  if (
+    !canAccessCompanyPage() &&
+    !isLeadSponsorSessionUser() &&
+    !leadSponsorPaying
+  ) {
     return <Navigate to="/dashboard" replace />;
   }
   return <CompanyPage />;

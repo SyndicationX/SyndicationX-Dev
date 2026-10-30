@@ -35,6 +35,7 @@ import {
   areRequiredDealDetailFieldsIncomplete,
   buildDealOfferingPreviewShareUrl,
   deleteDealMemberRoster,
+  postDealInvestorRemoval,
   fetchDealById,
   fetchDealInvestorClasses,
   fetchDealInvestors,
@@ -803,14 +804,24 @@ export function DealDetailPage() {
   )
 
   const handleDeleteMember = useCallback(
-    async (row: DealInvestorRow) => {
+    async (
+      row: DealInvestorRow,
+      subject: "investor" | "member" | "team_member" = "member",
+      removal?: { action: "remove_investment" | "remove_investor"; reason: string },
+    ) => {
+      const personWord =
+        subject === "investor"
+          ? "investor"
+          : subject === "team_member"
+            ? "team member"
+            : "member"
       if (row.id === ADD_MEMBER_DRAFT_ROW_ID && dealId) {
         const draft = loadAddMemberDraft(dealId)
         const autosavedRosterId = draft?.backendInvestmentId?.trim()
         if (autosavedRosterId) {
           const del = await deleteDealMemberRoster(dealId, autosavedRosterId)
           if (!del.ok) {
-            toast.error("Could not remove member", del.message)
+            toast.error(`Could not remove ${personWord}`, del.message)
             return
           }
         }
@@ -826,16 +837,47 @@ export function DealDetailPage() {
         return
       }
       if (!dealId?.trim()) return
-      const result = await deleteDealMemberRoster(dealId, row.id)
+      if (subject === "investor" && removal) {
+        const result = await postDealInvestorRemoval(dealId, row.id, {
+          action: removal.action,
+          reason: removal.reason,
+          confirmed: true,
+        })
+        if (!result.ok) {
+          throw new Error(result.message)
+        }
+        toast.success(
+          removal.action === "remove_investment"
+            ? "Investment removed"
+            : "Investor removed",
+          removal.action === "remove_investment"
+            ? "That investment was removed. The investor and any other investment on this deal were left in place."
+            : "This investor was removed from the selected investment. Their account and other investments were left in place.",
+        )
+        setDealMembersRefreshKey((k) => k + 1)
+        void dealInvestorsTabRef.current?.refetchInvestors()
+        return
+      }
+      const result = await deleteDealMemberRoster(
+        dealId,
+        row.id,
+        subject === "team_member" ? "team_member" : undefined,
+      )
       if (result.ok) {
         toast.success(
-          "Member removed",
-          "This member was removed from the deal.",
+          subject === "investor"
+            ? "Investor removed"
+            : subject === "team_member"
+              ? "Team member removed"
+              : "Member removed",
+          subject === "team_member"
+            ? "This team member was removed from the team members list."
+            : `This ${personWord} was removed from the deal.`,
         )
         setDealMembersRefreshKey((k) => k + 1)
         void dealInvestorsTabRef.current?.refetchInvestors()
       } else {
-        toast.error("Could not remove member", result.message)
+        toast.error(`Could not remove ${personWord}`, result.message)
       }
     },
     [dealId],
@@ -1111,8 +1153,12 @@ export function DealDetailPage() {
                 onCopyMemberOfferingLink={handleCopyMemberOfferingLink}
                 onSendMemberInvitationMail={handleSendMemberInvitationMail}
                 onDeleteMember={handleDeleteMember}
-                onViewMember={(row) => {
-                  dealInvestorsTabRef.current?.openViewInvestor(row)
+                onViewMember={(row, kind) => {
+                  dealInvestorsTabRef.current?.openViewInvestor(row, {
+                    distributionsInsteadOfInvestment:
+                      kind === "general_partners",
+                    sponsorDetails: kind === "deal_members",
+                  })
                 }}
                 viewOnly={syndicationViewOnly}
               />
@@ -1342,6 +1388,7 @@ export function DealDetailPage() {
                 className="um_btn_secondary"
                 onClick={closeDealInviteLinkModal}
               >
+                <X size={16} strokeWidth={2} aria-hidden />
                 Close
               </button>
             </div>

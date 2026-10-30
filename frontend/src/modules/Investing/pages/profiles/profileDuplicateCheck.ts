@@ -9,7 +9,10 @@ function profileKey(profileName: string, profileType: string): string {
   return `${name}|${type}`
 }
 
-/** True if another active (non-archived) profile shares the same display name and type. */
+/**
+ * True if another finished (non-draft, non-archived) profile shares the same
+ * display name and type. In-progress drafts are the same wizard row, not a conflict.
+ */
 export function hasActiveProfileDuplicate(
   profiles: InvestorProfileListRow[],
   profileName: string,
@@ -19,6 +22,7 @@ export function hasActiveProfileDuplicate(
   const target = profileKey(profileName, profileType)
   return profiles.some((p) => {
     if (p.archived) return false
+    if (p.isDraft) return false
     if (excludeProfileId && p.id === excludeProfileId) return false
     return profileKey(p.profileName, p.profileType) === target
   })

@@ -3,15 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../database/db.js";
 import { addDealForm } from "../schema/schema.js";
 import {
-  dealPaidPlanNeedsUpgrade,
   normalizeDealId,
-  suggestedPlanIdForDeal,
 } from "../services/billing/dealBilling.service.js";
-import {
-  coGpSeatBandIsUpgrade,
-  coGpSeatBandNeedsUpgrade,
-  getDealCompanyUserSnapshot,
-} from "../services/billing/dealExtraCompanyUser.service.js";
 import {
   acquireBillingPaymentHold,
   billingPaymentLockKey,
@@ -64,7 +57,6 @@ export async function billingAlreadyPaidMiddleware(
         organizationId: addDealForm.organizationId,
         stripeSubscriptionId: addDealForm.stripeSubscriptionId,
         stripeSubscriptionStatus: addDealForm.stripeSubscriptionStatus,
-        stripePlanId: addDealForm.stripePlanId,
       })
       .from(addDealForm)
       .where(eq(addDealForm.id, dealId))
@@ -80,30 +72,8 @@ export async function billingAlreadyPaidMiddleware(
 
     const status = String(deal.stripeSubscriptionStatus ?? "").toLowerCase();
     if (deal.stripeSubscriptionId?.trim() && ALREADY_BILLED.has(status)) {
-      const suggested = await suggestedPlanIdForDeal(dealId);
-      if (dealPaidPlanNeedsUpgrade(deal.stripePlanId, suggested)) {
-        next();
-        return;
-      }
-      const companyUsers = await getDealCompanyUserSnapshot(dealId);
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const requestedSeatBand = bodyString(
-        body.seatBand ?? body.seat_band ?? body.seats,
-      );
-      if (
-        coGpSeatBandNeedsUpgrade(
-          companyUsers?.seatBand,
-          companyUsers?.coGpCount ?? 0,
-        ) ||
-        coGpSeatBandIsUpgrade(companyUsers?.seatBand, requestedSeatBand)
-      ) {
-        next();
-        return;
-      }
-      res.status(409).json({
-        message:
-          "This deal is already paid. A second payment cannot be started.",
-      });
+      // Checkout charges only the package difference for an existing subscription.
+      next();
       return;
     }
   } catch (err) {

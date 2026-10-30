@@ -114,6 +114,7 @@ export function inProgressNotCountersignedForViewer(
   let sum = 0
   for (const inv of payload.investors) {
     if (!rowMatchesViewer(inv, viewerEmailNorm)) continue
+    if (inv.investorArchived) continue
     sum += inProgressNotCountersignedCommittedOnRow(inv)
   }
   return sum
@@ -128,6 +129,7 @@ export function activeCountersignedCommittedForViewer(
   let sum = 0
   for (const inv of payload.investors) {
     if (!rowMatchesViewer(inv, viewerEmailNorm)) continue
+    if (inv.investorArchived) continue
     sum += activeCountersignedCommittedOnRow(inv)
   }
   return sum

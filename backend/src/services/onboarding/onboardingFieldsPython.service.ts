@@ -35,6 +35,9 @@ type PrefillContext = {
   member_display_name?: string;
   member_email?: string;
   investment_amount?: string;
+  subscription_amount?: string;
+  unit_amount?: string;
+  unit_count?: string;
   address_line?: string;
   mailing_address_line?: string;
   street_line?: string;
@@ -87,6 +90,9 @@ export const AUTO_PLACED_SUBSCRIPTION_FIELD_LABELS = new Set(
     "Address",
     "SSN",
     "Investment Amount",
+    "Subscription Amount",
+    "Unit Amount",
+    "Number of Units",
     "Entity Legal Name",
     "Entity Name",
     "Authorized Signature",
@@ -113,6 +119,59 @@ function sanitizeSignFlowProfileType(
     return "custodian_ira_401k";
   }
   return null;
+}
+
+const PYTHON_PREFILL_TYPES = new Set([
+  "signature",
+  "date",
+  "text",
+  "initials",
+  "radio",
+  "checkbox",
+]);
+
+/** Type sent to the prefill service. Choice controls stay radio/checkbox. */
+export function pythonPrefillFieldType(rawType: string): string {
+  const raw = String(rawType ?? "text").trim().toLowerCase();
+  if (raw === "date_signed" || raw === "datesigned") return "date";
+  if (raw === "initial") return "initials";
+  if (PYTHON_PREFILL_TYPES.has(raw)) return raw;
+  return "text";
+}
+
+function isChoiceFieldType(rawType: string): boolean {
+  const raw = String(rawType ?? "").trim().toLowerCase();
+  return raw === "radio" || raw === "checkbox";
+}
+
+/**
+ * Copy prefill values onto text/date/signature/initials fields.
+ * Radio and checkbox fields are returned unchanged so a text response cannot
+ * replace their type, group, position, or selection.
+ */
+export function mergePythonPrefillFields(
+  originals: SignFlowField[],
+  returned: PythonPlacedField[],
+): SignFlowField[] {
+  return originals.map((original, index) => {
+    if (isChoiceFieldType(original.type)) return original;
+    const python = returned[index];
+    if (!python) return original;
+    const updated = toSignFlowField(python);
+    return {
+      ...original,
+      ...updated,
+      value: updated.value?.trim() || original.value,
+      dataKey: original.dataKey ?? updated.dataKey,
+      required: original.required === false ? false : updated.required,
+      profileTypes: original.profileTypes?.length
+        ? original.profileTypes
+        : updated.profileTypes,
+      profileType: original.profileType ?? updated.profileType,
+      pageHash: original.pageHash ?? updated.pageHash,
+      templatePage: original.templatePage ?? updated.templatePage,
+    };
+  });
 }
 
 function toSignFlowField(field: PythonPlacedField): SignFlowField {
@@ -214,15 +273,7 @@ export async function fetchPrefilledOnboardingFields(
   if (!isOnboardingFieldsServiceConfigured()) return params.fields;
 
   const pythonFields = params.fields.map((f) => {
-    const rawType = String(f.type ?? "text").trim().toLowerCase();
-    const type =
-      rawType === "date_signed" || rawType === "datesigned"
-        ? "date"
-        : rawType === "initial"
-          ? "initials"
-          : ["signature", "date", "text", "initials"].includes(rawType)
-            ? rawType
-            : "text";
+    const type = pythonPrefillFieldType(String(f.type ?? "text"));
     const rid = String(f.recipientId ?? "").trim();
     return {
       type,
@@ -256,23 +307,7 @@ export async function fetchPrefilledOnboardingFields(
   );
 
   if (!data?.fields?.length) return params.fields;
-  return params.fields.map((original, index) => {
-    const python = data.fields[index];
-    if (!python) return original;
-    const updated = toSignFlowField(python);
-    return {
-      ...original,
-      ...updated,
-      value: updated.value?.trim() || original.value,
-      dataKey: original.dataKey ?? updated.dataKey,
-      profileTypes: original.profileTypes?.length
-        ? original.profileTypes
-        : updated.profileTypes,
-      profileType: original.profileType ?? updated.profileType,
-      pageHash: original.pageHash ?? updated.pageHash,
-      templatePage: original.templatePage ?? updated.templatePage,
-    };
-  });
+  return mergePythonPrefillFields(params.fields, data.fields);
 }
 
 /**

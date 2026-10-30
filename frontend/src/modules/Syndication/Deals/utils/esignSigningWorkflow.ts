@@ -34,10 +34,10 @@ export function signingWorkflowSummary(file: {
 }): string {
   const workflowType = resolveEsignSignflowWorkflowType(file)
   if (workflowType === "parallel") {
-    return "Parallel — any investor may sign; sponsor countersigns after each investor"
+    return "Parallel — investor or sponsor may sign in any order"
   }
   const order = resolveEsignSignflowSigningOrder(file)
   return order === "sponsor_first"
-    ? "Sequential — sponsor signs first, then all investors (any order)"
-    : "Sequential — investors sign first (any order), then sponsor"
+    ? "Sequential — sponsor signs first, then investors may sign in any order"
+    : "Sequential — any investor may sign; the sponsor countersigns after that investor"
 }

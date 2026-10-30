@@ -49,7 +49,12 @@ function messageFromBody(data: unknown, fallback: string): string {
 }
 
 function num(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null
+  if (typeof v === "number" && Number.isFinite(v)) return v
+  if (typeof v === "string" && v.trim()) {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
 }
 
 function str(v: unknown): string | null {

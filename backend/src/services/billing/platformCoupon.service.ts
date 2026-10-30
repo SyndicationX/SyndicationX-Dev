@@ -51,6 +51,28 @@ function mapCode(promo: Stripe.PromotionCode): PlatformCouponCode {
   };
 }
 
+/** One row per customer-facing code. Stripe can return the same code more than once. */
+function dedupeCodes(codes: PlatformCouponCode[]): PlatformCouponCode[] {
+  const byCode = new Map<string, PlatformCouponCode>();
+  for (const code of codes) {
+    const key = code.code.trim().toLowerCase();
+    if (!key) continue;
+    const prev = byCode.get(key);
+    if (!prev) {
+      byCode.set(key, { ...code, code: code.code.trim() });
+      continue;
+    }
+    const keep = code.active && !prev.active ? code : prev;
+    const other = keep === code ? prev : code;
+    byCode.set(key, {
+      ...keep,
+      code: keep.code.trim(),
+      timesRedeemed: keep.timesRedeemed + other.timesRedeemed,
+    });
+  }
+  return [...byCode.values()];
+}
+
 function mapCoupon(
   coupon: Stripe.Coupon,
   codes: PlatformCouponCode[],
@@ -100,7 +122,7 @@ export async function listPlatformCoupons(): Promise<PlatformCouponRow[]> {
     if (coupon && !coupons.has(coupon.id)) coupons.set(coupon.id, coupon);
     const bucket = codesByCoupon.get(couponId) ?? [];
     bucket.push(mapCode(promo));
-    codesByCoupon.set(couponId, bucket);
+    codesByCoupon.set(couponId, dedupeCodes(bucket));
   }
 
   return [...coupons.values()]
@@ -120,10 +142,36 @@ export type CreatePlatformCouponInput = {
   redeemBy?: number;
 };
 
+async function promotionCodeAlreadyUsed(
+  stripe: Stripe,
+  code: string,
+): Promise<boolean> {
+  const wanted = code.trim().toLowerCase();
+  const list = await stripe.promotionCodes.list({ code: code.trim(), limit: 100 });
+  return list.data.some((promo) => promo.code.trim().toLowerCase() === wanted);
+}
+
 export async function createPlatformCoupon(
   input: CreatePlatformCouponInput,
 ): Promise<PlatformCouponRow> {
   const stripe = getStripeClient();
+  const existing = await listPlatformCoupons();
+  const codeKey = input.code.trim().toLowerCase();
+  const codeTaken =
+    (await promotionCodeAlreadyUsed(stripe, input.code)) ||
+    existing.some((row) =>
+      row.promotionCodes.some((promo) => promo.code.trim().toLowerCase() === codeKey),
+    );
+  if (codeTaken) {
+    throw new Error("That coupon code is already in use.");
+  }
+  const nameKey = input.name.trim().toLowerCase();
+  if (
+    nameKey &&
+    existing.some((row) => (row.name ?? "").trim().toLowerCase() === nameKey)
+  ) {
+    throw new Error("That name is already in use.");
+  }
   const coupon = await stripe.coupons.create({
     name: input.name,
     ...(input.percentOff != null
@@ -246,6 +294,31 @@ export type PromotionCodePreview = {
   durationInMonths: number | null;
 };
 
+function couponCannotBeAppliedMessage(
+  promo: Stripe.PromotionCode,
+  coupon: Stripe.Coupon,
+): string | null {
+  const now = Math.floor(Date.now() / 1000);
+  const expired =
+    (promo.expires_at != null && promo.expires_at <= now) ||
+    (coupon.redeem_by != null && coupon.redeem_by <= now);
+  if (expired) return "Expired";
+  const promoRedeemed =
+    promo.max_redemptions != null &&
+    (promo.times_redeemed ?? 0) >= promo.max_redemptions;
+  const couponRedeemed =
+    coupon.max_redemptions != null &&
+    (coupon.times_redeemed ?? 0) >= coupon.max_redemptions;
+  if (promoRedeemed || couponRedeemed) return "Coupon redeemed";
+  if (!promo.active || !coupon.valid || coupon.metadata?.status === "inactive") {
+    if ((promo.times_redeemed ?? 0) > 0 || (coupon.times_redeemed ?? 0) > 0) {
+      return "Coupon redeemed";
+    }
+    return "That coupon code is not valid.";
+  }
+  return null;
+}
+
 /** Active customer-facing code, for pricing preview and checkout. */
 export async function lookupActivePromotionCode(
   rawCode: string,
@@ -259,15 +332,26 @@ export async function lookupActivePromotionCode(
   const stripe = getStripeClient();
   const list = await stripe.promotionCodes.list({
     code,
-    active: true,
-    limit: 1,
+    limit: 10,
     expand: ["data.promotion.coupon"],
   });
-  const promo = list.data[0];
-  const coupon = promo ? couponFromPromo(promo) : null;
-  if (!promo || !coupon || !coupon.valid || coupon.metadata?.status === "inactive") {
+  const matches = list.data.filter(
+    (promo) => promo.code.trim().toLowerCase() === code.toLowerCase(),
+  );
+  if (matches.length === 0) {
     return { ok: false, message: "That coupon code is not valid." };
   }
+  const usable = matches.find((promo) => {
+    const coupon = couponFromPromo(promo);
+    return coupon != null && couponCannotBeAppliedMessage(promo, coupon) == null;
+  });
+  const promo = usable ?? matches[0];
+  const coupon = promo ? couponFromPromo(promo) : null;
+  if (!promo || !coupon) {
+    return { ok: false, message: "That coupon code is not valid." };
+  }
+  const blocked = couponCannotBeAppliedMessage(promo, coupon);
+  if (blocked) return { ok: false, message: blocked };
   return {
     ok: true,
     preview: {
@@ -322,7 +406,7 @@ export async function listPlatformCouponUsage(): Promise<{
     const discounts = (invoice.discounts ?? [])
       .map(discountRecord)
       .filter((discount): discount is Stripe.Discount => discount != null);
-    if (discounts.length === 0) continue;
+    if (invoice.status !== "paid" || discounts.length === 0) continue;
 
     const metaCompany = String(
       invoice.metadata?.companyId ?? invoice.metadata?.company_id ?? "",
@@ -342,6 +426,7 @@ export async function listPlatformCouponUsage(): Promise<{
       coupons: new Map<string, OrgCouponUse>(),
     };
 
+    const seenOnInvoice = new Set<string>();
     for (const discount of discounts) {
       const coupon = discount.source?.coupon;
       const couponObj = coupon && typeof coupon !== "string" ? coupon : null;
@@ -349,7 +434,9 @@ export async function listPlatformCouponUsage(): Promise<{
       const promo = discount.promotion_code;
       const code =
         promo && typeof promo !== "string" ? promo.code : couponId || "Coupon";
-      const key = `${code}:${couponId}`;
+      const key = code.trim().toLowerCase();
+      if (seenOnInvoice.has(key)) continue;
+      seenOnInvoice.add(key);
       const saved = (invoice.total_discount_amounts ?? [])
         .filter((entry) => {
           const id =

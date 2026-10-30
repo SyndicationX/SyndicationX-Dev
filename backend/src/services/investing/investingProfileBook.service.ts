@@ -198,16 +198,46 @@ async function activeProfileDuplicateExists(
       profileName: userInvestorProfiles.profileName,
       profileType: userInvestorProfiles.profileType,
       archived: userInvestorProfiles.archived,
+      isDraft: userInvestorProfiles.isDraft,
     })
     .from(userInvestorProfiles)
     .where(eq(userInvestorProfiles.userId, userId));
 
   return rows.some((r) => {
     if (r.archived) return false;
+    if (r.isDraft) return false;
     if (excludeProfileId && r.id === excludeProfileId) return false;
     const key = profileLabelKey(r.profileName, r.profileType);
     return key.name === target.name && key.type === target.type;
   });
+}
+
+/** Newest in-progress wizard row with this name + type, so autosave updates it instead of inserting another. */
+async function findActiveDraftIdByNameType(
+  userId: string,
+  profileName: string,
+  profileType: string,
+): Promise<string | null> {
+  const target = profileLabelKey(profileName, profileType);
+  const rows = await db
+    .select({
+      id: userInvestorProfiles.id,
+      profileName: userInvestorProfiles.profileName,
+      profileType: userInvestorProfiles.profileType,
+      archived: userInvestorProfiles.archived,
+      isDraft: userInvestorProfiles.isDraft,
+      createdAt: userInvestorProfiles.createdAt,
+    })
+    .from(userInvestorProfiles)
+    .where(eq(userInvestorProfiles.userId, userId));
+
+  const matches = rows.filter((r) => {
+    if (r.archived || !r.isDraft) return false;
+    const key = profileLabelKey(r.profileName, r.profileType);
+    return key.name === target.name && key.type === target.type;
+  });
+  matches.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  return matches[0]?.id ?? null;
 }
 
 function normalizeBeneficiaryPhoneForWrite(raw: string): string {
@@ -363,6 +393,20 @@ export async function createInvestorProfileForUser(
   const profileType = (input.profileType ?? "").trim() || "—";
   const autosave = Boolean(input.autosave);
   const isDraft = autosave || Boolean(input.isDraft);
+  const existingDraftId = await findActiveDraftIdByNameType(
+    userId,
+    profileName,
+    profileType,
+  );
+  if (existingDraftId) {
+    return updateInvestorProfileForUser(userId, existingDraftId, {
+      profileName,
+      profileType,
+      profileWizardState: input.profileWizardState,
+      autosave,
+      ...(autosave ? {} : { isDraft: false }),
+    });
+  }
   if (
     !autosave &&
     (await activeProfileDuplicateExists(userId, profileName, profileType))

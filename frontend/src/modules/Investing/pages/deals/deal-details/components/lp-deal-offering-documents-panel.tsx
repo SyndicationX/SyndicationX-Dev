@@ -208,13 +208,6 @@ export function LpDealOfferingDocumentsPanel({
             </p>
           ) : null}
 
-          {!hasVisibleDocs && showOfferingList && !query.trim() ? (
-            <p className="investment_detail_offering_docs_notice" role="status">
-              No offering documents match your visibility or Shared With settings
-              on this deal yet.
-            </p>
-          ) : null}
-
           {showOfferingList ? (
             <InvestorOfferingDocumentsList
               dealId={dealId}

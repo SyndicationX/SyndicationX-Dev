@@ -4,29 +4,40 @@
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
-  gap: 0.3em;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
+  align-items: center;
+  gap: 0.35rem;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+}
+
+.deal_inv_td_investor_class .deal_inv_class_pills_row {
+  justify-content: center;
 }
 
 .deal_inv_class_pill {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
   display: inline-flex;
   align-items: center;
-  padding: 0.12em 0.45em;
-  border-radius: var(--portal-pill-radius, 4px);
-  font-size: 0.75em;
+  box-sizing: border-box;
+  padding: 0.28em 0.7em;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.75rem;
   font-weight: 600;
-  line-height: 1.25;
-  color: var(--portal-text);
-  background: color-mix(in srgb, var(--portal-border) 38%, transparent);
-  border: 1px solid var(--portal-border);
+  line-height: 1.2;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+}
+
+:root[data-theme="dark"] .deal_inv_class_pill {
+  color: #e2e8f0;
+  background: color-mix(in srgb, #94a3b8 18%, transparent);
+  border-color: color-mix(in srgb, #cbd5e1 28%, transparent);
 }
 
 .deal_inv_class_pill_muted {
@@ -40,9 +51,15 @@
   max-width: none;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--portal-text-muted);
-  background: color-mix(in srgb, var(--portal-text-muted) 14%, transparent);
-  border-color: color-mix(in srgb, var(--portal-text-muted) 28%, var(--portal-border));
+  color: #475569;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .deal_inv_class_pill_more {
+  color: #e2e8f0;
+  background: color-mix(in srgb, #94a3b8 18%, transparent);
+  border-color: color-mix(in srgb, #cbd5e1 28%, transparent);
 }
 
 .deal_inv_class_tooltip_list {

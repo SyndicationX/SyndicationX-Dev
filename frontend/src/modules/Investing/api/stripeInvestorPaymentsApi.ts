@@ -183,6 +183,21 @@ export type InvestorSharedConnectBank = {
   profileIds: string[]
 }
 
+export async function deleteInvestorSharedConnectBank(
+  accountId: string,
+): Promise<void> {
+  const base = baseOrThrow()
+  const res = await fetch(
+    `${base}/investing/stripe-connect/banks/${encodeURIComponent(accountId)}`,
+    {
+      method: "DELETE",
+      headers: portalAuthHeaders({ omitActiveOrganization: true }),
+      credentials: "include",
+    },
+  )
+  await jsonOrError(res)
+}
+
 export async function fetchInvestorSharedConnectBanks(): Promise<
   InvestorSharedConnectBank[]
 > {
@@ -310,19 +325,56 @@ export type DistributionPayout = {
   updatedAt: string
 }
 
+/** Presence of bank details only. Not verification and not ACH enablement. */
+export type BankAccountSetupStatus = "set_up" | "not_set_up"
+
+export type DistributionBankAccountSetupLine = {
+  investmentId: string
+  status: BankAccountSetupStatus
+}
+
+export type DistributionPayoutBundle = {
+  payouts: DistributionPayout[]
+  bankAccountSetup: DistributionBankAccountSetupLine[]
+}
+
+export function emptyDistributionPayoutBundle(): DistributionPayoutBundle {
+  return { payouts: [], bankAccountSetup: [] }
+}
+
+function parseBankAccountSetup(
+  value: unknown,
+): DistributionBankAccountSetupLine[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((raw) => {
+    const row = (raw && typeof raw === "object" ? raw : {}) as Record<
+      string,
+      unknown
+    >
+    const investmentId = String(row.investmentId ?? "").trim()
+    if (!investmentId) return []
+    const status: BankAccountSetupStatus =
+      row.status === "set_up" ? "set_up" : "not_set_up"
+    return [{ investmentId, status }]
+  })
+}
+
 export async function fetchDistributionPayouts(
   dealId: string,
   distributionId: string,
-): Promise<DistributionPayout[]> {
+): Promise<DistributionPayoutBundle> {
   const base = baseOrThrow()
   const res = await fetch(
     `${base}/deals/${encodeURIComponent(dealId)}/distributions/${encodeURIComponent(distributionId)}/payouts`,
     { headers: portalAuthHeaders(), credentials: "include" },
   )
   const data = await jsonOrError(res)
-  return Array.isArray(data.payouts)
-    ? (data.payouts as DistributionPayout[])
-    : []
+  return {
+    payouts: Array.isArray(data.payouts)
+      ? (data.payouts as DistributionPayout[])
+      : [],
+    bankAccountSetup: parseBankAccountSetup(data.bankAccountSetup),
+  }
 }
 
 export async function executeDistributionAchPayouts(

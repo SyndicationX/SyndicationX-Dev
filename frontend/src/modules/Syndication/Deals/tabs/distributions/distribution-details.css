@@ -82,7 +82,7 @@
 }
 
 .deal_dist_td_class_pill .deal_inv_class_pill {
-  max-width: 9.5rem;
+  max-width: none;
 }
 
 .deal_dist_details_pct {

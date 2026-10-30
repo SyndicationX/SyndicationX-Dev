@@ -14,7 +14,7 @@ SignFlowProfileType = Literal[
 
 RecipientRole = Literal["investor", "sponsor"]
 
-FieldType = Literal["signature", "date", "text", "initials"]
+FieldType = Literal["signature", "date", "text", "initials", "radio", "checkbox"]
 
 
 class PlacedField(BaseModel):
@@ -40,9 +40,9 @@ class PlacedField(BaseModel):
             return "date"
         if raw in ("initial", "initials"):
             return "initials"
-        if raw not in ("signature", "date", "text", "initials"):
-            return "text"
-        return raw
+        if raw in ("signature", "date", "text", "initials", "radio", "checkbox"):
+            return raw
+        return "text"
 
     @field_validator("recipient_role", mode="before")
     @classmethod
@@ -116,6 +116,9 @@ class PrefillContext(BaseModel):
     member_display_name: str | None = None
     member_email: str | None = None
     investment_amount: str | None = None
+    subscription_amount: str | None = None
+    unit_amount: str | None = None
+    unit_count: str | None = None
     address_line: str | None = None
     mailing_address_line: str | None = None
     street_line: str | None = None

@@ -117,7 +117,7 @@
   align-items: center;
   margin-left: 0.35em;
   color: #64748b;
-  cursor: help;
+  cursor: pointer;
   flex-shrink: 0;
 }
 
@@ -556,6 +556,31 @@
 /* Optional: stack above dense toolbars */
 .deals_add_inv_modal_overlay.portal_modal_z_boost {
   z-index: 1200;
+}
+
+.deals_add_inv_no_company_overlay.um_modal_overlay {
+  z-index: 1400;
+}
+
+.deals_add_inv_no_company_message {
+  color: #1b1b1d;
+}
+
+.deals_add_inv_no_company_name {
+  font-weight: 700;
+  color: var(--portal-text, #0f172a);
+  background: color-mix(in srgb, var(--portal-gold-accent, #d4af37) 32%, transparent);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
+:root[data-theme="dark"] .um_modal_desc.deals_add_inv_no_company_message {
+  color: var(--portal-text, #fff);
+}
+
+:root[data-theme="dark"] .deals_add_inv_no_company_name {
+  color: var(--portal-text, #fff);
+  background: color-mix(in srgb, var(--portal-gold-accent, #d4af37) 28%, transparent);
 }
 
 /* Add / Edit Investor Class — same focus treatment as deal create fields */

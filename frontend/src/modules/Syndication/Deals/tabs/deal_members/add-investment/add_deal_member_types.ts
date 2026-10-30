@@ -13,6 +13,8 @@ export interface AddInvestmentFormValues {
   status: string
   /** Mirrors DB `fund_approved` on save (Approved vs Not Approved). */
   fundApproved?: boolean
+  /** Calendar day `YYYY-MM-DD` when a sponsor edits the funded date. */
+  fundApprovedAt?: string
   investorClass: string
   /** Percent of class (ownership). Optional. */
   percentOfClassOwnership?: string

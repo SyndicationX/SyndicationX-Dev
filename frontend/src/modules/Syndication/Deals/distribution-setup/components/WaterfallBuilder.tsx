@@ -72,6 +72,7 @@ export function WaterfallBuilder({
       ? "Cash pays each row in order until funded or cash runs out. Unpaid balances accrue."
       : "Sale and refinance proceeds follow this order."
   const prevRowCountRef = useRef(rows.length)
+  const prevLastRowIdRef = useRef(rows[rows.length - 1]?.id)
   const tableScrollRef = useRef<HTMLDivElement>(null)
 
   useHorizontalScrollRegion(tableScrollRef, [rows.length], {
@@ -86,17 +87,19 @@ export function WaterfallBuilder({
   }
 
   useEffect(() => {
-    if (rows.length <= prevRowCountRef.current) {
-      prevRowCountRef.current = rows.length
-      return
-    }
-    prevRowCountRef.current = rows.length
+    const prevCount = prevRowCountRef.current
+    const prevLastId = prevLastRowIdRef.current
     const last = rows[rows.length - 1]
-    if (!last) return
+    prevRowCountRef.current = rows.length
+    prevLastRowIdRef.current = last?.id
+    if (rows.length <= prevCount || !last) return
+    // Switching Operating / Capital replaces the row list. Only follow a row
+    // that was just appended on the current tab.
+    if (prevLastId && !rows.some((r) => r.id === prevLastId)) return
     requestAnimationFrame(() => {
       document
         .getElementById(`ds-wf-row-${last.id}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" })
       scrollFlowRowIntoView(last.id)
     })
   }, [rows])

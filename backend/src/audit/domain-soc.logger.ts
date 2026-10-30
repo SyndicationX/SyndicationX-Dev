@@ -241,6 +241,8 @@ export function logSocDestructiveDealAction(input: {
   action:
     | "deal.delete"
     | "deal.member_remove"
+    | "deal.investor_investment_remove"
+    | "deal.investor_association_remove"
     | "deal.investor_class_delete";
   actorUserId: string;
   dealId: string;
@@ -249,16 +251,24 @@ export function logSocDestructiveDealAction(input: {
   const event =
     input.action === "deal.delete"
       ? "soc.privileged.deal_delete"
-      : input.action === "deal.member_remove"
-        ? "soc.privileged.deal_member_remove"
-        : "soc.privileged.deal_investor_class_delete";
+      : input.action === "deal.investor_investment_remove"
+        ? "soc.privileged.deal_investor_investment_remove"
+        : input.action === "deal.investor_association_remove"
+          ? "soc.privileged.deal_investor_association_remove"
+          : input.action === "deal.member_remove"
+            ? "soc.privileged.deal_member_remove"
+            : "soc.privileged.deal_investor_class_delete";
   privilegedActionDetail.info({
     message:
       input.action === "deal.delete"
         ? "Deal record deleted"
-        : input.action === "deal.member_remove"
-          ? "Deal roster member removed"
-          : "Deal investor class deleted",
+        : input.action === "deal.investor_investment_remove"
+          ? "Deal investment removed"
+          : input.action === "deal.investor_association_remove"
+            ? "Investor association removed"
+            : input.action === "deal.member_remove"
+              ? "Deal roster member removed"
+              : "Deal investor class deleted",
     event,
     domain: "privileged_destructive",
     actorUserId: input.actorUserId,

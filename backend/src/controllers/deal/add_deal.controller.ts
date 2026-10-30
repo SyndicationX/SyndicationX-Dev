@@ -34,6 +34,10 @@ import { filterDealIdsByContactOfferingVisibility } from "../../services/contact
 import { assignCreatorToDeal } from "../../services/deal/assigningDealUser.service.js";
 import { assignCreatorAsLeadSponsorOnDeal } from "../../services/deal/dealMember.service.js";
 import {
+  CO_SPONSOR_COMPANY_REQUIRED_MESSAGE,
+  viewerIsCoSponsorWithoutCompany,
+} from "../../services/deal/dealMemberScope.service.js";
+import {
   requestedOrganizationIdFromRequest,
   userHasAccessToOrganization,
 } from "../../services/org/orgResolution.service.js";
@@ -56,6 +60,7 @@ import {
   mergeCoSponsorOfferingInvestorPreviewJson,
   scopeOfferingInvestorPreviewJsonForViewer,
 } from "../../services/deal/dealDocumentCoSponsorVisibility.service.js";
+import { stripEsignDocumentsFromPublicOfferingPreview } from "../../services/deal/dealEsignDocumentsWorkspaceSync.service.js";
 import { resolveCrossOrgColleagueSponsorForDeal } from "../../services/deal/crossOrgColleagueDeal.service.js";
 import { canInvestorAccessPublicOffering } from "../../constants/deal-lifecycle/index.js";
 import { isDealStageDraft } from "../../constants/deal-lifecycle/deal-stage.js";
@@ -143,6 +148,7 @@ import {
   mapDealListEnrichmentByDealId,
 } from "../../services/deal/dealListRowEnrichment.service.js";
 import {
+  dealPackageUpgradeDue,
   dealSaasBillingListFields,
   dealSaasPaymentRequiredPayload,
   evaluateDealSaasWorkspaceAccessRefreshing,
@@ -180,7 +186,10 @@ async function sendDealSaasLockIfNeeded(
   scope?: DealViewerScope | null,
 ): Promise<boolean> {
   const evaluated = await evaluateDealSaasWorkspaceAccessRefreshing(row);
-  if (!evaluated.access.locked) return false;
+  const upgrade = evaluated.access.locked
+    ? null
+    : await dealPackageUpgradeDue(evaluated.row);
+  if (!evaluated.access.locked && !upgrade?.due) return false;
   const dealKey = String(evaluated.row.id ?? "").trim().toLowerCase();
   let viewerIsLeadSponsor = false;
   if (scope?.userId) {
@@ -195,11 +204,20 @@ async function sendDealSaasLockIfNeeded(
   }
   // Platform admin still pays MRR when they are the lead sponsor on this deal.
   if (scope?.isPlatformAdmin && !viewerIsLeadSponsor) return false;
-  res.status(402).json(
-    dealSaasPaymentRequiredPayload(evaluated.row, evaluated.access, {
-      viewerIsLeadSponsor,
-    }),
+  const payload = dealSaasPaymentRequiredPayload(
+    evaluated.row,
+    upgrade?.due ? { locked: true, reason: "unpaid" } : evaluated.access,
+    { viewerIsLeadSponsor },
   );
+  if (upgrade?.due) {
+    const label = String(evaluated.row.dealName ?? "").trim()
+      ? `“${String(evaluated.row.dealName).trim()}”`
+      : "this deal";
+    payload.needsPlanUpgrade = true;
+    payload.suggestedPlanId = upgrade.suggestedPlanId;
+    payload.message = `Pay the upgrade difference for ${label} before this deal can be opened.`;
+  }
+  res.status(402).json(payload);
   return true;
 }
 
@@ -1689,6 +1707,9 @@ export async function getPublicOfferingPreview(
       ? await resolveOfferingPreviewSponsorAttribution(dealId, sponsorRefValue)
       : null;
     const deal = await mapRowToJsonWithInvestmentCount(row, null);
+    deal.offeringInvestorPreviewJson = stripEsignDocumentsFromPublicOfferingPreview(
+      deal.offeringInvestorPreviewJson,
+    );
     const classRows = await listInvestorClassesByDealId(dealId);
     const invRows = await listDealInvestmentsByDealId(dealId, {
       lpInvestorsOnly: false,
@@ -1726,6 +1747,13 @@ export async function getDealById(req: Request, res: Response): Promise<void> {
     return;
   }
   try {
+    if (await viewerIsCoSponsorWithoutCompany(user.id)) {
+      res.status(403).json({
+        message: CO_SPONSOR_COMPANY_REQUIRED_MESSAGE,
+        code: "company_required",
+      });
+      return;
+    }
     const scope = await resolveDealViewerScope(
       user.id,
       user.userRole,

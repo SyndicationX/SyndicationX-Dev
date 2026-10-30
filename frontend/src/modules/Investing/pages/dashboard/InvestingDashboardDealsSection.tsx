@@ -33,10 +33,9 @@ import {
   type DealsSortKey,
 } from "@/modules/Syndication/Deals/SyndicatingDealsSection";
 import {
-  dealHasInvestNowDraftForViewer,
-  firstInvestNowDraftRowForViewer,
+  investNowDraftSnapshotForViewer,
+  investNowProgressForViewer,
 } from "@/modules/Investing/pages/invest/investNowDraftUtils";
-import { investNowDraftProgressFromInvestorRow } from "@/modules/Investing/pages/invest/investNowDraftProgress";
 import {
   classifyInvestingDashboardDealBucket,
   classifyInvestingDashboardDealBucketForPlatformAdmin,
@@ -111,22 +110,16 @@ function mergeInvestingDashboardDealRecord(
     payload,
     classes,
   );
-  if (dealHasInvestNowDraftForViewer(payload.investors, viewerEmailNorm)) {
-    const draftRow = firstInvestNowDraftRowForViewer(
-      payload.investors,
-      viewerEmailNorm,
-    );
-    if (draftRow) {
-      record.investNowDraftProgress =
-        investNowDraftProgressFromInvestorRow(draftRow);
-      record.investNowResumeScope = {
-        investmentId: String(draftRow.id ?? "").trim() || undefined,
-        userInvestorProfileId:
-          String(draftRow.userInvestorProfileId ?? "").trim() || undefined,
-        profileId: String(draftRow.profileId ?? "").trim() || undefined,
-      };
-    }
-  }
+  const progress = investNowProgressForViewer(
+    payload.investors,
+    viewerEmailNorm,
+  );
+  if (progress) record.investNowDraftProgress = progress;
+  const snapshot = investNowDraftSnapshotForViewer(
+    payload.investors,
+    viewerEmailNorm,
+  );
+  if (snapshot) record.investNowResumeScope = snapshot.resumeScope;
   return record;
 }
 

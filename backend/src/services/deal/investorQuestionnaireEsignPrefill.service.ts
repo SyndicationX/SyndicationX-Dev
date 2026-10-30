@@ -41,9 +41,33 @@ const COMPUTED_FULL_NAME_FIELD_KEYS = new Set(
 );
 
 const COMPUTED_DATE_FIELD_KEYS = new Set(
-  ["date", "datesigned1", "date signed", "signed date"].map((s) =>
-    normalizeFieldKey(s),
-  ),
+  [
+    "date",
+    "datesigned1",
+    "date signed",
+    "signed date",
+    "sponsor date",
+    "investor date",
+    "signature date",
+    "effective date",
+    "dated",
+    "execution date",
+    "date of execution",
+  ].map((s) => normalizeFieldKey(s)),
+);
+
+/** Profile dates that must not be replaced with the day the document is signed. */
+const PROFILE_DATE_FIELD_KEYS = new Set(
+  [
+    "formation date",
+    "date of formation",
+    "birth date",
+    "date of birth",
+    "dob",
+    "birthday",
+    "incorporation date",
+    "date of incorporation",
+  ].map((s) => normalizeFieldKey(s)),
 );
 
 const COMPUTED_TITLE_FIELD_KEYS = new Set(
@@ -126,6 +150,21 @@ const FIELD_KEY_TO_QUESTION_ID: Record<string, string> = {
   [normalizeFieldKey("Investment Amount")]: "investment_amount",
   [normalizeFieldKey("Commitment Amount")]: "investment_amount",
   [normalizeFieldKey("Amount")]: "investment_amount",
+  [normalizeFieldKey("Subscription Amount")]: "subscription_amount",
+  [normalizeFieldKey("Aggregate Subscription Amount")]: "subscription_amount",
+  [normalizeFieldKey("Total Subscription Amount")]: "subscription_amount",
+  [normalizeFieldKey("Subscription Price")]: "subscription_amount",
+  [normalizeFieldKey("Unit Amount")]: "unit_amount",
+  [normalizeFieldKey("Price Per Unit")]: "unit_amount",
+  [normalizeFieldKey("Price per Unit")]: "unit_amount",
+  [normalizeFieldKey("Unit Price")]: "unit_amount",
+  [normalizeFieldKey("Purchase Price per Unit")]: "unit_amount",
+  [normalizeFieldKey("Number of Units")]: "unit_count",
+  [normalizeFieldKey("No. of Units")]: "unit_count",
+  [normalizeFieldKey("No of Units")]: "unit_count",
+  [normalizeFieldKey("Units")]: "unit_count",
+  [normalizeFieldKey("Units Subscribed")]: "unit_count",
+  [normalizeFieldKey("Units Purchased")]: "unit_count",
   [normalizeFieldKey("ACH Routing Number")]: "ach_routing_number",
   [normalizeFieldKey("ACH Account Number")]: "ach_account_number",
   [normalizeFieldKey("Bank Name")]: "ach_bank_name",
@@ -136,7 +175,14 @@ const FIELD_KEY_TO_QUESTION_ID: Record<string, string> = {
 export type EsignQuestionnairePrefillContext = {
   memberDisplayName?: string;
   memberEmail?: string;
+  /** Commitment total from the investment, formatted for the PDF. */
   investmentAmount?: string;
+  /** Same commitment total; subscription-agreement labels. */
+  subscriptionAmount?: string;
+  /** Class price per unit for this investment. */
+  unitAmount?: string;
+  /** Units purchased: commitment ÷ price per unit. */
+  unitCount?: string;
   addressLine?: string;
   mailingAddressLine?: string;
   streetLine?: string;
@@ -414,9 +460,21 @@ function resolveValueForFieldKey(
     if (email) return email;
   }
 
-  if (questionId === "investment_amount") {
-    const amt = prefillContext?.investmentAmount?.trim();
+  if (questionId === "investment_amount" || questionId === "subscription_amount") {
+    const amt =
+      prefillContext?.subscriptionAmount?.trim() ||
+      prefillContext?.investmentAmount?.trim();
     if (amt) return amt;
+  }
+
+  if (questionId === "unit_amount") {
+    const unit = prefillContext?.unitAmount?.trim();
+    if (unit) return unit;
+  }
+
+  if (questionId === "unit_count") {
+    const count = prefillContext?.unitCount?.trim();
+    if (count) return count;
   }
 
   if (questionId === "mailing_address") {
@@ -473,6 +531,9 @@ export function applyQuestionnairePrefillToEsignFormFields({
       prefillContext?.memberDisplayName?.trim() || memberDisplayName?.trim(),
     memberEmail: prefillContext?.memberEmail?.trim(),
     investmentAmount: prefillContext?.investmentAmount?.trim(),
+    subscriptionAmount: prefillContext?.subscriptionAmount?.trim(),
+    unitAmount: prefillContext?.unitAmount?.trim(),
+    unitCount: prefillContext?.unitCount?.trim(),
   };
 
   // Dropbox merge fields land on the shared PDF — always mask SSN for sponsors.
@@ -482,6 +543,9 @@ export function applyQuestionnairePrefillToEsignFormFields({
     !ctx.memberDisplayName &&
     !ctx.memberEmail &&
     !ctx.investmentAmount &&
+    !ctx.subscriptionAmount &&
+    !ctx.unitAmount &&
+    !ctx.unitCount &&
     !ctx.addressLine &&
     !ctx.mailingAddressLine
   ) {
@@ -527,6 +591,70 @@ function signFlowFieldPrefillType(type: string): boolean {
   return t === "text" || t === "date" || t === "date_signed";
 }
 
+function isProfileDateField(field: {
+  label?: string;
+  dataKey?: string;
+}): boolean {
+  const key = normalizeFieldKey(String(field.label ?? ""));
+  const dataKey = normalizeFieldKey(String(field.dataKey ?? ""));
+  if (PROFILE_DATE_FIELD_KEYS.has(key)) return true;
+  return (
+    key.includes("birth") ||
+    key.includes("formation") ||
+    key.includes("incorporat") ||
+    dataKey.includes("birth") ||
+    dataKey.includes("formation")
+  );
+}
+
+/**
+ * Signature-block and agreement dates. Stored as text with today's value so
+ * the signer can change them. Birth date and formation date are not included.
+ */
+export function isEditableSigningDateField(field: {
+  label?: string;
+  type?: string;
+  dataKey?: string;
+}): boolean {
+  if (isProfileDateField(field)) return false;
+  const key = normalizeFieldKey(String(field.label ?? ""));
+  if (COMPUTED_DATE_FIELD_KEYS.has(key)) return true;
+  if (key.includes("date signed") || key.includes("signature date")) return true;
+  const type = String(field.type ?? "").trim().toLowerCase();
+  return type === "date" || type === "date_signed";
+}
+
+/**
+ * Signing dates are text fields with today's date so the signer can change them.
+ * `date_signed` widgets stamp the date and do not allow edits.
+ * When `recipientId` is set, only that signer's date fields are updated.
+ */
+export function applyEditableSigningDatePrefill<
+  T extends { type?: string; label?: string; value?: string; recipientId?: string },
+>(
+  fields: T[],
+  recipientId?: string,
+  options?: { fillEmptyOnly?: boolean },
+): { fields: T[]; changed: boolean } {
+  const today = resolveSigningDate();
+  const rid = recipientId?.trim().toLowerCase();
+  let changed = false;
+  const next = fields.map((field) => {
+    if (!isEditableSigningDateField(field)) return field;
+    if (rid) {
+      const fieldRid = String(field.recipientId ?? "").trim().toLowerCase();
+      if (!fieldRid || fieldRid !== rid) return field;
+    }
+    const type = String(field.type ?? "").trim().toLowerCase();
+    const value = String(field.value ?? "").trim();
+    if (options?.fillEmptyOnly && value) return field;
+    if (type === "text" && value === today) return field;
+    changed = true;
+    return { ...field, type: "text", value: today };
+  });
+  return { fields: next, changed };
+}
+
 /**
  * Pre-fills SignFlow text/date fields on the questionnaire signature page (and
  * other investor fields whose labels match questionnaire answers).
@@ -557,11 +685,21 @@ export function applyQuestionnairePrefillToSignFlowFields({
       prefillContext?.memberDisplayName?.trim() || memberDisplayName?.trim(),
     memberEmail: prefillContext?.memberEmail?.trim(),
     investmentAmount: prefillContext?.investmentAmount?.trim(),
+    subscriptionAmount: prefillContext?.subscriptionAmount?.trim(),
+    unitAmount: prefillContext?.unitAmount?.trim(),
+    unitCount: prefillContext?.unitCount?.trim(),
   };
 
   const formatted = buildFormattedAnswerMap(config, answers, maskSsn);
 
   const nextFields = fields.map((field) => {
+    if (isEditableSigningDateField(field)) {
+      return {
+        ...field,
+        type: "text",
+        value: resolveSigningDate(),
+      };
+    }
     if (!signFlowFieldPrefillType(field.type)) return field;
 
     const catalogKey =

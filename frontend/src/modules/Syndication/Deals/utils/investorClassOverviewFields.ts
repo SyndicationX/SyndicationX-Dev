@@ -50,14 +50,30 @@ export function isFixedReturnInvestorClass(
   return isMezzanineInvestorClass(row) || isPreferredEquityInvestorClass(row)
 }
 
-/** LP and mezzanine — selectable during investor onboarding (GP excluded). */
+function nameLooksLikeGeneralPartner(name: string | undefined): boolean {
+  return /\bgp\b|general partner/i.test(String(name ?? ""))
+}
+
+/**
+ * Selectable during investor onboarding.
+ * GP is excluded. A blank class type is included — Class Setup shows those
+ * rows as LP (for example a Class A saved without `subscription_type`).
+ */
 export function isInvestorOnboardingSelectableClass(
-  row: Pick<DealInvestorClass, "subscriptionType"> | undefined,
+  row:
+    | (Pick<DealInvestorClass, "subscriptionType"> & { name?: string })
+    | undefined,
 ): boolean {
+  if (!row) return false
+  if (isGpInvestorClass(row)) return false
+  if (!normalizedSubscriptionType(row) && nameLooksLikeGeneralPartner(row.name)) {
+    return false
+  }
   return (
     isLpInvestorClass(row) ||
     isMezzanineInvestorClass(row) ||
-    isPreferredEquityInvestorClass(row)
+    isPreferredEquityInvestorClass(row) ||
+    normalizedSubscriptionType(row) === ""
   )
 }
 
@@ -86,6 +102,17 @@ export function matchDealInvestorClass(
       c.id.trim().toLowerCase() === lower ||
       c.name.trim().toLowerCase() === lower,
   )
+}
+
+/** `deal_lp_investor.entity_ownership_percent` shown on Team Members. */
+export function teamMemberOwnershipPercentLabel(raw: string | undefined): string {
+  const text = String(raw ?? "")
+    .trim()
+    .replace(/%/g, "")
+  if (!text || text === "—" || text === "-") return "—"
+  const n = Number(text)
+  if (!Number.isFinite(n)) return "—"
+  return `${(Math.round(n * 100) / 100).toFixed(2)}%`
 }
 
 const CLASS_TYPE_TABLE_SUFFIX: Record<string, string> = {

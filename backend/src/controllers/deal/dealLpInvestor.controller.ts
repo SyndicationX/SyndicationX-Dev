@@ -169,7 +169,7 @@ export async function postDealLpInvestor(
     b.distribution_allocation_percent ?? b.distributionAllocationPercent,
   );
 
-  if (!contactId.trim()) {
+    if (!contactId.trim()) {
     res.status(400).json({ message: "Member (contact) is required" });
     return;
   }
@@ -201,8 +201,14 @@ export async function postDealLpInvestor(
       dealId,
       contactId,
     );
-    /* A draft row for this contact is this modal's own autosave — promote it, do not reject. */
-    if (!autosave && existingForContact && !existingForContact.isDraft) {
+    /* A draft row for this contact is this modal's own autosave — promote it, do not reject.
+       A soft-removed row is history; a later add starts a new commitment. */
+    if (
+      !autosave &&
+      existingForContact &&
+      !existingForContact.isDraft &&
+      !existingForContact.removedAt
+    ) {
       res.status(409).json({ message: LP_INVESTOR_ALREADY_ON_DEAL_MESSAGE });
       return;
     }

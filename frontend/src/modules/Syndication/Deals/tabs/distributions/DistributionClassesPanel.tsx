@@ -8,6 +8,7 @@ import { TableCompactAmountCell } from "../../../../../common/components/card-co
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import {
   fetchDistributionPayouts,
+  type DistributionBankAccountSetupLine,
   type DistributionPayout,
 } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
@@ -96,17 +97,23 @@ export function DistributionClassesPanel({
   const [query, setQuery] = useState("")
   const [expandedClassId, setExpandedClassId] = useState<string | null>(null)
   const [payouts, setPayouts] = useState<DistributionPayout[]>([])
+  const [bankAccountSetup, setBankAccountSetup] = useState<
+    DistributionBankAccountSetupLine[]
+  >([])
 
   const loadPayouts = useCallback(async () => {
     if (!dealId || !distribution.id) {
       setPayouts([])
+      setBankAccountSetup([])
       return
     }
     try {
       const list = await fetchDistributionPayouts(dealId, distribution.id)
-      setPayouts(list)
+      setPayouts(list.payouts)
+      setBankAccountSetup(list.bankAccountSetup)
     } catch {
       setPayouts([])
+      setBankAccountSetup([])
     }
   }, [dealId, distribution.id])
 
@@ -360,7 +367,9 @@ export function DistributionClassesPanel({
               distributionId={distribution.id}
               fundingReady={fundingReady}
               payouts={payouts}
+              bankAccountSetup={bankAccountSetup}
               onPayoutsChange={setPayouts}
+              onBankAccountSetupChange={setBankAccountSetup}
               onSaved={onSaved}
               onReload={handleReload}
             />

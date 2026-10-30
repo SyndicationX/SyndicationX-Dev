@@ -111,6 +111,11 @@ export const companyBillingPaymentMethods = pgTable(
     billingEmail: varchar("billing_email", { length: 320 }),
     billingPhone: varchar("billing_phone", { length: 64 }),
     billingAddress: jsonb("billing_address"),
+    /**
+     * Portal user who saved this card or bank account.
+     * Listing and pay-with-saved only return rows for this user.
+     */
+    addedByUserId: uuid("added_by_user_id"),
     isDefault: boolean("is_default").notNull().default(false),
     livemode: boolean("livemode").notNull().default(false),
     stripeCreatedAt: timestamp("stripe_created_at", { withTimezone: true }),
@@ -130,6 +135,10 @@ export const companyBillingPaymentMethods = pgTable(
     index("company_billing_payment_methods_company_idx").on(t.companyId),
     index("company_billing_payment_methods_customer_idx").on(
       t.stripeCustomerId,
+    ),
+    index("company_billing_payment_methods_added_by_idx").on(
+      t.companyId,
+      t.addedByUserId,
     ),
   ],
 );

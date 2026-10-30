@@ -30,6 +30,7 @@ export function isInvestNowDraftInvestorRow(
   viewerEmailNorm: string,
 ): boolean {
   if (!investorRowMatchesViewerEmail(row, viewerEmailNorm)) return false
+  if (row.sponsorRemoved) return false
   if (row.investorKind === "lp_roster") return false
   if (investorInvestmentProfileIsComplete(row)) return false
   if (investorEsignWasSent(row)) return true
@@ -43,15 +44,15 @@ export function dealHasInvestNowDraftForViewer(
   investors: DealInvestorRow[],
   viewerEmailNorm?: string,
 ): boolean {
-  const em =
-    viewerEmailNorm?.trim().toLowerCase() ||
-    getSessionUserEmail()?.trim().toLowerCase() ||
-    ""
-  if (!em) return false
-  return investors.some((row) => isInvestNowDraftInvestorRow(row, em))
+  return Boolean(firstInvestNowDraftRowForViewer(investors, viewerEmailNorm))
 }
 
-/** First draft row for resume from the investments list (any profile with saved progress). */
+/**
+ * Incomplete Invest Now row for this investor on the deal.
+ * A finished investment stays off the progress bar. A new investment still
+ * in onboarding keeps its own row, even when another investment on the deal
+ * is already complete.
+ */
 export function firstInvestNowDraftRowForViewer(
   investors: DealInvestorRow[],
   viewerEmailNorm?: string,
@@ -94,6 +95,7 @@ export function dealHasFullyCompletedProfileEsign(
   return investors.some(
     (row) =>
       investorRowMatchesViewerEmail(row, em) &&
+      !row.sponsorRemoved &&
       investorInvestmentProfileIsComplete(row),
   )
 }

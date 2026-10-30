@@ -19,6 +19,7 @@ import {
   Upload,
   User,
   UserCog,
+  UserMinus,
   Info,
   X,
 } from "lucide-react"
@@ -88,6 +89,8 @@ import {
   userStatusForUi,
   type OrganizationDisplayScope,
 } from "../usermanagement/memberAdminShared"
+import { MemberInvitationSection } from "../usermanagement/MemberInvitationSection"
+import { MemberRemoveConfirmModal } from "../usermanagement/MemberRemoveConfirmModal"
 import { MemberRoleBadge } from "../usermanagement/MemberRoleBadge"
 import { UserOrganizationsCell } from "../usermanagement/UserOrganizationsCell"
 import { buildMembersCsv, downloadMembersCsv, exportAuditLinesForMembers } from "../usermanagement/memberCsv"
@@ -415,6 +418,9 @@ export default function CompanyMembersPage() {
     null,
   )
   const [viewRow, setViewRow] = useState<Record<string, unknown> | null>(null)
+  const [removeRow, setRemoveRow] = useState<Record<string, unknown> | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeErr, setRemoveErr] = useState("")
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
     () => new Set(),
   )
@@ -678,6 +684,54 @@ export default function CompanyMembersPage() {
     } finally {
       setReinviteBusyId(null)
       closeActionMenu()
+    }
+  }
+
+  function openRemoveMember(row: Record<string, unknown>) {
+    if (memberRowIsCurrentUser(row, currentUserId)) {
+      toast.error("Cannot remove", "You cannot remove your own account.")
+      return
+    }
+    setRemoveErr("")
+    setRemoveRow(row)
+  }
+
+  async function confirmRemoveMember() {
+    if (!removeRow || !token || !apiV1 || removeBusy) return
+    const id = String(removeRow.id ?? "").trim()
+    const orgId = companyId.trim()
+    if (!id || !UUID_RE.test(orgId)) {
+      setRemoveErr("This member is not tied to an organization.")
+      return
+    }
+    setRemoveBusy(true)
+    setRemoveErr("")
+    try {
+      const res = await fetch(`${apiV1}/users/${encodeURIComponent(id)}/remove`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ organizationId: orgId }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { message?: string }
+      if (!res.ok) {
+        const msg = data.message || "Could not remove member."
+        setRemoveErr(msg)
+        toast.error("Could not remove member", msg)
+        return
+      }
+      setMembers((prev) => prev.filter((r) => String(r.id ?? "") !== id))
+      if (viewRow && String(viewRow.id ?? "") === id) setViewRow(null)
+      setRemoveRow(null)
+      toast.success("Member removed", "They are back on All Contacts.")
+    } catch {
+      const msg = "Unable to connect. Try again later."
+      setRemoveErr(msg)
+      toast.error("Could not remove member", msg)
+    } finally {
+      setRemoveBusy(false)
     }
   }
 
@@ -1194,32 +1248,41 @@ export default function CompanyMembersPage() {
                 </span>
               </div>
               <div className="um_user_meta">
-                <button
-                  type="button"
-                  className={`cp_company_member_contacts_toggle${
-                    open ? " cp_company_member_contacts_toggle--open" : ""
-                  }`}
-                  aria-expanded={open}
-                  aria-label={
-                    open
-                      ? `Hide contacts for ${displayName}`
-                      : `Show contacts for ${displayName}`
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setExpandedMemberId((current) =>
-                      current === rowKey ? null : rowKey,
-                    )
-                  }}
-                >
-                  <span className={`um_user_meta_username${namePlaceholder}`}>
+                <span className="cp_company_member_contacts_toggle">
+                  <button
+                    type="button"
+                    className={`um_user_meta_username um_user_meta_name_btn${namePlaceholder}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setViewRow(row)
+                    }}
+                  >
                     {displayName}
-                  </span>
-                  <ChevronDown size={16} aria-hidden />
-                  <span className="cp_company_member_contacts_count">
-                    {contactCount}
-                  </span>
-                </button>
+                  </button>
+                  <button
+                    type="button"
+                    className={`cp_company_member_contacts_toggle${
+                      open ? " cp_company_member_contacts_toggle--open" : ""
+                    }`}
+                    aria-expanded={open}
+                    aria-label={
+                      open
+                        ? `Hide contacts for ${displayName}`
+                        : `Show contacts for ${displayName}`
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setExpandedMemberId((current) =>
+                        current === rowKey ? null : rowKey,
+                      )
+                    }}
+                  >
+                    <ChevronDown size={16} aria-hidden />
+                    <span className="cp_company_member_contacts_count">
+                      {contactCount}
+                    </span>
+                  </button>
+                </span>
                 {isDisplayableEmail(rawEmail) ? (
                   <a
                     href={`mailto:${encodeURIComponent(rawEmail)}`}
@@ -1614,6 +1677,34 @@ export default function CompanyMembersPage() {
                 <button
                   type="button"
                   role="menuitem"
+                  className="um_kebab_menuitem deals_kebab_menuitem_danger"
+                  disabled={memberRowIsCurrentUser(
+                    openMenuContext.row,
+                    currentUserId,
+                  )}
+                  title={
+                    memberRowIsCurrentUser(openMenuContext.row, currentUserId)
+                      ? "You cannot remove your own account."
+                      : undefined
+                  }
+                  onClick={() => {
+                    closeActionMenu()
+                    openRemoveMember(openMenuContext.row)
+                  }}
+                >
+                  <UserMinus
+                    className="um_kebab_menuitem_icon"
+                    size={16}
+                    strokeWidth={2}
+                    aria-hidden
+                  />
+                  Remove
+                </button>
+              </li>
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
                   className="um_kebab_menuitem"
                   onClick={() => exportRowCsv(openMenuContext.row)}
                 >
@@ -1630,6 +1721,20 @@ export default function CompanyMembersPage() {
             document.body,
           )
         : null}
+
+      {removeRow ? (
+        <MemberRemoveConfirmModal
+          memberName={memberUserCellPrimaryLabel(removeRow)}
+          busy={removeBusy}
+          error={removeErr}
+          onClose={() => {
+            if (removeBusy) return
+            setRemoveRow(null)
+            setRemoveErr("")
+          }}
+          onConfirm={() => void confirmRemoveMember()}
+        />
+      ) : null}
 
       {viewRow ? (
         <div
@@ -1708,6 +1813,7 @@ export default function CompanyMembersPage() {
                 value={<StatusWithDot {...accountStatusForUi(viewRow)} />}
               />
             </div>
+            <MemberInvitationSection row={viewRow} />
             <div className="um_modal_actions um_modal_actions_view">
               <button
                 type="button"

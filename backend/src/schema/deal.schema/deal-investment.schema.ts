@@ -1,11 +1,13 @@
 import {
   boolean,
+  date,
   jsonb,
   pgTable,
   text,
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { users } from "../auth.schema/signin.js";
 import { userInvestorProfiles } from "../investing.schema/userProfileBook.schema.js";
 import { addDealForm } from "./add-deal-form.schema.js";
 
@@ -30,8 +32,16 @@ export const dealInvestment = pgTable("deal_investment", {
   fundApproved: boolean("fund_approved").notNull().default(false),
   /** Portal user/contact id who last approved funding for this investment row. */
   fundApprovedBy: text("fund_approved_by"),
-  /** Timestamp when funding was last approved for this investment row. */
+  /** Timestamp when funding was last approved or the funded date was last edited. */
   fundApprovedAt: timestamp("fund_approved_at", { withTimezone: true }),
+  /**
+   * Prior and current funded dates, oldest first.
+   * The table shows `fund_approved_at` (the latest entry).
+   */
+  fundApprovedAtHistory: jsonb("fund_approved_at_history")
+    .$type<FundApprovedAtHistoryEntry[]>()
+    .notNull()
+    .default([]),
   /** Committed total (numeric string) when fund was last approved; used for split UI after LP adds more. */
   fundApprovedCommitmentSnapshot: text("fund_approved_commitment_snapshot")
     .notNull()
@@ -54,6 +64,20 @@ export const dealInvestment = pgTable("deal_investment", {
   /** Invest Now funding method (`stripe_checkout`, `wire_transfer`, legacy `ach`, `check`). */
   fundingMethod: text("funding_method").notNull().default(""),
   commitmentAmount: text("commitment_amount").notNull().default(""),
+  /** Optional position figures. Not required; null means not recorded. */
+  fundedAmount: text("funded_amount"),
+  capitalBalance: text("capital_balance"),
+  cashBalance: text("cash_balance"),
+  deployedCapital: text("deployed_capital"),
+  percentOfClassByTargetRaise: text("percent_of_class_by_target_raise"),
+  percentOfClassByTotalRaised: text("percent_of_class_by_total_raised"),
+  sharesOwned: text("shares_owned"),
+  distributedAmount: text("distributed_amount"),
+  reinvestDistributions: text("reinvest_distributions"),
+  reinvestmentPercentage: text("reinvestment_percentage"),
+  accruedPreferredReturn: text("accrued_preferred_return"),
+  unpaidPreferredReturn: text("unpaid_preferred_return"),
+  preferredReturnStartDate: date("preferred_return_start_date"),
   /** Set once when the investor finishes Invest Now. */
   commitmentCompletedAt: timestamp("commitment_completed_at", {
     withTimezone: true,
@@ -67,6 +91,28 @@ export const dealInvestment = pgTable("deal_investment", {
   commitmentSponsorEmailSentAt: timestamp("commitment_sponsor_email_sent_at", {
     withTimezone: true,
   }),
+  /**
+   * Investor-only archive of this commitment inside Investing.
+   * Does not archive the sponsor's deal.
+   */
+  investorArchivedAt: timestamp("investor_archived_at", { withTimezone: true }),
+  /** Sponsor removed this investment. Hidden from rosters and active totals. */
+  removedAt: timestamp("removed_at", { withTimezone: true }),
+  removedByUserId: uuid("removed_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  removalReason: text("removal_reason").notNull().default(""),
+  removalAction: text("removal_action").notNull().default(""),
+  /**
+   * Sponsor removed the investor's association with this investment.
+   * The row stays for audit; it is hidden from rosters and active totals.
+   */
+  investorUnlinkedAt: timestamp("investor_unlinked_at", { withTimezone: true }),
+  investorUnlinkedByUserId: uuid("investor_unlinked_by_user_id").references(
+    () => users.id,
+    { onDelete: "set null" },
+  ),
+  investorUnlinkReason: text("investor_unlink_reason").notNull().default(""),
   extraContributionAmounts: jsonb("extra_contribution_amounts")
     .$type<string[]>()
     .notNull(),
@@ -76,6 +122,13 @@ export const dealInvestment = pgTable("deal_investment", {
     .defaultNow()
     .notNull(),
 });
+
+/** One stored funded date. `date` is the value shown when it was current. */
+export type FundApprovedAtHistoryEntry = {
+  date: string;
+  recordedAt: string;
+  source: "approved" | "edited";
+};
 
 export type DealInvestmentRow = typeof dealInvestment.$inferSelect;
 export type DealInvestmentInsert = typeof dealInvestment.$inferInsert;

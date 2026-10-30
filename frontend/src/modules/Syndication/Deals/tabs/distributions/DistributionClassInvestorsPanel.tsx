@@ -14,8 +14,13 @@ import {
 import {
   executeDistributionAchPayouts,
   fetchDistributionPayouts,
+  type DistributionBankAccountSetupLine,
   type DistributionPayout,
 } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
+import {
+  BankAccountSetupBadge,
+  bankAccountSetupLookup,
+} from "./BankAccountSetupBadge"
 import { patchDistributionInvestorPercent } from "../../distribution-setup/api/distributionSetupApi"
 import type { DistributionSetupBundle } from "../../distribution-setup/types/distribution-setup.types"
 import {
@@ -36,7 +41,9 @@ type DistributionClassInvestorsPanelProps = {
   distributionId: string
   fundingReady: boolean
   payouts: DistributionPayout[]
+  bankAccountSetup: DistributionBankAccountSetupLine[]
   onPayoutsChange: (payouts: DistributionPayout[]) => void
+  onBankAccountSetupChange: (lines: DistributionBankAccountSetupLine[]) => void
   onSaved: (
     saved: DistributionSetupBundle,
     investorId: string,
@@ -132,7 +139,9 @@ export function DistributionClassInvestorsPanel({
   distributionId,
   fundingReady,
   payouts,
+  bankAccountSetup,
   onPayoutsChange,
+  onBankAccountSetupChange,
   onSaved,
   onReload,
 }: DistributionClassInvestorsPanelProps) {
@@ -189,6 +198,10 @@ export function DistributionClassInvestorsPanel({
   const payoutByInvestmentId = useMemo(
     () => new Map(payouts.map((p) => [p.investmentId, p])),
     [payouts],
+  )
+  const bankSetupByInvestmentId = useMemo(
+    () => bankAccountSetupLookup(bankAccountSetup),
+    [bankAccountSetup],
   )
 
   const filtered = useMemo(() => {
@@ -385,7 +398,8 @@ export function DistributionClassInvestorsPanel({
           dealId,
           distributionId,
         )
-        onPayoutsChange(refreshed)
+        onPayoutsChange(refreshed.payouts)
+        onBankAccountSetupChange(refreshed.bankAccountSetup)
         setAchConfirm(null)
         const lineResult = result.results[0]
         if (result.failed > 0 || lineResult?.status === "failed") {
@@ -420,6 +434,7 @@ export function DistributionClassInvestorsPanel({
       sendingInvestorId,
       canSendInvestorPayout,
       onPayoutsChange,
+      onBankAccountSetupChange,
     ],
   )
 
@@ -656,6 +671,30 @@ export function DistributionClassInvestorsPanel({
         cell: (row) => <TableCompactAmountCell amount={row.unpaid} />,
       },
       {
+        id: "bankAccountSetup",
+        header: (
+          <span className="deal_dist_th_stack_label">
+            <span>Bank account</span>
+            <span>setup</span>
+          </span>
+        ),
+        align: "center",
+        colWidth: "8.5rem",
+        thClassName: "deal_dist_th_ach deals_th_align_center",
+        tdClassName: "deal_dist_td_ach",
+        sortValue: (row) =>
+          bankSetupByInvestmentId.get(row.id.trim().toLowerCase()) ??
+          "not_set_up",
+        cell: (row) => (
+          <BankAccountSetupBadge
+            status={
+              bankSetupByInvestmentId.get(row.id.trim().toLowerCase()) ??
+              "not_set_up"
+            }
+          />
+        ),
+      },
+      {
         id: "payoutStatus",
         header: (
           <span className="deal_dist_th_stack_label">
@@ -747,6 +786,7 @@ export function DistributionClassInvestorsPanel({
       sendingInvestorId,
       fundingReady,
       payoutByInvestmentId,
+      bankSetupByInvestmentId,
       canSendInvestorPayout,
       isInvestorPayoutLocked,
       requestSendInvestorAchPayout,

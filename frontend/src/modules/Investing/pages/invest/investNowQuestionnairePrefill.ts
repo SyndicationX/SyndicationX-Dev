@@ -1,3 +1,4 @@
+import { getSessionUserNameParts } from "@/common/auth/sessionUserDisplayName"
 import { nationalDigitsFromStoredPhone } from "@/common/phone/usPhoneNumber"
 import type { SavedAddress } from "@/modules/Investing/pages/profiles/address.types"
 import type { BeneficiaryDraft } from "@/modules/Investing/pages/profiles/AddBeneficiaryModal"
@@ -31,14 +32,65 @@ const ENTITY_SUBTYPE_LABEL: Record<string, string> = {
 function readWizardState(
   profile: InvestorProfileListRow,
 ): Record<string, unknown> | null {
-  const raw = profile.profileWizardState
+  let raw: unknown = profile.profileWizardState
+  if (typeof raw === "string") {
+    const text = raw.trim()
+    if (!text) return null
+    try {
+      raw = JSON.parse(text) as unknown
+    } catch {
+      return null
+    }
+  }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
-  return raw as Record<string, unknown>
+  let src = raw as Record<string, unknown>
+  const inner = src.form
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const form = inner as Record<string, unknown>
+    if (
+      "firstName" in form ||
+      "first_name" in form ||
+      "lastName" in form ||
+      "last_name" in form ||
+      "entityLegalName" in form ||
+      "profileType" in form
+    ) {
+      src = form
+    }
+  }
+  return src
 }
 
 function strField(wizard: Record<string, unknown> | null, key: string): string {
   if (!wizard) return ""
   return String(wizard[key] ?? "").trim()
+}
+
+function wizardStr(
+  wizard: Record<string, unknown> | null,
+  ...keys: string[]
+): string {
+  if (!wizard) return ""
+  for (const key of keys) {
+    const value = String(wizard[key] ?? "").trim()
+    if (value) return value
+  }
+  return ""
+}
+
+function personNameQuestion(question: {
+  id: string
+  label?: string
+}): "first" | "last" | null {
+  const id = question.id.trim().toLowerCase().replace(/[\s-]+/g, "_")
+  const label = String(question.label ?? "").trim().toLowerCase()
+  if (id === "first_name" || id === "firstname" || label === "first name") {
+    return "first"
+  }
+  if (id === "last_name" || id === "lastname" || label === "last name") {
+    return "last"
+  }
+  return null
 }
 
 function sessionStr(camelKey: string): string {
@@ -194,11 +246,12 @@ function buildPrefillContext(
   addresses: SavedAddress[],
   profiles: InvestorProfileListRow[],
 ): QuestionnairePrefillContext {
+  const sessionName = getSessionUserNameParts()
   const firstName =
-    strField(wizard, "firstName") || sessionStr("firstName")
-  const middleName = strField(wizard, "middleName")
+    wizardStr(wizard, "firstName", "first_name") || sessionName.firstName
+  const middleName = wizardStr(wizard, "middleName", "middle_name")
   const lastName =
-    strField(wizard, "lastName") || sessionStr("lastName")
+    wizardStr(wizard, "lastName", "last_name") || sessionName.lastName
   const fullName = joinNameParts([firstName, middleName, lastName])
 
   const taxAddr = resolveTaxAddress(wizard, addresses)
@@ -308,11 +361,17 @@ function resolveQuestionnairePrefillValue(
 }
 
 function resolveQuestionPrefillValue(
-  question: Pick<InvestorQuestionnaireQuestion, "id" | "investorProfileFieldKey">,
+  question: Pick<
+    InvestorQuestionnaireQuestion,
+    "id" | "label" | "investorProfileFieldKey"
+  >,
   ctx: QuestionnairePrefillContext,
   wizard: Record<string, unknown> | null,
   addresses: SavedAddress[],
 ): string | undefined {
+  const namePart = personNameQuestion(question)
+  if (namePart === "first" && ctx.firstName) return ctx.firstName
+  if (namePart === "last" && ctx.lastName) return ctx.lastName
   const byId = resolveQuestionnairePrefillValue(question.id, ctx)
   if (byId) return byId
   const profileKey = question.investorProfileFieldKey?.trim()

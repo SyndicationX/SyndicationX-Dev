@@ -72,7 +72,7 @@ function hasUsefulBankDetails(summary: ConnectBankAccountSummary | null): boolea
  */
 export async function resolveConnectBankAccountSummary(params: {
   accountId: string;
-  /** Optional display name fallback when Stripe has not returned bank fields yet. */
+  /** Kept for callers. A profile or legal name is not used as the bank name. */
   displayName?: string | null;
 }): Promise<ConnectBankAccountSummary | null> {
   const accountId = params.accountId.trim();
@@ -117,21 +117,10 @@ export async function resolveConnectBankAccountSummary(params: {
     console.error("resolveConnectBankAccountSummary.payoutMethods:", err);
   }
 
-  const displayName = params.displayName?.trim() || null;
-  if (displayName) {
-    return {
-      bankName: displayName,
-      last4: null,
-      routingNumber: null,
-      accountHolderName: null,
-      currency: null,
-      status: "linked",
-    };
-  }
-
-  // Still return a stub so UIs can show that a Connect bank setup exists.
+  // No verified bank on the Connect account. Do not substitute the investor
+  // profile or legal name — that is not a bank.
   return {
-    bankName: "Bank account on file",
+    bankName: null,
     last4: null,
     routingNumber: null,
     accountHolderName: null,

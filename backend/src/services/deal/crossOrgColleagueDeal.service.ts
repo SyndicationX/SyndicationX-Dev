@@ -3,6 +3,7 @@ import { isPlatformAdminRole } from "../../constants/roles.js";
 import { pool } from "../../database/db.js";
 import { listOrganizationIdsForUser } from "../org/orgResolution.service.js";
 import { isPortalUserDealSponsorOnDeal } from "./dealMemberScope.service.js";
+import { resolvePortalUserIdForContactMemberId } from "./offeringPreviewSponsorRef.service.js";
 import { isAddDealFormIncomplete } from "./dealFormCompleteness.service.js";
 import {
   isAddDealFormInOrganizationScope,
@@ -371,9 +372,60 @@ export async function resolveOutsideOrganizationSponsorForDeal(
   return String(rows[0]?.user_id ?? "").trim() || null;
 }
 
+const SPONSOR_ROLE_MATCH =
+  "('lead sponsor', 'lead_sponsor', 'admin sponsor', 'admin_sponsor', 'co-sponsor', 'co sponsor', 'co_sponsor')";
+
+/**
+ * Lead, Admin, or Co-sponsor on this deal, including a roster contact that
+ * has not been linked to a portal login yet.
+ */
+async function resolveDealSponsorUserId(
+  dealId: string,
+  rawId: string,
+  investorUserId: string,
+): Promise<string | null> {
+  const raw = String(rawId ?? "").trim();
+  const investor = String(investorUserId ?? "").trim().toLowerCase();
+  if (!raw || raw.toLowerCase() === investor) return null;
+  const portal = await resolvePortalUserIdForContactMemberId(raw);
+  const portalId = String(portal ?? "").trim();
+  if (portalId && portalId.toLowerCase() !== investor) {
+    if (await isPortalUserDealSponsorOnDeal(dealId, portalId)) return portalId;
+  }
+  if (!DEAL_UUID_RE.test(raw)) return null;
+  const res = await pool.query<{ ok: number }>(
+    `SELECT 1 AS ok
+     FROM deal_member dm
+     WHERE dm.deal_id = $1::uuid
+       AND dm.is_draft = false
+       AND lower(trim(dm.deal_member_role)) IN ${SPONSOR_ROLE_MATCH}
+       AND (
+         trim(dm.contact_member_id) = $2
+         OR EXISTS (
+           SELECT 1 FROM contact c
+           WHERE c.id::text = trim(dm.contact_member_id)
+             AND c.id::text = $2
+         )
+       )
+     UNION ALL
+     SELECT 1 AS ok
+     FROM deal_investment di
+     WHERE di.deal_id = $1::uuid
+       AND di.is_draft = false
+       AND lower(trim(di.investor_role)) IN ${SPONSOR_ROLE_MATCH}
+       AND trim(di.contact_id) <> '${AUTOSAVE_CONTACT}'
+       AND trim(di.contact_id) = $2
+     LIMIT 1`,
+    [dealId, raw],
+  );
+  if (res.rows.length === 0) return null;
+  return portalId || raw;
+}
+
 /**
  * Sponsor who invited this investor to this deal: the offering link they
  * opened, the deal invite recorded on their contact, or the roster adder.
+ * The sponsor may be the Lead Sponsor, an Admin sponsor, or a Co-sponsor.
  */
 export async function resolveDealInviterSponsorUserId(
   dealId: string,
@@ -432,21 +484,9 @@ export async function resolveDealInviterSponsorUserId(
     [id, uid],
   );
   const candidate = String(res.rows[0]?.user_id ?? "").trim();
-  if (
-    candidate &&
-    candidate.toLowerCase() !== uid.toLowerCase() &&
-    (await isPortalUserDealSponsorOnDeal(id, candidate))
-  ) {
-    return candidate;
-  }
-  if (
-    referred &&
-    referred.toLowerCase() !== uid.toLowerCase() &&
-    (await isPortalUserDealSponsorOnDeal(id, referred))
-  ) {
-    return referred;
-  }
-  return null;
+  const fromRoster = await resolveDealSponsorUserId(id, candidate, uid);
+  if (fromRoster) return fromRoster;
+  return resolveDealSponsorUserId(id, referred, uid);
 }
 
 /**

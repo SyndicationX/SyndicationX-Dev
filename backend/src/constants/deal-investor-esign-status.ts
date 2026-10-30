@@ -11,6 +11,17 @@ export interface DealInvestorEsignDocumentRef {
   signedRelativePath?: string;
 }
 
+/** Values the investor entered, kept so Edit can show them again. */
+export interface StoredInvestorEsignFieldValue {
+  id?: string;
+  label: string;
+  page: number;
+  type?: string;
+  x?: number;
+  y?: number;
+  value: string;
+}
+
 /** One Dropbox Sign request (one investor profile send). */
 export interface StoredDealInvestorEsignSend {
   sentAt: string;
@@ -25,6 +36,11 @@ export interface StoredDealInvestorEsignSend {
   investorPdfVersion?: number;
   /** Fully executed PDF (investor + sponsor). Sponsor workspace only. */
   fullSignedRelativePath?: string;
+  /** Sponsor-only signed PDF when the sponsor signs before the investor. */
+  sponsorSignedRelativePath?: string;
+  /** Deal sponsor who signed an open “Anyone can sign” slot. */
+  sponsorSignedByName?: string;
+  sponsorSignedByEmail?: string;
   /** Sponsor notified after investor signed (sequential workflow emails). */
   sponsorNotifiedAtInvestorSigned?: string;
   /** Investor notified after sponsor counter-signed. */
@@ -33,6 +49,8 @@ export interface StoredDealInvestorEsignSend {
   investorNotifiedAtSignTurnAvailable?: string;
   /** Fully executed doc promoted to LP offering documents section. */
   promotedToInvestorDocumentsAt?: string;
+  /** Investor answers captured after signing, restored when they edit. */
+  investorFieldValues?: StoredInvestorEsignFieldValue[];
   documents?: DealInvestorEsignDocumentRef[];
 }
 
@@ -72,8 +90,28 @@ export type DealInvestorEsignSendStatusApi = {
   completedAt: string | null;
   signatureRequestId: string | null;
   signatureId: string | null;
+  /** Fully executed PDF after the sponsor signs. */
+  fullSignedRelativePath?: string;
+  /** Sponsor-only signed PDF. */
+  sponsorSignedRelativePath?: string;
+  /** Sponsor who completed an open signing slot. */
+  sponsorSignedByName?: string;
   documents: DealInvestorEsignDocumentRef[];
 };
+
+function usableSponsorSignerName(name: string | null | undefined): string {
+  const cleaned = String(name ?? "").replace(/\u2060/g, "").trim();
+  const lower = cleaned.toLowerCase();
+  if (
+    !cleaned ||
+    lower.includes("anyone can sign") ||
+    lower === "any sponsor" ||
+    lower === "sponsor"
+  ) {
+    return "";
+  }
+  return cleaned;
+}
 
 export function esignBundleToSendStatusList(
   bundle: StoredDealInvestorEsignBundle,
@@ -88,8 +126,19 @@ export function esignBundleToSendStatusList(
       completedAt: send.completedAt?.trim() || null,
       signatureRequestId: send.signatureRequestId?.trim() || null,
       signatureId: send.signatureId?.trim() || null,
+      ...(send.fullSignedRelativePath?.trim()
+        ? { fullSignedRelativePath: send.fullSignedRelativePath.trim() }
+        : {}),
+      ...(send.sponsorSignedRelativePath?.trim()
+        ? { sponsorSignedRelativePath: send.sponsorSignedRelativePath.trim() }
+        : {}),
+      ...(usableSponsorSignerName(send.sponsorSignedByName)
+        ? { sponsorSignedByName: usableSponsorSignerName(send.sponsorSignedByName) }
+        : {}),
       documents: (send.documents ?? []).map((d) => {
-        const sendCompleted = Boolean(send.completedAt?.trim());
+        const investorSigned = Boolean(
+          send.signedAt?.trim() || send.completedAt?.trim(),
+        );
         const base = {
           fileId: d.fileId,
           name: d.name,
@@ -99,8 +148,12 @@ export function esignBundleToSendStatusList(
             ? { templateRelativePath: d.templateRelativePath.trim() }
             : {}),
         };
-        if (sendCompleted && d.signedRelativePath?.trim()) {
-          return { ...base, signedRelativePath: d.signedRelativePath.trim() };
+        const completedFile = send.completedAt?.trim()
+          ? send.fullSignedRelativePath?.trim() || ""
+          : "";
+        const signedFile = completedFile || d.signedRelativePath?.trim() || "";
+        if (investorSigned && signedFile) {
+          return { ...base, signedRelativePath: signedFile };
         }
         return base;
       }),
@@ -146,6 +199,17 @@ function parseSendRecord(o: Record<string, unknown>): StoredDealInvestorEsignSen
   const fullSignedRelativePath = String(
     o.fullSignedRelativePath ?? o.full_signed_relative_path ?? "",
   ).trim();
+  const sponsorSignedRelativePath = String(
+    o.sponsorSignedRelativePath ?? o.sponsor_signed_relative_path ?? "",
+  ).trim();
+  const sponsorSignedByName = String(
+    o.sponsorSignedByName ?? o.sponsor_signed_by_name ?? "",
+  ).trim();
+  const sponsorSignedByEmail = String(
+    o.sponsorSignedByEmail ?? o.sponsor_signed_by_email ?? "",
+  )
+    .trim()
+    .toLowerCase();
   const sponsorNotifiedAtInvestorSigned = String(
     o.sponsorNotifiedAtInvestorSigned ??
       o.sponsor_notified_at_investor_signed ??
@@ -164,6 +228,9 @@ function parseSendRecord(o: Record<string, unknown>): StoredDealInvestorEsignSen
   const promotedToInvestorDocumentsAt = String(
     o.promotedToInvestorDocumentsAt ?? o.promoted_to_investor_documents_at ?? "",
   ).trim();
+  const investorFieldValues = parseInvestorFieldValues(
+    o.investorFieldValues ?? o.investor_field_values,
+  );
   return {
     sentAt,
     viewedAt: o.viewedAt ? String(o.viewedAt).trim() : null,
@@ -178,6 +245,9 @@ function parseSendRecord(o: Record<string, unknown>): StoredDealInvestorEsignSen
       ? { investorPdfVersion: investorPdfVersion as number }
       : {}),
     ...(fullSignedRelativePath ? { fullSignedRelativePath } : {}),
+    ...(sponsorSignedRelativePath ? { sponsorSignedRelativePath } : {}),
+    ...(sponsorSignedByName ? { sponsorSignedByName } : {}),
+    ...(sponsorSignedByEmail ? { sponsorSignedByEmail } : {}),
     ...(sponsorNotifiedAtInvestorSigned
       ? { sponsorNotifiedAtInvestorSigned }
       : {}),
@@ -188,8 +258,38 @@ function parseSendRecord(o: Record<string, unknown>): StoredDealInvestorEsignSen
       ? { investorNotifiedAtSignTurnAvailable }
       : {}),
     ...(promotedToInvestorDocumentsAt ? { promotedToInvestorDocumentsAt } : {}),
+    ...(investorFieldValues.length
+      ? { investorFieldValues }
+      : {}),
     documents,
   };
+}
+
+function parseInvestorFieldValues(raw: unknown): StoredInvestorEsignFieldValue[] {
+  if (!Array.isArray(raw)) return [];
+  const out: StoredInvestorEsignFieldValue[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const value = String(row.value ?? "").trim();
+    const label = String(row.label ?? "").trim();
+    if (!value || !label) continue;
+    const page = Number(row.page);
+    const x = Number(row.x);
+    const y = Number(row.y);
+    const id = String(row.id ?? "").trim();
+    const type = String(row.type ?? "").trim();
+    out.push({
+      label,
+      page: Number.isFinite(page) ? page : 1,
+      value,
+      ...(id ? { id } : {}),
+      ...(type ? { type } : {}),
+      ...(Number.isFinite(x) ? { x } : {}),
+      ...(Number.isFinite(y) ? { y } : {}),
+    });
+  }
+  return out;
 }
 
 export function primaryCategoryForSend(
@@ -326,20 +426,22 @@ export function aggregateEsignStatusFromBundle(
     for (const d of send.documents ?? []) {
       const compositeId =
         sig && d.fileId ? `${sig}::${d.fileId}` : d.fileId;
-      const sendCompleted = Boolean(send.completedAt?.trim());
+      const investorSigned = Boolean(
+        send.signedAt?.trim() || send.completedAt?.trim(),
+      );
+      const completedFile = send.completedAt?.trim()
+        ? send.fullSignedRelativePath?.trim() || ""
+        : "";
+      const signedFile =
+        completedFile ||
+        d.signedRelativePath?.trim() ||
+        send.documents?.find((x) => x.signedRelativePath?.trim())?.signedRelativePath?.trim() ||
+        "";
       documents.push({
         ...d,
         fileId: compositeId,
         categoryId: d.categoryId?.trim() || primaryCategoryForSend(send) || undefined,
-        ...(sendCompleted && d.signedRelativePath?.trim()
-          ? { signedRelativePath: d.signedRelativePath.trim() }
-          : sendCompleted
-            ? {
-                signedRelativePath: send.documents
-                  ?.find((x) => x.signedRelativePath?.trim())
-                  ?.signedRelativePath?.trim(),
-              }
-            : {}),
+        ...(investorSigned && signedFile ? { signedRelativePath: signedFile } : {}),
       });
     }
   }
@@ -601,15 +703,15 @@ export function appendEsignSendToBundle(
     (d) => d.fileId.trim() && d.name.trim(),
   );
   const categoryId = primaryCategoryForSend({ documents, sentAt: "" });
+  const nextSignatureRequestId = params.signatureRequestId?.trim() ?? "";
 
+  // Keep every earlier copy for this profile, including one the sponsor has not
+  // signed yet. Only the same signature request is replaced.
   const kept = bundle.sends.filter((s) => {
-    if (s.completedAt?.trim()) return true;
-    const sendCat = primaryCategoryForSend(s);
-    if (!sendCat || !categoryId) return sendCat !== categoryId;
-    if (sendCat === categoryId) return false;
+    const existingSignatureRequestId = s.signatureRequestId?.trim() ?? "";
     if (
-      sendCat === ESIGN_UNIFIED_CATEGORY_ID ||
-      categoryId === ESIGN_UNIFIED_CATEGORY_ID
+      nextSignatureRequestId &&
+      existingSignatureRequestId === nextSignatureRequestId
     ) {
       return false;
     }

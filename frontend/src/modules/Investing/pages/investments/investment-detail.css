@@ -246,6 +246,14 @@
   background: color-mix(in srgb, var(--portal-primary, #2563eb) 10%, transparent);
 }
 
+.investment_detail_esign_card_doc_sign_btn--remove {
+  color: #b42318;
+}
+
+.investment_detail_esign_card_doc_sign_btn--remove:hover {
+  background: color-mix(in srgb, #b42318 10%, transparent);
+}
+
 .investment_detail_documents_group_hint {
   margin: 0 0 0.75rem;
   font-size: 0.8125rem;
@@ -355,6 +363,84 @@
   font-size: 0.8125rem;
   line-height: 1.45;
   color: var(--portal-text-muted, #64748b);
+}
+
+.investment_detail_esign_docs_panel .deal_docs_ui_root {
+  margin-top: 0;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: var(--portal-pill-radius, 4px);
+  overflow: hidden;
+  background: var(--portal-surface, #fff);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+}
+
+.investment_detail_esign_docs_panel .deal_docs_ui_bundle:last-child .deal_docs_ui_tr:last-child .deal_docs_ui_td {
+  border-bottom: none;
+}
+
+.investment_detail_esign_docs_panel .investment_detail_esign_docs_table.deal_docs_ui_table {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.investment_detail_esign_docs_panel .deal_docs_ui_th_doc,
+.investment_detail_esign_docs_panel .deal_docs_ui_td_doc {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  vertical-align: middle;
+}
+
+.investment_detail_esign_th_status,
+.investment_detail_esign_td_status {
+  width: 9.5rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.investment_detail_esign_th_actions,
+.investment_detail_esign_td_actions {
+  width: 11.5rem;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.investment_detail_esign_doc_actions {
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.investment_detail_esign_doc_icon_btn--remove {
+  color: #b42318;
+}
+
+.investment_detail_esign_doc_icon_btn--remove:hover {
+  border-color: color-mix(in srgb, #b42318 35%, var(--portal-border, #e2e8f0));
+  background: color-mix(in srgb, #b42318 8%, var(--portal-surface, #fff));
+}
+
+.investment_detail_esign_doc_sign_btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 1.75rem;
+  margin: 0;
+  padding: 0 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--portal-primary, #2563eb) 35%, var(--portal-border, #e2e8f0));
+  border-radius: var(--portal-pill-radius, 4px);
+  background: color-mix(in srgb, var(--portal-primary, #2563eb) 8%, var(--portal-surface, #fff));
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--portal-primary, #1d4ed8);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.investment_detail_esign_doc_sign_btn:hover {
+  background: color-mix(in srgb, var(--portal-primary, #2563eb) 14%, var(--portal-surface, #fff));
 }
 
 .investment_detail_esign_docs_toolbar.um_toolbar {

@@ -1,3 +1,5 @@
+import { CircleCheck, Clock3, Eye } from "lucide-react"
+import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
   investorRowShowsEsignStatusLink,
@@ -10,15 +12,32 @@ export interface DealInvestorSignedCellProps {
   onOpenEsignStatus?: (row: DealInvestorRow) => void
 }
 
-function signedColumnButtonClass(display: string): string {
+type SignedTone = "done" | "viewed" | "sent"
+
+function signedTone(display: string): SignedTone | null {
   const value = display.trim().toLowerCase()
-  if (value === "sent" || value === "pending") {
-    return "deal_inv_signed_btn deal_inv_signed_btn--sent"
+  if (!value || value === "—") return null
+  if (value === "sent" || value === "pending") return "sent"
+  if (value === "viewed") return "viewed"
+  return "done"
+}
+
+function signedColumnHover(display: string): string | null {
+  const value = display.trim().toLowerCase()
+  if (value === "signed") {
+    return "The investor signed. Waiting for the sponsor to counter-sign."
   }
-  if (value === "viewed") return "deal_inv_signed_btn deal_inv_signed_btn--viewed"
-  if (value === "signed") return "deal_inv_signed_btn deal_inv_signed_btn--signed"
-  if (value === "completed") return "deal_inv_signed_btn deal_inv_signed_btn--completed"
-  return "deal_inv_signed_btn"
+  if (value === "completed") {
+    return "The investor and the sponsor have both signed."
+  }
+  return null
+}
+
+function SignedStatusIcon({ tone }: { tone: SignedTone }) {
+  const props = { size: 12, strokeWidth: 2, "aria-hidden": true as const }
+  if (tone === "sent") return <Clock3 {...props} />
+  if (tone === "viewed") return <Eye {...props} />
+  return <CircleCheck {...props} />
 }
 
 export function DealInvestorSignedCell({
@@ -41,30 +60,54 @@ export function DealInvestorSignedCell({
     })
   }
 
-  if (!clickable) {
-    return (
-      <span
-        className="deal_inv_ellipsis_text"
-        title={display !== "—" ? display : undefined}
-      >
-        {display}
-      </span>
-    )
+  const tone = signedTone(display)
+  if (!tone) {
+    return <span className="deal_inv_signed_empty">—</span>
   }
 
-  return (
-    <button
-      type="button"
-      className={signedColumnButtonClass(display)}
-      title={`eSign status: ${display}. Click for details.`}
-      onClick={(e) => {
-        e.stopPropagation()
-        e.preventDefault()
-        const targetRow = row
-        queueMicrotask(() => onOpenEsignStatus?.(targetRow))
-      }}
+  const hover = signedColumnHover(display)
+  const className = `deal_inv_signed_pill deal_inv_signed_pill--${tone}`
+  const label = (
+    <>
+      <span className="deal_inv_signed_pill_icon">
+        <SignedStatusIcon tone={tone} />
+      </span>
+      <span className="deal_inv_signed_pill_label">{display}</span>
+    </>
+  )
+
+  const pill = (
+    <span
+      className={className}
+      onClick={
+        clickable
+          ? (e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              const targetRow = row
+              queueMicrotask(() => onOpenEsignStatus?.(targetRow))
+            }
+          : undefined
+      }
     >
-      <span className="deal_inv_ellipsis_text">{display}</span>
-    </button>
+      {label}
+    </span>
+  )
+
+  if (!hover) return pill
+
+  return (
+    <FormTooltip
+      triggerMode="inline"
+      nativeButtonTrigger={false}
+      openOnHover
+      placement="top"
+      panelAlign="start"
+      className="deal_inv_signed_hover_root"
+      label={hover}
+      content={<p className="deal_inv_signed_hover">{hover}</p>}
+    >
+      {pill}
+    </FormTooltip>
   )
 }

@@ -1,4 +1,4 @@
-import { Info, X } from "lucide-react"
+import { ChevronRight, Info, X } from "lucide-react"
 import { useEffect, useId } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -92,6 +92,7 @@ export function OpenInvestmentDraftStageInfoModal({
             onClick={onConfirm}
           >
             Continue
+            <ChevronRight size={18} strokeWidth={2} aria-hidden />
           </button>
         </footer>
       </div>

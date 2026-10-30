@@ -204,6 +204,13 @@
   border-radius: 8px;
 }
 
+.deals_class_setup_page .cs_add_btn,
+.deals_class_setup_page .cs_subtle_btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .deals_class_setup_page .cs_add_btn {
   font-size: 12.5px;
   font-weight: 600;

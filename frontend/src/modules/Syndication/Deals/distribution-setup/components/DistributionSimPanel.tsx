@@ -10,7 +10,6 @@ import {
   blurFormatMoneyInput,
   formatCurrencyTableDisplay,
   formatCurrencyUsdTypeInput,
-  parseMoneyDigits,
 } from "../../utils/offeringMoneyFormat"
 import type {
   DistributionSetupClass,
@@ -21,7 +20,7 @@ import type { SimResult, PreferredDayCountMode } from "../utils/distributionSim"
 import { formatMoneyCents } from "../utils/distributionSim"
 import type { HurdleEvaluation } from "../utils/hurdleCalculations"
 
-const CASH_PRESETS = ["15000", "25000", "50000"] as const
+// const CASH_PRESETS = ["15000", "25000", "50000"] as const
 
 const ACTUAL_365_INFO =
   "Uses actual calendar days elapsed, divided by 365. Preferred / CoC accrues as capital × rate × days ÷ 365 with no compounding."
@@ -49,8 +48,6 @@ interface DistributionSimPanelProps {
   onPeriodChange: (v: string) => void
   sim: SimResult
   classes: DistributionSetupClass[]
-  stageMet: Record<number, boolean>
-  onToggleStageMet: (stage: number, met: boolean) => void
   onDueOverride: (rowId: string, value: string) => void
   rowIds: string[]
   investmentDate: string
@@ -81,10 +78,6 @@ interface DistributionSimPanelProps {
    * Falls back to sim.perClass when omitted.
    */
   classDisplayTotals?: Record<string, number>
-  completing?: boolean
-  onComplete?: () => void
-  /** Button label when recording / updating a run. */
-  completeLabel?: string
   /**
    * `test` — full-width inputs (name, cash, period, complete).
    * `results` — Who receives what + How the cash flows (beside waterfall).
@@ -105,8 +98,6 @@ export function DistributionSimPanel({
   onPeriodChange,
   sim,
   classes,
-  stageMet,
-  onToggleStageMet,
   onDueOverride,
   rowIds,
   investmentDate,
@@ -129,9 +120,6 @@ export function DistributionSimPanel({
   otherAdjustment,
   onOtherAdjustmentChange,
   classDisplayTotals,
-  completing = false,
-  onComplete,
-  completeLabel,
   section = "all",
 }: DistributionSimPanelProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -151,11 +139,6 @@ export function DistributionSimPanel({
     return sim.perClass[classId] ?? 0
   }
   const evaluations = sim.hurdleEvaluations ?? []
-  const cashAmount = (() => {
-    const n = parseMoneyDigits(cash)
-    return Number.isFinite(n) ? n : 0
-  })()
-  const canComplete = Boolean(onComplete) && cashAmount > 0 && !completing
 
   /* Period / day-count hint copy — re-enable with the hint block below when needed:
   const periodHint =
@@ -173,7 +156,7 @@ export function DistributionSimPanel({
 
   const showTest = section === "test" || section === "all"
   const showResults = section === "results" || section === "all"
-  const prevFlowPaymentCountRef = useRef(0)
+  const prevFlowPaymentCountRef = useRef<number | null>(null)
   const flowScrollRef = useRef<HTMLDivElement>(null)
 
   useHorizontalScrollRegion(
@@ -188,6 +171,10 @@ export function DistributionSimPanel({
   useEffect(() => {
     if (!showResults) return
     const paymentCount = sim.flowRows.filter((r) => r.kind === "payment").length
+    if (prevFlowPaymentCountRef.current == null) {
+      prevFlowPaymentCountRef.current = paymentCount
+      return
+    }
     if (paymentCount <= prevFlowPaymentCountRef.current) {
       prevFlowPaymentCountRef.current = paymentCount
       return
@@ -204,9 +191,9 @@ export function DistributionSimPanel({
 
   const testBlock = showTest ? (
     <>
-      <div className="ds_sim_head">
+      {/* <div className="ds_sim_head">
         <h2>Test a distribution</h2>
-      </div>
+      </div> */}
 
       <div className="ds_sim_inputs ds_sim_inputs_test">
         <div className="ds_sim_row ds_sim_row_primary">
@@ -303,45 +290,6 @@ export function DistributionSimPanel({
             : ""}
         </p>
         */}
-        <div className="ds_presets_row">
-          <div className="ds_presets">
-            <span>Try:</span>
-            {CASH_PRESETS.map((v) => {
-              const formatted = blurFormatMoneyInput(v)
-              return (
-                <button
-                  key={v}
-                  type="button"
-                  className="ds_preset_btn"
-                  onClick={() => onCashChange(formatted)}
-                >
-                  {formatted}
-                </button>
-              )
-            })}
-          </div>
-          {onComplete ? (
-            <button
-              type="button"
-              className="ds_primary_btn ds_complete_btn"
-              disabled={!canComplete}
-              onClick={onComplete}
-              title={
-                cashAmount > 0
-                  ? completeLabel?.toLowerCase().includes("update")
-                    ? "Update this distribution with the current details"
-                    : "Record this cash as a completed distribution"
-                  : "Enter cash available greater than $0 to complete"
-              }
-            >
-              {completing
-                ? completeLabel?.toLowerCase().includes("update")
-                  ? "Updating…"
-                  : "Completing…"
-                : completeLabel || "Complete distribution"}
-            </button>
-          ) : null}
-        </div>
       </div>
 
       <details
@@ -548,16 +496,17 @@ export function DistributionSimPanel({
                           <div className="ds_flow_skip">not reached</div>
                         ) : null}
                         {isStage && r.stage != null && r.stage > 0 ? (
-                          <label className="ds_stage_toggle">
+                          <label
+                            className="ds_stage_toggle"
+                            title="Calculated from the hurdle. It cannot be changed manually."
+                          >
                             <input
                               type="checkbox"
-                              checked={Boolean(stageMet[r.stage])}
-                              onChange={(e) =>
-                                onToggleStageMet(
-                                  r.stage!,
-                                  e.target.checked,
-                                )
-                              }
+                              checked={Boolean(ev?.hurdleMet)}
+                              disabled
+                              tabIndex={-1}
+                              aria-readonly="true"
+                              aria-label={`Hurdle ${r.stage} met, calculated automatically`}
                             />
                             Hurdle {r.stage} met?
                             {ev?.canEvaluate ? (

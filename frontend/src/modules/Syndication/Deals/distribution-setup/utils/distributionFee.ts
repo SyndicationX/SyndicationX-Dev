@@ -125,6 +125,14 @@ export function parseFeePercent(raw: string): number {
   return Number.isFinite(n) ? n : NaN
 }
 
+/** Splits that are still shown on the Acquisition Fee class table. */
+export function includedFeeClassSplits(
+  fee: DistributionFeeConfig,
+): DistributionFeeClassSplit[] {
+  const excluded = new Set(fee.excludedClassIds ?? [])
+  return fee.classSplits.filter((s) => !excluded.has(s.classId))
+}
+
 export function feeClassSplitTotal(splits: DistributionFeeClassSplit[]): number {
   return roundMoney(
     splits.reduce((sum, s) => {
@@ -214,20 +222,22 @@ export function validateDistributionFee(params: {
       message: "Acquisition fee name is required.",
     }
 
-  const feeType = params.fee.type.trim()
-  if (!feeType)
+  // Type field is hidden on the Acquisition tab — do not require it.
+  // const feeType = params.fee.type.trim()
+  // if (!feeType)
+  //   return {
+  //     ok: false,
+  //     message: "Acquisition fee type is required.",
+  //   }
+
+  const splits = includedFeeClassSplits(params.fee)
+  if (splits.length === 0)
     return {
       ok: false,
-      message: "Acquisition fee type is required.",
+      message: "Keep at least one investor class in the split.",
     }
 
-  if (params.fee.classSplits.length === 0)
-    return {
-      ok: false,
-      message: "Add investor classes in Class Setup before configuring a fee.",
-    }
-
-  for (const s of params.fee.classSplits) {
+  for (const s of splits) {
     const n = parseFeePercent(s.percent)
     if (!Number.isFinite(n) || n < 0 || n > 100)
       return {
@@ -236,7 +246,7 @@ export function validateDistributionFee(params: {
       }
   }
 
-  const total = feeClassSplitTotal(params.fee.classSplits)
+  const total = feeClassSplitTotal(splits)
   if (Math.abs(total - 100) > 0.005)
     return {
       ok: false,
@@ -260,7 +270,7 @@ export function validateDistributionFee(params: {
     const blocked = feeClassSplitBlockedNames(
       listFeeClassSplitStatuses({
         classes: params.classes,
-        splits: params.fee.classSplits,
+        splits,
         investors: params.investors,
       }),
     )

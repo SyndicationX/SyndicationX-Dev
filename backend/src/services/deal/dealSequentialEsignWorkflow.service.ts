@@ -19,7 +19,6 @@ import {
   type EsignTemplateFileRecord,
 } from "./dealEsignTemplates.service.js";
 import type { InvestorEsignRowTarget } from "./dealMemberEsignStatus.service.js";
-import { investorEsignTargetHasPositiveCommitment } from "./dealMemberEsignStatus.service.js";
 import { resolveEmailForContactMemberId } from "./dealMemberInvitationEmail.service.js";
 
 export type DealEsignInvestorQueueEntry = {
@@ -210,11 +209,14 @@ export function dealTemplateUsesSequentialInvestorFirst(
   return workflowType === "sequential" && signingOrder === "investor_first";
 }
 
-/** Investor signs before sponsor countersigns (parallel or sequential, investor-first). */
+/** Sequential investor-first: sponsor countersigns after the investor. Parallel does not wait. */
 export function dealTemplateUsesInvestorFirstCounterSign(
   file: EsignTemplateFileRecord,
 ): boolean {
-  return resolveEsignSignflowSigningOrder(file) === "investor_first";
+  return (
+    resolveEsignSignflowWorkflowType(file) === "sequential" &&
+    resolveEsignSignflowSigningOrder(file) === "investor_first"
+  );
 }
 
 function sendUsesInvestorFirstCounterSign(
@@ -229,10 +231,8 @@ function sendUsesInvestorFirstCounterSign(
 }
 
 /**
- * Sequential signing order (1st → Nth):
- * - Invited LP roster rows (deal_lp_investor)
- * - Self-onboarded portal commitments (deal_investment with capital committed or eSign sent)
- * Ordered by invitation/onboarding `createdAt`, deduped per contact.
+ * Investors on the deal (invited LP roster and commitments with capital or an eSign send).
+ * Used to resolve who signed. Signing is not ordered across this list.
  */
 export async function listDealEsignInvestorQueue(
   dealId: string,
@@ -327,26 +327,6 @@ export function sendInvestorPhaseComplete(
   );
 }
 
-/** True when every investor with an eSign send has finished the investor signing step. */
-export async function allDealEsignInvestorsInvestorPhaseComplete(
-  dealId: string,
-): Promise<boolean> {
-  const queue = await listDealEsignInvestorQueue(dealId);
-  if (queue.length === 0) return false;
-
-  let anyWithEsignSent = false;
-  for (const entry of queue) {
-    const bundle = parseEsignStatusBundle(entry.esignStatusJson);
-    const hasEsignSent = bundle?.sends.some((s) => s.sentAt?.trim());
-    if (!hasEsignSent) continue;
-    anyWithEsignSent = true;
-    if (!bundle?.sends.length) return false;
-    const hasComplete = bundle.sends.some((s) => sendInvestorPhaseComplete(s));
-    if (!hasComplete) return false;
-  }
-  return anyWithEsignSent;
-}
-
 export async function dealHasSequentialInvestorFirstEsign(
   dealId: string,
 ): Promise<boolean> {
@@ -363,7 +343,7 @@ export async function dealHasSequentialInvestorFirstEsign(
   return templates.files.some(dealTemplateUsesSequentialInvestorFirst);
 }
 
-/** Deal uses investor-then-sponsor counter-sign (parallel or sequential). */
+/** Deal uses sequential investor-then-sponsor counter-sign. */
 export async function dealHasInvestorFirstCounterSignEsign(
   dealId: string,
 ): Promise<boolean> {
@@ -388,71 +368,28 @@ export type DealSequentialInvestorSignAccess =
       message: string;
     };
 
-/** Shown in API/UI when sequential workflow has not reached this investor yet. */
-export const SEQUENTIAL_INVESTOR_WAITING_MESSAGE =
-  "Your documents are not ready for signature yet. We will notify you by email and in-app alert when it is your turn to sign.";
-
 /**
- * Sequential deal workflow: investor N may sign only after investors 1..N-1
- * have completed their investor-phase signature.
+ * Sequential order is investor then sponsor on that investor's document.
+ * Investors are not queued against each other — any investor may sign.
  */
 export async function evaluateDealSequentialInvestorSignAccess(
-  dealId: string,
-  target: InvestorEsignRowTarget,
+  _dealId: string,
+  _target: InvestorEsignRowTarget,
 ): Promise<DealSequentialInvestorSignAccess> {
-  const sequential = await dealHasSequentialInvestorFirstEsign(dealId);
-  if (!sequential) return { allowed: true };
-
-  const queue = await listDealEsignInvestorQueue(dealId);
-  const index = await findQueueIndexForTarget(dealId, queue, target);
-  if (index < 0) {
-    const inScope =
-      target.table === "investment"
-        ? await investorEsignTargetHasPositiveCommitment(dealId, target)
-        : true;
-    return inScope
-      ? { allowed: true }
-      : {
-          allowed: false,
-          message: SEQUENTIAL_INVESTOR_WAITING_MESSAGE,
-        };
-  }
-  if (index === 0) return { allowed: true };
-
-  for (let i = 0; i < index; i++) {
-    const prior = queue[i]!;
-    const current = queue[index]!;
-    if (
-      investorContactKey(prior) &&
-      investorContactKey(prior) === investorContactKey(current)
-    ) {
-      continue;
-    }
-    const bundle = parseEsignStatusBundle(prior.esignStatusJson);
-    const priorComplete = bundle?.sends.some((s) =>
-      sendInvestorPhaseComplete(s),
-    );
-    if (!priorComplete) {
-      return {
-        allowed: false,
-        message: SEQUENTIAL_INVESTOR_WAITING_MESSAGE,
-      };
-    }
-  }
-
   return { allowed: true };
 }
 
-/** Sponsor Documents tab: sequential workflow hides docs until all investors signed. */
+/**
+ * Sponsor Documents tab shows each investor's signed PDF as soon as that
+ * investor finishes. The sponsor then countersigns that document.
+ */
 export async function sequentialWorkflowSponsorDocsGateOpen(
-  dealId: string,
+  _dealId: string,
 ): Promise<boolean> {
-  const sequential = await dealHasSequentialInvestorFirstEsign(dealId);
-  if (!sequential) return true;
-  return allDealEsignInvestorsInvestorPhaseComplete(dealId);
+  return true;
 }
 
-/** LP portal Documents tab: same all-investors-signed gate for sequential eSign. */
+/** LP portal Documents tab follows the same per-investor document gate. */
 export const sequentialWorkflowInvestorPortalDocsGateOpen =
   sequentialWorkflowSponsorDocsGateOpen;
 

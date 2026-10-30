@@ -263,7 +263,7 @@
 
   color: var(--portal-text-muted, #64748b);
 
-  cursor: help;
+  cursor: pointer;
 
   flex-shrink: 0;
 

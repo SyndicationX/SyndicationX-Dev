@@ -2,7 +2,7 @@
  * LP investing-mode nav, session flags, and deal allowlists from:
  * - `deal_lp_investor` only (contact email and/or denormalized `deal_lp_investor.email`).
  */
-import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import {
   isInvestorDashboardOpportunityOffering,
 } from "../../constants/deal-lifecycle/deal-status-rules.js";
@@ -17,7 +17,10 @@ import { dealLpInvestor } from "../../schema/deal.schema/deal-lp-investor.schema
 import { contact } from "../../schema/schema.js";
 import { userInvestorProfiles } from "../../schema/investing.schema/userProfileBook.schema.js";
 import { listDealIdsAssignedToUser } from "../deal/assigningDealUser.service.js";
-import { listEquivalentPortalUserIdsForUser } from "../deal/dealMemberScope.service.js";
+import {
+  listDealIdsWhereViewerIsLeadSponsor,
+  listEquivalentPortalUserIdsForUser,
+} from "../deal/dealMemberScope.service.js";
 import {
   filterDealIdsVisibleToInvestors,
   isAddDealFormIncomplete,
@@ -416,7 +419,9 @@ export async function listInvestorSponsorScopedDealIdsForUser(
     sponsorUserIds.length === 0
       ? await listDealIdsFromLpInvestorTableForEmail(e)
       : await listDealIdsWhereSponsorUsersOnRoster(sponsorUserIds);
-  const visible = await filterDealIdsVisibleToInvestors(raw);
+  const visibleCatalog = await filterDealIdsVisibleToInvestors(raw);
+  const rosterDeals = await listDealIdsFromLpInvestorTableForEmail(e);
+  const visible = [...new Set([...visibleCatalog, ...rosterDeals])];
   if (opts?.applyContactOfferingVisibility === false) return visible;
   if (sponsorUserIds.length === 0) {
     return filterDealIdsByContactOfferingVisibility(e, visible);
@@ -541,7 +546,15 @@ export async function listDirectInvestingParticipantDealIdsForUser(params: {
       ...investment,
     ]),
   ];
-  const visible = await filterDealIdsVisibleToInvestors(merged);
+  const visibleCatalog = await filterDealIdsVisibleToInvestors(merged);
+  /**
+   * A sponsor-added LP or investment stays on this investor's list even when
+   * the offering still has a placeholder property name. Company and fund deals
+   * often never fill that field.
+   */
+  const visible = [
+    ...new Set([...visibleCatalog, ...lp, ...investment]),
+  ];
   if (!emailNorm.includes("@")) return visible;
   if (params.applyContactOfferingVisibility === false) return visible;
   return filterDealIdsByContactOfferingVisibility(emailNorm, visible);
@@ -676,6 +689,7 @@ export async function mapLpInvestorRoleDisplayByDealIdForUserEmail(
       and(
         inArray(dealLpInvestor.dealId, ids),
         eq(dealLpInvestor.isDraft, false),
+        isNull(dealLpInvestor.removedAt),
         or(
           sql`(nullif(trim(${contact.email}), '') IS NOT NULL AND lower(trim(${contact.email})) = ${e})`,
           sql`nullif(trim(${dealLpInvestor.email}), '') IS NOT NULL AND lower(trim(${dealLpInvestor.email})) = ${e}`,
@@ -721,6 +735,25 @@ export async function resolveLpInvestorSessionFlags(emailNorm: string): Promise<
   };
 }
 
+/** Companies whose deals this user leads. Used so Settings can open Billing. */
+async function leadSponsorCompaniesForUser(userId: string): Promise<string[]> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return [];
+  const dealIds = await listDealIdsWhereViewerIsLeadSponsor(uid);
+  if (dealIds.length === 0) return [];
+  const rows = await db
+    .select({ organizationId: addDealForm.organizationId })
+    .from(addDealForm)
+    .where(inArray(addDealForm.id, dealIds));
+  return [
+    ...new Set(
+      rows
+        .map((row) => String(row.organizationId ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 /**
  * Single writer for `is_lp_investor`, `lp_investor_nav`, and `lp_investor_deal_ids` on sign-in / account.
  * Platform/company admins and anyone on a deal as Lead / Admin / Co-sponsor keep the
@@ -737,10 +770,16 @@ export async function mergeLpInvestorFlagsIntoUserPayload(
   const emailNorm = String(opts.email ?? "").trim().toLowerCase();
   const portalRole = String(opts.portalRole ?? "").trim();
   const userId = String(opts.userId ?? base.id ?? "").trim();
+  const leadSponsorCompanyIds = await leadSponsorCompaniesForUser(userId);
+  const leadSponsorFlags = {
+    is_lead_sponsor: leadSponsorCompanyIds.length > 0,
+    lead_sponsor_company_ids: leadSponsorCompanyIds,
+  };
 
   if (!emailNorm || !emailNorm.includes("@")) {
     return {
       ...base,
+      ...leadSponsorFlags,
       lp_investor_nav: false,
       lp_investor_deal_ids: [],
       lp_investor_role_display: null,
@@ -764,6 +803,7 @@ export async function mergeLpInvestorFlagsIntoUserPayload(
         : lp.lp_investor_deal_ids;
     return {
       ...base,
+      ...leadSponsorFlags,
       lp_investor_nav: true,
       lp_investor_deal_ids: dealIds,
       lp_investor_role_display: "Investor",
@@ -796,5 +836,6 @@ export async function mergeLpInvestorFlagsIntoUserPayload(
         : null,
     is_lp_investor: lpNav || hasInvestingDeals,
     is_deal_sponsor: sponsorOnRoster,
+    ...leadSponsorFlags,
   };
 }

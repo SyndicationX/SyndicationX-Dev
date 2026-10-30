@@ -86,7 +86,12 @@ export function MyAccountCompanyPage() {
   const orgRoleLabel = orgRoleLabelForMyAccount(sessionUser)
   const isInvestorAccount = sessionRole(sessionUser) === INVESTOR
   const canRenameOrgCompany = sessionRole(sessionUser) === COMPANY_ADMIN
-  const canEditCompanyName = isInvestorAccount || canRenameOrgCompany
+  const hasCompany =
+    Boolean(getSessionOrganizationCompanyId()) ||
+    Boolean(getActiveWorkspaceCompanyName().trim())
+  const canCreateFirstCompany = !hasCompany
+  const canEditCompanyName =
+    isInvestorAccount || canRenameOrgCompany || canCreateFirstCompany
 
   const loadFromSession = useCallback(() => {
     const u = readSessionUser()
@@ -231,9 +236,13 @@ export function MyAccountCompanyPage() {
             ? { visibleToUsers: visibleToUsers === "yes" }
             : {}),
         }
+        const roleBeforeSave = sessionRole(readSessionUser())
         const { user, joinedExistingCompany: joined, startedSyndicating } =
           await patchMyProfile(profilePatch)
         joinedExistingCompany = Boolean(joined)
+        const becameCompanyAdmin =
+          sessionRole(user) === COMPANY_ADMIN &&
+          roleBeforeSave !== COMPANY_ADMIN
         mergeSessionUserDetails({
           ...user,
           ...(savedVisibility === undefined
@@ -244,6 +253,12 @@ export function MyAccountCompanyPage() {
               }),
         })
         loadFromSession()
+        if (becameCompanyAdmin && !startedSyndicating) {
+          await refreshAuthTokens()
+          const refreshed = await fetchMyProfile()
+          if (refreshed) mergeSessionUserDetails(refreshed)
+          loadFromSession()
+        }
         if (startedSyndicating) {
           // New role lives in the access token, so mint a fresh pair before the
           // syndicating workspace loads.
@@ -264,11 +279,14 @@ export function MyAccountCompanyPage() {
       if (companyNameSaved && !visibilityChanged) {
         toast.success("Saved", "Company name updated.")
       } else if (!canRenameOrgCompany && companyNameChanged) {
+        const nowCompanyAdmin = sessionRole(readSessionUser()) === COMPANY_ADMIN
         toast.success(
           "Company details saved",
           joinedExistingCompany
             ? `This company already exists. Your account was added to ${name}.`
-            : `${name} was created and linked to your account.`,
+            : nowCompanyAdmin
+              ? `${name} was created. You are the company admin.`
+              : `${name} was created and linked to your account.`,
         )
       } else {
         toast.success("Company details saved", "Your details were updated.")

@@ -17,10 +17,16 @@ import { fetchDealInvestorClasses, fetchDealInvestors } from "../../api/dealsApi
 import {
   executeDistributionAchPayouts,
   fetchDealDistributionFundingStatus,
+  emptyDistributionPayoutBundle,
   fetchDistributionPayouts,
   type DealDistributionFundingStatus,
+  type DistributionBankAccountSetupLine,
   type DistributionPayout,
 } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
+import {
+  BankAccountSetupBadge,
+  bankAccountSetupLookup,
+} from "./BankAccountSetupBadge"
 import {
   fetchDistributionSetup,
   patchDistributionInvestorPercent,
@@ -268,6 +274,9 @@ export function DistributionDetailsPage() {
   )
   const [savingInvestorId, setSavingInvestorId] = useState<string | null>(null)
   const [payouts, setPayouts] = useState<DistributionPayout[]>([])
+  const [bankAccountSetup, setBankAccountSetup] = useState<
+    DistributionBankAccountSetupLine[]
+  >([])
   const [dealFunding, setDealFunding] =
     useState<DealDistributionFundingStatus | null>(null)
   const [executingPayouts, setExecutingPayouts] = useState(false)
@@ -297,7 +306,9 @@ export function DistributionDetailsPage() {
       const [setup, invPack, payoutRows, classes, funding] = await Promise.all([
         fetchDistributionSetup(dealId),
         fetchDealInvestors(dealId),
-        fetchDistributionPayouts(dealId, distributionId).catch(() => []),
+        fetchDistributionPayouts(dealId, distributionId).catch(() =>
+          emptyDistributionPayoutBundle(),
+        ),
         fetchDealInvestorClasses(dealId).catch(() => []),
         fetchDealDistributionFundingStatus(dealId).catch(() => null),
       ])
@@ -308,7 +319,8 @@ export function DistributionDetailsPage() {
       setInvestors(invPack.investors ?? [])
       setInvestorClasses(classes)
       setDistribution(found)
-      setPayouts(payoutRows)
+      setPayouts(payoutRows.payouts)
+      setBankAccountSetup(payoutRows.bankAccountSetup)
       setDealFunding(funding)
       if (!found) {
         setError("That distribution was not found for this deal.")
@@ -319,6 +331,7 @@ export function DistributionDetailsPage() {
       setInvestorClasses([])
       setDistribution(null)
       setPayouts([])
+      setBankAccountSetup([])
       setDealFunding(null)
       setError(
         err instanceof Error ? err.message : "Could not load distribution.",
@@ -605,6 +618,11 @@ export function DistributionDetailsPage() {
     [lines],
   )
 
+  const bankSetupByInvestmentId = useMemo(
+    () => bankAccountSetupLookup(bankAccountSetup),
+    [bankAccountSetup],
+  )
+
   const payoutByInvestmentId = useMemo(
     () => new Map(payouts.map((p) => [p.investmentId, p])),
     [payouts],
@@ -634,7 +652,8 @@ export function DistributionDetailsPage() {
         distributionId,
       )
       const refreshed = await fetchDistributionPayouts(dealId, distributionId)
-      setPayouts(refreshed)
+      setPayouts(refreshed.payouts)
+      setBankAccountSetup(refreshed.bankAccountSetup)
       setAchConfirm(null)
       if (result.failed > 0 || result.skipped > 0) {
         toast.error(
@@ -732,7 +751,8 @@ export function DistributionDetailsPage() {
           { investmentId: row.investorId },
         )
         const refreshed = await fetchDistributionPayouts(dealId, distributionId)
-        setPayouts(refreshed)
+        setPayouts(refreshed.payouts)
+        setBankAccountSetup(refreshed.bankAccountSetup)
         setAchConfirm(null)
         const lineResult = result.results[0]
         if (result.failed > 0 || lineResult?.status === "failed") {
@@ -1326,6 +1346,31 @@ export function DistributionDetailsPage() {
         ),
       },
       {
+        id: "bankAccountSetup",
+        header: (
+          <span className="deal_dist_th_stack_label">
+            <span>Bank account</span>
+            <span>setup</span>
+          </span>
+        ),
+        align: "center",
+        colWidth: "8.5rem",
+        thClassName: "deal_dist_th_ach deals_th_align_center",
+        tdClassName: "deal_dist_td_ach",
+        sortValue: (row) =>
+          bankSetupByInvestmentId.get(row.investorId.trim().toLowerCase()) ??
+          "not_set_up",
+        cell: (row) => (
+          <BankAccountSetupBadge
+            status={
+              bankSetupByInvestmentId.get(
+                row.investorId.trim().toLowerCase(),
+              ) ?? "not_set_up"
+            }
+          />
+        ),
+      },
+      {
         id: "payoutStatus",
         header: (
           <span className="deal_dist_th_stack_label">
@@ -1420,6 +1465,7 @@ export function DistributionDetailsPage() {
       executingPayouts,
       dealFunding?.fundingReady,
       payoutByInvestmentId,
+      bankSetupByInvestmentId,
       canSendInvestorPayout,
       isInvestorPayoutLocked,
       requestSendInvestorAchPayout,

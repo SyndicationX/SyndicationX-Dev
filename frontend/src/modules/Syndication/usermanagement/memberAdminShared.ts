@@ -91,6 +91,40 @@ export function accountStatusForUi(row: Record<string, unknown>): {
   return { positive: false, label: l };
 }
 
+/**
+ * Invitation outcome on the member view.
+ * Signup finished → Accepted. Open invite → Pending. Expired invite → Not Accepted.
+ */
+export function memberInvitationStatus(row: Record<string, unknown>): {
+  positive: boolean;
+  label: "Accepted" | "Pending" | "Not Accepted";
+  dotTone?: "invited";
+} {
+  const raw = String(row.userSignupCompleted ?? row.user_signup_completed ?? "")
+    .trim()
+    .toLowerCase();
+  if (raw === "true") return { positive: true, label: "Accepted" };
+  if (accountInviteIsExpired(row)) {
+    return { positive: false, label: "Not Accepted" };
+  }
+  return { positive: false, label: "Pending", dotTone: "invited" };
+}
+
+/** Organization invite time, otherwise when the member record was created. */
+export function memberInvitationAt(
+  row: Record<string, unknown>,
+): string | Date | null | undefined {
+  const invited = row.invitedAt ?? row.invited_at;
+  if (invited != null && String(invited).trim() !== "") {
+    return invited as string | Date;
+  }
+  const created = row.createdAt ?? row.created_at;
+  if (created != null && String(created).trim() !== "") {
+    return created as string | Date;
+  }
+  return null;
+}
+
 /** Matches account row label "Invite expired" — pending signup and invite link past expiry. */
 export function accountInviteIsExpired(row: Record<string, unknown>): boolean {
   const raw = row.userSignupCompleted ?? row.user_signup_completed;

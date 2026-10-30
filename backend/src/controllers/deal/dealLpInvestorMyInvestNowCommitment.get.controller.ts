@@ -6,7 +6,10 @@ import {
 } from "../../services/deal/dealAccess.service.js";
 import { requestedOrganizationIdFromRequest } from "../../services/org/orgResolution.service.js";
 import { resolveLpViewerEmailNorm } from "../../services/deal/dealLpViewerIdentity.service.js";
-import { readMyInvestNowCommitment } from "../../services/deal/dealLpInvestorMyInvestNowCommitment.read.service.js";
+import {
+  readMyInvestNowCommitment,
+  readPriorQuestionnaireAnswersForProfile,
+} from "../../services/deal/dealLpInvestorMyInvestNowCommitment.read.service.js";
 
 function queryString(v: unknown): string {
   if (typeof v === "string") return v.trim();
@@ -59,19 +62,37 @@ export async function getDealLpInvestorMyInvestNowCommitment(
     }
 
     const q = req.query as Record<string, unknown>;
+    const userInvestorProfileId = queryString(
+      q.user_investor_profile_id ?? q.userInvestorProfileId,
+    );
     const result = await readMyInvestNowCommitment({
       dealId: dealId.trim(),
       viewerEmailNorm: emailNorm,
       viewerUserId: user.id,
       investmentId: queryString(q.investment_id ?? q.investmentId),
-      userInvestorProfileId: queryString(
-        q.user_investor_profile_id ?? q.userInvestorProfileId,
-      ),
+      userInvestorProfileId,
       profileId: queryString(q.profile_id ?? q.profileId),
     });
 
+    const priorProfileId = result.ok
+      ? result.userInvestorProfileId || userInvestorProfileId
+      : userInvestorProfileId;
+    const currentAnswers = result.ok ? result.questionnaireAnswers : {};
+    const priorQuestionnaireAnswers =
+      Object.keys(currentAnswers).length > 0
+        ? {}
+        : await readPriorQuestionnaireAnswersForProfile({
+            viewerUserId: user.id,
+            userInvestorProfileId: priorProfileId,
+            excludeInvestmentId: result.ok ? result.investmentId : "",
+          });
+
     if (!result.ok) {
-      res.status(200).json({ found: false, message: result.message });
+      res.status(200).json({
+        found: false,
+        message: result.message,
+        priorQuestionnaireAnswers,
+      });
       return;
     }
     res.status(200).json({
@@ -85,6 +106,7 @@ export async function getDealLpInvestorMyInvestNowCommitment(
       status: result.status,
       docSignedDate: result.docSignedDate,
       questionnaireAnswers: result.questionnaireAnswers,
+      priorQuestionnaireAnswers,
       w9Form: result.w9Form,
     });
   } catch (err) {

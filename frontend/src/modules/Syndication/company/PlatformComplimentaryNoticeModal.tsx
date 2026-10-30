@@ -29,7 +29,8 @@ export function PlatformComplimentaryNoticeModal({
     }
   }, [open, onClose])
 
-  const until = untilDisplay?.trim() || platformSaasBillingStartDisplay()
+  const dealUntil = untilDisplay?.trim() || ""
+  const until = dealUntil || platformSaasBillingStartDisplay()
 
   if (!open) return null
 
@@ -71,13 +72,16 @@ export function PlatformComplimentaryNoticeModal({
         <div className="deal_stage_modal_body">
           <span className="deal_stage_modal_badge">Complimentary</span>
           <p className="deal_stage_modal_desc">
-            The platform is complimentary until {until}. Payment is not required
-            yet.
+            {dealUntil
+              ? `This deal is complimentary until ${until}. Payment is not required yet.`
+              : `The platform is complimentary until ${until}. Payment is not required yet.`}
           </p>
-          <p className="deal_stage_modal_desc" style={{ marginTop: "0.65rem" }}>
-            Every feature stays open until that date, including Capital Raising
-            and Asset Managing deals. Payment opens on that date.
-          </p>
+          {dealUntil ? null : (
+            <p className="deal_stage_modal_desc" style={{ marginTop: "0.65rem" }}>
+              Every feature stays open until that date, including Capital Raising
+              and Asset Managing deals. Payment opens on that date.
+            </p>
+          )}
         </div>
 
         <footer className="deal_stage_modal_actions">

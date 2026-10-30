@@ -297,6 +297,139 @@ export async function resolveViewerDealMemberRoleOnDeal(
   return null;
 }
 
+/** Returned when an admin sponsor or co-sponsor without a company tries to open a deal. */
+export const CO_SPONSOR_COMPANY_REQUIRED_MESSAGE =
+  "Add a company to open this deal.";
+
+/**
+ * True when this user or contact belongs to a company of their own.
+ * A CRM contact counts only when their email matches a portal account that has
+ * an organization or a company membership. The contact row's organization is the
+ * sponsor who created it, so it does not count.
+ */
+export async function personIsAssociatedWithCompany(
+  personId: string,
+): Promise<boolean> {
+  const id = String(personId ?? "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return false;
+  }
+
+  const sql = (includeMembership: boolean) =>
+    `SELECT EXISTS (
+       SELECT 1
+       FROM users u
+       WHERE (
+         u.id = $1::uuid
+         OR lower(trim(u.email)) = (
+           SELECT lower(trim(c.email))
+           FROM contact c
+           WHERE c.id = $1::uuid
+             AND trim(coalesce(c.email, '')) <> ''
+         )
+       )
+       AND (
+         u.organization_id IS NOT NULL
+         ${
+           includeMembership
+             ? `OR EXISTS (
+           SELECT 1 FROM user_company_membership m WHERE m.user_id = u.id
+         )`
+             : ""
+         }
+       )
+     ) AS has_company`;
+
+  const read = async (includeMembership: boolean) => {
+    const res = await pool.query<{ has_company: boolean }>(sql(includeMembership), [
+      id,
+    ]);
+    return res.rows[0]?.has_company === true;
+  };
+
+  try {
+    return await read(true);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('relation "user_company_membership" does not exist')) {
+      throw err;
+    }
+    return read(false);
+  }
+}
+
+/**
+ * Signed-in admin sponsor or co-sponsor on any deal who has no company yet.
+ * Used to prompt them to create a company after login.
+ */
+export async function viewerIsCoSponsorWithoutCompany(
+  userId: string,
+): Promise<boolean> {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return false;
+
+  const sql = (includeMembership: boolean) =>
+    `SELECT (
+       u.organization_id IS NULL
+       ${
+         includeMembership
+           ? `AND NOT EXISTS (
+         SELECT 1 FROM user_company_membership m WHERE m.user_id = u.id
+       )`
+           : ""
+       }
+       AND (
+         EXISTS (
+           SELECT 1 FROM deal_member dm
+           WHERE dm.is_draft = false
+             AND lower(replace(trim(dm.deal_member_role), '_', ' ')) IN ('co-sponsor', 'co sponsor', 'admin sponsor')
+             AND (
+               trim(dm.contact_member_id) = u.id::text
+               OR EXISTS (
+                 SELECT 1 FROM contact c
+                 WHERE c.id::text = trim(both from dm.contact_member_id)
+                   AND lower(trim(c.email)) = lower(trim(u.email))
+               )
+             )
+         )
+         OR EXISTS (
+           SELECT 1 FROM deal_investment di
+           WHERE di.is_draft = false
+             AND lower(replace(trim(di.investor_role), '_', ' ')) IN ('co-sponsor', 'co sponsor', 'admin sponsor')
+             AND trim(di.contact_id) <> $2
+             AND (
+               trim(di.contact_id) = u.id::text
+               OR EXISTS (
+                 SELECT 1 FROM contact c
+                 WHERE c.id::text = trim(di.contact_id)
+                   AND lower(trim(c.email)) = lower(trim(u.email))
+               )
+             )
+         )
+       )
+     ) AS needs
+     FROM users u
+     WHERE u.id = $1::uuid`;
+
+  const read = async (includeMembership: boolean) => {
+    const res = await pool.query<{ needs: boolean }>(sql(includeMembership), [
+      uid,
+      DEAL_INVESTMENT_AUTOSAVE_CONTACT,
+    ]);
+    return res.rows[0]?.needs === true;
+  };
+
+  try {
+    return await read(true);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('relation "user_company_membership" does not exist')) {
+      throw err;
+    }
+    return read(false);
+  }
+}
+
 /**
  * Distinct deal ids where this user appears on `deal_member` as Co-sponsor
  * (portal user id or contact email match).

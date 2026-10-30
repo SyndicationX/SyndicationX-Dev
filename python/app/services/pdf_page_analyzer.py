@@ -43,6 +43,12 @@ LABEL_SEARCH_TERMS: tuple[tuple[str, str, AnchorKind, PartyRole], ...] = (
     ("Tax ID", "SSN", "text", "investor"),
     ("Investment Amount", "Investment Amount", "text", "investor"),
     ("Capital Commitment", "Investment Amount", "text", "investor"),
+    ("Subscription Amount", "Subscription Amount", "text", "investor"),
+    ("Aggregate Subscription Amount", "Subscription Amount", "text", "investor"),
+    ("Unit Amount", "Unit Amount", "text", "investor"),
+    ("Price Per Unit", "Unit Amount", "text", "investor"),
+    ("Price per Unit", "Unit Amount", "text", "investor"),
+    ("Number of Units", "Number of Units", "text", "investor"),
     ("Entity Legal Name", "Entity Legal Name", "text", "investor"),
     ("Legal Name of Entity", "Entity Legal Name", "text", "investor"),
     ("Entity Name", "Entity Name", "text", "investor"),
@@ -238,6 +244,12 @@ def _field_meta(label_text: str) -> tuple[AnchorKind, str, PartyRole] | None:
         return "text", "SSN", "investor"
     if re.search(r"\b(investment amount|commitment amount|capital commitment)\b", lower):
         return "text", "Investment Amount", "investor"
+    if re.search(r"\b(subscription amount|aggregate subscription)\b", lower):
+        return "text", "Subscription Amount", "investor"
+    if re.search(r"\b(unit amount|price per unit|unit price)\b", lower):
+        return "text", "Unit Amount", "investor"
+    if re.search(r"\b(number of units|units subscribed|units purchased)\b", lower):
+        return "text", "Number of Units", "investor"
     if re.search(r"\b(entity name|legal name of entity|entity legal name)\b", lower):
         return "text", "Entity Legal Name", "investor"
     if re.search(r"\bname of (subscriber|investor|purchaser)\b", lower):

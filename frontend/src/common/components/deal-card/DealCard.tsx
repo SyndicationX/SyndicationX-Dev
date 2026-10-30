@@ -305,7 +305,9 @@ export function DealCard({
           <div
             className={[
               "deal_card_prestige_footer_row",
-              investNowDraftProgress ? "" : "deal_card_prestige_footer_row--no_progress",
+              investNowDraftProgress && investNowDraftProgress.percent < 100
+                ? ""
+                : "deal_card_prestige_footer_row--no_progress",
               previewNotice?.message
                 ? "deal_card_prestige_footer_row--with_notice"
                 : "",
@@ -313,7 +315,7 @@ export function DealCard({
               .filter(Boolean)
               .join(" ")}
           >
-            {investNowDraftProgress ? (
+            {investNowDraftProgress && investNowDraftProgress.percent < 100 ? (
               <div className="deal_card_prestige_progress">
                 <InvestNowDraftProgressBar
                   embedded

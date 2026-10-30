@@ -47,11 +47,13 @@ export function resolveEsignSignflowSigningOrder(file: {
 }
 
 export function resolveSignFlowRecipientOrders(
-  _workflowType: EsignSignflowWorkflowType,
+  workflowType: EsignSignflowWorkflowType,
   signingOrder: EsignSignflowSigningOrder,
 ): { investorOrder: number; sponsorOrder: number } {
-  // Parallel = investors on the deal sign independently; investor vs sponsor order
-  // still follows signingOrder (same as sequential between parties).
+  // Parallel: investor and sponsor share one turn, so either party may sign.
+  if (workflowType === "parallel") {
+    return { investorOrder: 1, sponsorOrder: 1 };
+  }
   if (signingOrder === "sponsor_first") {
     return { investorOrder: 2, sponsorOrder: 1 };
   }

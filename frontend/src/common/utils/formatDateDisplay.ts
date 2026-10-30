@@ -36,6 +36,11 @@ export function formatDateDdMmmYyyy(
   const s = String(raw).trim()
   if (s === "" || s === "—") return "—"
 
+  const dateWithTime = s.match(/^(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\b/)
+  if (dateWithTime && dateWithTime[1] !== s) {
+    return formatDateDdMmmYyyy(dateWithTime[1])
+  }
+
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     const d = new Date(`${s}T12:00:00`)
     if (!Number.isNaN(d.getTime())) return formatFromDate(d)

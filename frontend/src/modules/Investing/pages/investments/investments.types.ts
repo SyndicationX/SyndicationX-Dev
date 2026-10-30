@@ -53,6 +53,12 @@ export type InvestmentListRow = {
   investNowDraftProgress?: InvestNowDraftProgress
   /** When true, row appears under Archives tab (same pattern as deals list). */
   archived?: boolean
+  /** Investor archived this deal in Investing. Separate from the sponsor archive flag. */
+  investorArchived?: boolean
+  /** Sponsor or platform admin removed the investment. Restore stays disabled. */
+  sponsorRemoved?: boolean
+  /** Soft commitment with nothing invested — investor may delete it. */
+  investorCanDeleteDeal?: boolean
   /** Latest commitment row timestamp for default newest-first list ordering. */
   latestInvestedAtIso?: string
   /** Former Deals tab columns (from `DealListRow`). */
@@ -87,6 +93,12 @@ export type InvestmentBreakdownLine = {
   approvedBy?: string
   /** When this amount was approved by sponsor. */
   approvedAtIso?: string
+  /** Investor archived this profile commitment inside the deal. */
+  investorArchived?: boolean
+  /** Sponsor or platform admin removed this commitment. The investor cannot restore it. */
+  sponsorRemoved?: boolean
+  /** Soft-committed profiles can be deleted. Invested profiles cannot. */
+  participationKind?: "invested" | "soft_committed" | "draft" | "in_progress"
 }
 
 /** Full property / investment / debt snapshot for the investment detail form. */

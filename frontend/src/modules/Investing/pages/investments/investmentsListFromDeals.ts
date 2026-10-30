@@ -57,6 +57,11 @@ import {
   profileNameForInvestmentBreakdown,
 } from "./investedAsDisplay"
 import { pickInvestNowLeadSponsorDisplayName } from "@/modules/Syndication/Deals/utils/resolveInvestNowDealContext"
+import { fetchMyInvestorParticipation } from "@/modules/Investing/api/investorParticipationApi"
+import {
+  investorParticipationKind,
+  viewerCanDeleteInvestingDeal,
+} from "@/modules/Investing/utils/investorParticipationKind"
 import { syncInvestmentDealDocumentPreview } from "./utils/syncInvestmentDealDocumentPreview"
 import { investmentRuntimeIdForDeal, readRuntimeInvestmentRowById } from "./investmentsRuntimeStore"
 import type {
@@ -86,11 +91,17 @@ function positiveViewerCommitments(
   const out: { inv: DealInvestorRow; amt: number }[] = []
   for (const inv of investors) {
     if (!investorRowMatchesViewerEmail(inv, viewerEmailNorm)) continue
+    if (inv.investorArchived) continue
     const amt = investorRowCommittedAmountNumeric(inv)
     if (amt > 0) out.push({ inv, amt })
   }
   out.sort((a, b) => b.amt - a.amt)
   return out.map((x) => x.inv)
+}
+
+function investmentWasSponsorRemoved(inv: DealInvestorRow): boolean {
+  if (inv.sponsorRemoved) return true
+  return String(inv.status ?? "").trim().toLowerCase() === "removed"
 }
 
 /** Split `list.investmentProfile` "Name — Type" for detail fallback when not loading per-field from API. */
@@ -131,7 +142,8 @@ function viewerRowsForProfileBreakdown(
     const hasProfile = Boolean(String(inv.userInvestorProfileId ?? "").trim())
     const hasAmount = investorRowCommittedAmountNumeric(inv) > 0
     const draft = isInvestNowDraftInvestorRow(inv, viewerEmailNorm)
-    if (!hasProfile && !hasAmount && !draft) continue
+    const sponsorRemoved = investmentWasSponsorRemoved(inv)
+    if (!hasProfile && !hasAmount && !draft && !sponsorRemoved) continue
     out.push(inv)
   }
   return out
@@ -159,6 +171,9 @@ function buildProfileBreakdownForDeal(
       investorType: investorCommitmentTypeFromInv(inv),
       investedAmount: amt,
       investedAtIso: String(inv.investedAtIso ?? "").trim() || undefined,
+      investorArchived: Boolean(inv.investorArchived),
+      sponsorRemoved: investmentWasSponsorRemoved(inv),
+      participationKind: investorParticipationKind(inv),
       approvedBy:
         inv.fundApproved === true
           ? String(inv.fundApprovedByDisplayName ?? "").trim() || undefined
@@ -286,6 +301,9 @@ function listRowFromDealAndInvestors(
       viewerEmailNorm,
     ),
     archived: Boolean(listRow.archived),
+    investorCanDeleteDeal: viewerCanDeleteInvestingDeal(
+      investors.filter((row) => investorRowMatchesViewerEmail(row, viewerEmailNorm)),
+    ),
     latestInvestedAtIso: latestInvestedAtIso || undefined,
     dealType: listRow.dealType,
     secType: listRow.secType,
@@ -328,7 +346,7 @@ export async function loadInvestmentListRowsFromDeals(
   const scoped = await mapInvestingInvestmentsPageScope(list)
   if (scoped.length === 0) return []
 
-  const [nameMap, myDistributions] = await Promise.all([
+  const [nameMap, myDistributions, participation] = await Promise.all([
     nameByUserProfileIdFromBook
       ? Promise.resolve(nameByUserProfileIdFromBook)
       : fetchUserInvestorProfileNameMap(),
@@ -336,7 +354,17 @@ export async function loadInvestmentListRowsFromDeals(
       distributions: [] as MyDistributionPaymentRow[],
       totalPayment: "0",
     })),
+    fetchMyInvestorParticipation().catch(() => ({
+      archivedDealIds: [] as string[],
+      removedDealIds: [] as string[],
+    })),
   ])
+  const removedDealIds = new Set(
+    participation.removedDealIds.map((id) => id.trim().toLowerCase()),
+  )
+  const archivedDealIds = new Set(
+    participation.archivedDealIds.map((id) => id.trim().toLowerCase()),
+  )
   const distributedByDeal = distributedAmountByDealId(myDistributions.distributions)
   const out: InvestmentListRow[] = []
   for (const {
@@ -346,6 +374,8 @@ export async function loadInvestmentListRowsFromDeals(
     leadSponsorDisplayName,
     leadSponsorCompanyName,
   } of scoped) {
+    const dealKey = String(row.id ?? "").trim().toLowerCase()
+    if (dealKey && removedDealIds.has(dealKey)) continue
     const committed = committedAmountMatchingInvestorsTable(payload, emn)
     // `scoped` already passed `dealIsInViewerInvestmentsListScope` (invited, draft, or
     // visible commitment). Do not drop in-progress Invest Now drafts — they have no
@@ -363,8 +393,7 @@ export async function loadInvestmentListRowsFromDeals(
     )
     const distributedAmount =
       distributedByDeal.get(String(row.id ?? "").trim().toLowerCase()) ?? 0
-    out.push(
-      listRowFromDealAndInvestors(
+    const built = listRowFromDealAndInvestors(
         row,
         members,
         inv,
@@ -377,8 +406,9 @@ export async function loadInvestmentListRowsFromDeals(
         leadSponsorDisplayName,
         distributedAmount,
         leadSponsorCompanyName,
-      ),
-    )
+      )
+    if (dealKey && archivedDealIds.has(dealKey)) built.investorArchived = true
+    out.push(built)
   }
   return out
 }

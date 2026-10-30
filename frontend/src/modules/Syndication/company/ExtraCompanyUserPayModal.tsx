@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { getSessionOrganizationCompanyId } from "../../../common/auth/sessionOrganization"
 import {
   fetchCompanyBillingPaymentMethods,
-  payExtraCompanyUserWithSavedMethod,
   startExtraCompanyUserCheckout,
   type CompanyBillingPaymentMethod,
 } from "./companyBillingApi"
@@ -14,7 +13,6 @@ import { platformSaasBillingHasStarted } from "../Deals/utils/saasBillingStartDa
 export function ExtraCompanyUserPayModal({
   payload,
   onClose,
-  onPaid,
 }: {
   payload: ExtraCompanyUserPaymentRequired | null
   onClose: () => void
@@ -76,27 +74,6 @@ export function ExtraCompanyUserPayModal({
     window.location.assign(result.url)
   }
 
-  const handlePaySaved = async (paymentMethodId: string) => {
-    if (payOnceRef.current) return
-    payOnceRef.current = true
-    setError("")
-    setBusy("saved")
-    const result = await payExtraCompanyUserWithSavedMethod(
-      companyId,
-      payload.dealId,
-      paymentMethodId,
-      extraCount,
-    )
-    if (!result.ok) {
-      payOnceRef.current = false
-      setBusy(null)
-      setError(result.message)
-      return
-    }
-    setBusy(null)
-    onPaid()
-  }
-
   return (
     <BillingPayMethodModal
       open
@@ -106,8 +83,8 @@ export function ExtraCompanyUserPayModal({
       busy={busy}
       error={error}
       onClose={onClose}
-      onPaySaved={(id) => {
-        void handlePaySaved(id)
+      onPaySaved={() => {
+        void handlePayStripe()
       }}
       onPayStripe={() => {
         void handlePayStripe()

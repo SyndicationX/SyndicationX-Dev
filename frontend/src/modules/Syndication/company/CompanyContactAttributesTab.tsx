@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   CircleHelp,
+  Plus,
   Search,
 } from "lucide-react";
 import { DataTablePagination } from "../../../common/components/DataTablePagination/DataTablePagination";
@@ -197,6 +198,7 @@ export function CompanyContactAttributesTab(props: Props) {
           className="cp_contact_create_btn"
           disabled={readOnly}
         >
+          <Plus size={16} strokeWidth={2} aria-hidden />
           Create attribute
         </button>
       </div>

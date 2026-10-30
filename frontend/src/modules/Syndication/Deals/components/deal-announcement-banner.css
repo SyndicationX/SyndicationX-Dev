@@ -1,31 +1,29 @@
-/* Published deal announcement — portal gold accent, deal detail + offering preview */
+/* Published deal announcement — quiet gold rail, same surface language as deal cards. */
 
 .deal_announcement_banner {
   --deal-ann-accent: var(--portal-gold-accent, #d4af37);
-  --deal-ann-surface: var(
-    --portal-tab-active-bg,
-    color-mix(in srgb, var(--deal-ann-accent) 10%, transparent)
+  --deal-ann-ink: color-mix(in srgb, var(--deal-ann-accent) 58%, #3f3420);
+  --deal-ann-surface: color-mix(
+    in srgb,
+    var(--deal-ann-accent) 5%,
+    var(--portal-surface, #fff)
   );
   --deal-ann-border: color-mix(
     in srgb,
-    var(--deal-ann-accent) 28%,
-    var(--portal-border, #c6c6cd)
-  );
-  --deal-ann-icon-bg: color-mix(in srgb, var(--deal-ann-accent) 12%, var(--portal-surface, #fff));
-  --deal-ann-icon-border: color-mix(
-    in srgb,
-    var(--deal-ann-accent) 24%,
+    var(--deal-ann-accent) 22%,
     var(--portal-border, #c6c6cd)
   );
 
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: 0.7rem;
   margin: 0;
-  padding: 0.75rem 1rem;
+  padding: 0.7rem 0.85rem 0.7rem 0.75rem;
   border-radius: var(--portal-card-radius, 4px);
   border: 1px solid var(--deal-ann-border);
+  border-left: 3px solid var(--deal-ann-accent);
   background: var(--deal-ann-surface);
+  box-shadow: 0 1px 2px rgba(19, 27, 46, 0.04);
   box-sizing: border-box;
 }
 
@@ -34,60 +32,47 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: 1.75rem;
+  height: 1.75rem;
   margin-top: 0.05rem;
   border-radius: var(--portal-icon-box-radius, 4px);
-  border: 1px solid var(--deal-ann-icon-border);
-  background: var(--deal-ann-icon-bg);
-  color: var(--deal-ann-accent);
+  background: color-mix(in srgb, var(--deal-ann-accent) 16%, var(--portal-surface, #fff));
+  color: var(--deal-ann-ink);
 }
 
 .deal_announcement_banner_content {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
 }
 
-.deal_announcement_banner_head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.45rem 0.65rem;
-  margin-bottom: 0.2rem;
+.deal_announcement_banner_body {
+  min-width: 0;
+  margin-top: 0.15rem;
 }
 
-.deal_announcement_banner_head:last-child {
-  margin-bottom: 0;
-}
-
-.deal_announcement_banner_eyebrow {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
+.deal_announcement_banner_kicker {
   margin: 0;
-  padding: 0.18em 0.55em;
-  border-radius: var(--portal-pill-radius, 4px);
-  border: 1px solid color-mix(in srgb, var(--deal-ann-accent) 34%, transparent);
-  background: color-mix(in srgb, var(--deal-ann-accent) 14%, transparent);
   font-family: var(--portal-font-sans, "Inter", system-ui, sans-serif);
   font-size: 0.625rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   line-height: 1.2;
-  color: color-mix(in srgb, var(--deal-ann-accent) 82%, var(--portal-text, #1b1b1d));
+  color: var(--deal-ann-ink);
 }
 
 .deal_announcement_banner_title {
-  margin: 0;
+  margin: 0.15rem 0 0;
   min-width: 0;
-  flex: 1 1 auto;
+  overflow: hidden;
   font-family: var(--portal-font-sans, "Inter", system-ui, sans-serif);
   font-size: 0.875rem;
   font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
+  line-height: 1.35;
+  letter-spacing: -0.011em;
   color: var(--portal-text, #1b1b1d);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .deal_announcement_banner_message {
@@ -97,89 +82,102 @@
   line-height: 1.5;
   color: var(--portal-text-muted, #76777d);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-/* Deal detail — compact strip above the title row */
+.deal_announcement_banner_title + .deal_announcement_banner_message {
+  margin-top: 0.2rem;
+}
+
+.deal_announcement_banner_kicker:last-child,
+.deal_announcement_banner_title:last-child {
+  margin-bottom: 0;
+}
+
+/* Deal detail — one quiet strip in the sticky header. */
 .deal_announcement_banner--page {
-  gap: 0.65rem;
-  padding: 0.65rem 0.9rem;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem 0.7rem 0.7rem;
 }
 
 .deal_announcement_banner--page .deal_announcement_banner_icon_wrap {
-  width: 1.875rem;
-  height: 1.875rem;
   margin-top: 0;
 }
 
-.deal_announcement_banner--page .deal_announcement_banner_title {
-  font-size: 0.8125rem;
+.deal_announcement_banner.is-expanded .deal_announcement_banner_title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
 }
 
-.deal_announcement_banner--page .deal_announcement_banner_message {
+.deal_announcement_banner.is-expanded .deal_announcement_banner_body {
+  max-height: min(8.75rem, 30vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.35rem;
+  scrollbar-gutter: stable;
+}
+
+.deal_announcement_banner_toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--portal-font-sans, "Inter", system-ui, sans-serif);
   font-size: 0.75rem;
-  line-height: 1.45;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.2;
+  color: var(--deal-ann-ink);
 }
 
-.deal_announcement_banner--page .deal_announcement_banner_head {
-  margin-bottom: 0.12rem;
+.deal_announcement_banner_toggle:hover {
+  color: color-mix(in srgb, var(--deal-ann-accent) 70%, #1b1b1d);
+}
+
+.deal_announcement_banner_toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--portal-field-focus-shadow, 0 0 0 2px rgba(212, 175, 55, 0.25));
+}
+
+.deal_announcement_banner_toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.deal_announcement_banner.is-expanded .deal_announcement_banner_toggle svg {
+  transform: rotate(180deg);
 }
 
 /* Offering preview sidebar / bento column */
 .deal_announcement_banner--preview {
-  gap: 0.7rem;
-  padding: 0.75rem 0.9rem;
+  align-items: flex-start;
   margin-bottom: 0.75rem;
-  background: color-mix(
-    in srgb,
-    var(--deal-ann-accent) 7%,
-    var(--portal-surface, #fff)
-  );
 }
 
-.deal_announcement_banner--preview .deal_announcement_banner_title {
-  font-size: 0.875rem;
-}
-
-.deal_announcement_banner--preview .deal_announcement_banner_message {
-  font-size: 0.8125rem;
-}
-
+/* Dark shell — same rail, quieter fill so it sits on the page background. */
 :root[data-theme="dark"] .deal_announcement_banner {
+  --deal-ann-ink: var(--deal-ann-accent);
   --deal-ann-surface: color-mix(
     in srgb,
-    var(--deal-ann-accent) 10%,
-    var(--portal-panel-bg, rgba(255, 255, 255, 0.06))
+    var(--deal-ann-accent) 8%,
+    var(--portal-surface, rgba(255, 255, 255, 0.04))
   );
   --deal-ann-border: color-mix(
     in srgb,
     var(--deal-ann-accent) 26%,
     var(--portal-border, rgba(255, 255, 255, 0.14))
   );
-  --deal-ann-icon-bg: color-mix(
-    in srgb,
-    var(--deal-ann-accent) 16%,
-    var(--portal-surface, rgba(255, 255, 255, 0.04))
-  );
-  --deal-ann-icon-border: color-mix(
-    in srgb,
-    var(--deal-ann-accent) 28%,
-    var(--portal-border, rgba(255, 255, 255, 0.12))
-  );
+  box-shadow: none;
 }
 
-:root[data-theme="dark"] .deal_announcement_banner--preview {
-  background: color-mix(
-    in srgb,
-    var(--deal-ann-accent) 9%,
-    var(--portal-surface, rgba(255, 255, 255, 0.04))
-  );
-}
-
-:root[data-theme="dark"] .deal_announcement_banner_eyebrow {
-  color: var(--deal-ann-accent);
-  border-color: color-mix(in srgb, var(--deal-ann-accent) 38%, transparent);
+:root[data-theme="dark"] .deal_announcement_banner_icon_wrap {
   background: color-mix(in srgb, var(--deal-ann-accent) 16%, transparent);
+  color: var(--deal-ann-accent);
 }
 
 :root[data-theme="dark"] .deal_announcement_banner_title {
@@ -190,6 +188,10 @@
   color: var(--portal-text-muted, #94a3b8);
 }
 
-:root[data-theme="dark"] .deal_announcement_banner_icon_wrap {
+:root[data-theme="dark"] .deal_announcement_banner_toggle {
   color: var(--deal-ann-accent);
+}
+
+:root[data-theme="dark"] .deal_announcement_banner_toggle:hover {
+  color: color-mix(in srgb, var(--deal-ann-accent) 78%, #fff);
 }

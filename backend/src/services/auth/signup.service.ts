@@ -18,6 +18,7 @@ import { reconcileAssigningDealUsersForDeal } from "../deal/assigningDealUser.se
 import {
   ensureSelfRegisteredInvestorContact,
   markContactsAsPortalUserByEmailNorm,
+  stampContactsSignupAsByEmail,
 } from "../contact/contact.service.js";
 import {
   applyInvestorInviteAfterAuth,
@@ -184,7 +185,9 @@ export async function registerUser(
   if (hasInvestorInviteRef) {
     companyName = "";
   }
-  const selfServeSignupAs = parseSelfServeSignupAs(body.signupAs);
+  const selfServeSignupAs =
+    parseSelfServeSignupAs(body.signupAs) ||
+    (hasInvestorInviteRef ? SIGNUP_AS_INVESTOR : "");
   const phoneRaw = str(body.phone);
   const firstName = str(body.firstName);
   const lastName = str(body.lastName);
@@ -487,6 +490,7 @@ export async function registerUser(
           role: roleForUser,
           userStatus: "active",
           userSignupCompleted: "true",
+          ...(selfServeSignupAs ? { signupAs: selfServeSignupAs } : {}),
           inviteExpiresAt: null,
           updatedAt: new Date(),
           ...(hasInvestorInviteRef
@@ -510,6 +514,7 @@ export async function registerUser(
           role: roleForUser,
           userStatus: "active",
           userSignupCompleted: "true",
+          ...(selfServeSignupAs ? { signupAs: selfServeSignupAs } : {}),
           ...(organizationId ? { organizationId } : {}),
         })
         .returning({ id: users.id });
@@ -574,6 +579,7 @@ export async function registerUser(
             firstName,
             lastName,
             phone,
+            signupAs: selfServeSignupAs,
           });
         }
       } catch (e) {
@@ -585,6 +591,14 @@ export async function registerUser(
       await markContactsAsPortalUserByEmailNorm(emailNorm);
     } catch (e) {
       console.error("markContactsAsPortalUserByEmailNorm after signup:", e);
+    }
+
+    if (selfServeSignupAs) {
+      try {
+        await stampContactsSignupAsByEmail(emailNorm, selfServeSignupAs);
+      } catch (e) {
+        console.error("stampContactsSignupAsByEmail after signup:", e);
+      }
     }
 
     const offeringPreviewSignup = Boolean(

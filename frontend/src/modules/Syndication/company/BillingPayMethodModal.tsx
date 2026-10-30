@@ -33,6 +33,7 @@ export function BillingPayMethodModal({
   description,
   stripeButtonLabel,
   savedButtonLabel,
+  checkoutOnly = false,
 }: {
   open: boolean
   dealName: string
@@ -47,6 +48,8 @@ export function BillingPayMethodModal({
   description?: ReactNode
   stripeButtonLabel?: string
   savedButtonLabel?: string
+  /** One Pay button that opens Stripe Checkout. */
+  checkoutOnly?: boolean
 }) {
   const titleId = useId()
   const active = methods.filter((m) => !m.detachedAt)
@@ -126,7 +129,7 @@ export function BillingPayMethodModal({
             )}
           </p>
 
-          {loading ? (
+          {checkoutOnly ? null : loading ? (
             <p className="deal_stage_modal_desc" style={{ marginTop: "0.85rem" }}>
               Loading saved payment methods…
             </p>
@@ -192,7 +195,11 @@ export function BillingPayMethodModal({
           </button>
           <button
             type="button"
-            className="deal_stage_modal_btn deal_stage_modal_btn--cancel billing_pay_method_btn_stripe"
+            className={`deal_stage_modal_btn ${
+              checkoutOnly
+                ? "deal_stage_modal_btn--confirm"
+                : "deal_stage_modal_btn--cancel billing_pay_method_btn_stripe"
+            }`}
             disabled={locked}
             onClick={onPayStripe}
           >
@@ -213,7 +220,7 @@ export function BillingPayMethodModal({
               </>
             )}
           </button>
-          {active.length > 0 ? (
+          {!checkoutOnly && active.length > 0 ? (
             <button
               type="button"
               className="deal_stage_modal_btn deal_stage_modal_btn--confirm"

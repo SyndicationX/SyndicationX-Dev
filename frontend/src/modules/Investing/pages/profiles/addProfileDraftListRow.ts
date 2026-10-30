@@ -21,7 +21,7 @@ export function isAddProfileSessionDraftRedundantWithApiRows(
   if (!draft || !addProfileDraftHasContent(draft)) return false
   const bid = draft.backendProfileId?.trim()
   if (!bid) return false
-  return apiRows.some((r) => String(r.id) === bid && r.isDraft)
+  return apiRows.some((r) => String(r.id) === bid)
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   type UserRow,
 } from "../../schema/schema.js";
 import { enrichUserRecordForDealParticipant } from "../deal/dealParticipantProfile.service.js";
+import { viewerIsCoSponsorWithoutCompany } from "../deal/dealMemberScope.service.js";
 import { mergeLpInvestorFlagsIntoUserPayload } from "../investing/lpInvestorAccess.service.js";
 import { serializeUserForClient } from "../user/userAdmin.service.js";
 import { parseUsPhoneToE164 } from "../../utils/usPhone.js";
@@ -25,6 +26,7 @@ import {
   COMPANY_ADMIN,
   isCompanyAdminRole,
   isInvestorPortalRole,
+  isPlatformAdminRole,
 } from "../../constants/roles.js";
 import {
   getSelfRegisteredContactVisibility,
@@ -115,6 +117,7 @@ async function userDetailsShapeWithDealParticipant(
       }
     }
   }
+  base.coSponsorNeedsCompany = await viewerIsCoSponsorWithoutCompany(userId);
   const enriched = await enrichUserRecordForDealParticipant(base, userId);
   const withLp = await mergeLpInvestorFlagsIntoUserPayload(enriched, {
     email: u.email as string | undefined,
@@ -372,10 +375,11 @@ export async function updateOwnProfile(
     if (!name) {
       return { ok: false, status: 400, message: "Company name is required" };
     }
-    if (isInvestorPortalRole(row.role)) {
+    if (isInvestorPortalRole(row.role) || !row.organizationId) {
       /**
-       * Investors link by name: join the company when it already exists, else
-       * create it. They never rename a company (it may belong to a sponsor org).
+       * First company name: create the company when it does not exist. Investors
+       * may also join an existing company by name. They never rename a company
+       * (it may belong to a sponsor org).
        */
       const resolved = await ensureCompanyByName(name);
       if (!resolved.ok) {
@@ -383,6 +387,14 @@ export async function updateOwnProfile(
           ok: false,
           status: resolved.status,
           message: resolved.message,
+        };
+      }
+      if (!resolved.created && !isInvestorPortalRole(row.role)) {
+        return {
+          ok: false,
+          status: 409,
+          message:
+            "This company already exists. Ask one of its admins to invite you.",
         };
       }
       companyJoinedExisting = !resolved.created;
@@ -394,12 +406,22 @@ export async function updateOwnProfile(
           .set({ organizationId: resolved.company.id, updatedAt: new Date() })
           .where(eq(users.id, userId));
       }
-    } else if (!row.organizationId) {
-      return {
-        ok: false,
-        status: 400,
-        message: "No organization to update",
-      };
+      /**
+       * The person who creates the company the first time is its company admin.
+       */
+      if (resolved.created) {
+        if (!isPlatformAdminRole(row.role)) {
+          await db
+            .update(users)
+            .set({ role: COMPANY_ADMIN, updatedAt: new Date() })
+            .where(eq(users.id, userId));
+        }
+        await upsertUserCompanyMembership(
+          userId,
+          resolved.company.id,
+          COMPANY_ADMIN,
+        );
+      }
     } else if (!isCompanyAdminRole(row.role)) {
       return {
         ok: false,

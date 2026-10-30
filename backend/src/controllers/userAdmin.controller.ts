@@ -13,6 +13,7 @@ import {
   listUsersForAdmin,
   MEMBER_AUDIT_ACTION_EDIT,
   MEMBER_AUDIT_ACTION_SUSPEND,
+  removeMemberFromOrganization,
   updateMemberUser,
 } from "../services/user/userAdmin.service.js";
 import { getUserContactsExportAuditFields } from "../services/contact/contact.service.js";
@@ -191,7 +192,7 @@ export async function getUsers(req: Request, res: Response): Promise<void> {
       ? String(actor.organizationId).trim()
       : undefined;
   let filterOrganizationId = isPlatformAdminRole(role)
-    ? orgFromQuery ?? orgFromActor
+    ? orgFromQuery
     : undefined;
 
   if (isCompanyAdminRole(role) && orgFromQuery && ORG_UUID_RE.test(orgFromQuery)) {
@@ -515,6 +516,57 @@ export async function patchUser(req: Request, res: Response): Promise<void> {
   res.status(200).json({
     message: "Member updated",
     user: result.user,
+  });
+}
+
+export async function postRemoveMember(req: Request, res: Response): Promise<void> {
+  const jwtUser = await getValidJwtUser(req);
+  if (!jwtUser?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+
+  const userId = req.params.userId;
+  if (typeof userId !== "string" || !userId.trim()) {
+    res.status(400).json({ message: "User id required" });
+    return;
+  }
+
+  const [actor] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, jwtUser.id))
+    .limit(1);
+  if (!actor) {
+    res.status(401).json({ message: "User not found" });
+    return;
+  }
+
+  const body = req.body as { organizationId?: unknown; companyId?: unknown };
+  const organizationId =
+    typeof body.organizationId === "string"
+      ? body.organizationId.trim()
+      : typeof body.companyId === "string"
+        ? body.companyId.trim()
+        : "";
+  if (!organizationId) {
+    res.status(400).json({ message: "Organization is required" });
+    return;
+  }
+
+  const result = await removeMemberFromOrganization(
+    userId.trim(),
+    organizationId,
+    jwtUser.id,
+    String(actor.role ?? "").trim(),
+  );
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+
+  res.status(200).json({
+    message: "Member removed. They are back on All Contacts.",
   });
 }
 

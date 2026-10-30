@@ -1,4 +1,4 @@
-import { Loader2, RotateCcw, Star, X } from "lucide-react"
+import { ImagePlus, Loader2, RotateCcw, Star, X } from "lucide-react"
 import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -12,6 +12,7 @@ import {
   mergePathSegmentsForOfferingGalleryPersist,
 } from "../../utils/offeringGalleryUrls"
 import { DealOfferingGalleryImage } from "../../components/DealOfferingGalleryImage"
+import { GalleryUploadImageModal } from "./GalleryUploadImageModal"
 import { toast } from "../../../../../common/components/Toast"
 import "../deal_members/add-investment/add_deal_modal.css"
 
@@ -30,6 +31,7 @@ export function OfferingGallerySection({
   const viewModalTitleId = useId()
   const saveLockRef = useRef(false)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
   const [savingUrl, setSavingUrl] = useState<string | null>(null)
   const urls = collectDealGalleryUrls(detail)
   const coverUrl = detail.galleryCoverImageUrl?.trim() ?? ""
@@ -110,15 +112,24 @@ export function OfferingGallerySection({
     }
   }, [detail.id, onDealUpdated, onUserSaved])
 
-  if (urls.length === 0)
-    return (
-      <p className="deal_offering_muted">
-        No gallery images uploaded for this offering yet.
-      </p>
-    )
-
   return (
     <>
+      <div className="deal_offering_gallery_toolbar">
+        <button
+          type="button"
+          className="um_btn_primary deal_offering_gallery_upload_btn"
+          onClick={() => setUploadOpen(true)}
+        >
+          <ImagePlus size={16} strokeWidth={2} aria-hidden />
+          Upload image
+        </button>
+      </div>
+      {urls.length === 0 ? (
+        <p className="deal_offering_muted">
+          No gallery images uploaded for this offering yet.
+        </p>
+      ) : (
+        <>
       <p className="deal_offering_gallery_cover_hint">
         Choose a <strong>cover image</strong> for the deal card on the
         dashboard and the hero on the offering preview. Click a photo to view
@@ -209,6 +220,17 @@ export function OfferingGallerySection({
           )
         })}
       </div>
+        </>
+      )}
+      {uploadOpen ? (
+        <GalleryUploadImageModal
+          dealId={detail.id}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={(deal) => {
+            onUserSaved?.(deal) ?? onDealUpdated?.(deal)
+          }}
+        />
+      ) : null}
       {lightboxSrc
         ? createPortal(
             <div

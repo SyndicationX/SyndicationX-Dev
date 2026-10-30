@@ -218,6 +218,12 @@ async function investorParticipantMayReadDeal(
   if (!isAddDealFormIncomplete(deal) || isDealStageDraft(deal.dealStage)) {
     return true;
   }
+  const emailNorm = await viewerEmailNormForScope(scope);
+  if (emailNorm) {
+    const rosterDealIds = await listLpInvestorDealIdsForUserEmail(emailNorm);
+    const dealId = String(deal.id ?? "").trim().toLowerCase();
+    if (rosterDealIds.some((id) => id.toLowerCase() === dealId)) return true;
+  }
   return viewerHasSyndicationDealWorkspaceAccess(deal, scope);
 }
 

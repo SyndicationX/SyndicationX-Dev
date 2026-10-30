@@ -3,7 +3,6 @@ import {
   AlignLeft,
   Archive,
   Ban,
-  Building2,
   Check,
   CheckCircle2,
   ClipboardList,
@@ -72,6 +71,7 @@ import { isPlatformAdmin } from "../../../common/auth/roleUtils"
 import { PORTAL_ACTIVE_COMPANY_CHANGED_EVENT } from "../../../common/auth/setActiveCompany"
 import { getSessionOrganizationCompanyId } from "../../../common/auth/sessionOrganization"
 import "../usermanagement/user_management.css"
+import { ContactOrganizationsCell } from "./components/ContactOrganizationsCell"
 import {
   createContact,
   fetchContactOwnerSponsors,
@@ -248,6 +248,28 @@ function toContactUpdatePayload(
   }
 }
 
+function contactOrganizationEntries(row: ContactRow): { key: string; name: string }[] {
+  const fromOrgs = (row.organizations ?? [])
+    .map((company) => {
+      const name = company.companyName.trim()
+      if (!name) return null
+      const id = company.companyId.trim()
+      return { key: id || `company:${name.toLowerCase()}`, name }
+    })
+    .filter((entry): entry is { key: string; name: string } => entry != null)
+  if (fromOrgs.length > 0) return fromOrgs
+  const organizationId = row.organizationId?.trim() ?? ""
+  const name =
+    row.organizationName?.trim() || row.addedByCompanyName?.trim() || ""
+  if (!organizationId && !name) return []
+  return [
+    {
+      key: organizationId || `company:${name.toLowerCase()}`,
+      name: name || "Untitled organization",
+    },
+  ]
+}
+
 function contactRowMatchesSearch(row: ContactRow, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
@@ -266,6 +288,11 @@ function contactRowMatchesSearch(row: ContactRow, query: string): boolean {
     row.invitedByDisplayName ?? "",
     row.addedByCompanyName ?? "",
     row.organizationName ?? "",
+    ...(row.organizations ?? []).flatMap((company) => [
+      company.companyName,
+      ...company.deals.map((deal) => deal.dealName),
+    ]),
+    row.signupRole ?? "",
     row.visibleToUsers === true ? "yes" : "no",
     String(row.dealCount ?? 0),
     relationship506bLabel(row.relationship506b ?? null),
@@ -378,6 +405,9 @@ function ContactsPage({
   const [rows, setRows] = useState<ContactRow[]>([])
   const [dealCountById, setDealCountById] = useState<Map<string, number>>(
     () => new Map(),
+  )
+  const [dealStatsReadyIds, setDealStatsReadyIds] = useState<Set<string>>(
+    () => new Set(),
   )
   const [orgScopeKey, setOrgScopeKey] = useState(
     () => getSessionOrganizationCompanyId() ?? "",
@@ -621,25 +651,15 @@ function ContactsPage({
     const byOrg = new Map<string, { name: string; count: number }>()
     let unnamed = 0
     for (const row of rowsBeforeOwnerFilter) {
-      const addedByCompany = row.addedByCompanyName?.trim() ?? ""
-      const organizationId = row.organizationId?.trim() ?? ""
-      const organizationName = row.organizationName?.trim() ?? ""
-      const name = addedByCompany || organizationName
-      if (!organizationId && !name) {
+      const entries = contactOrganizationEntries(row)
+      if (entries.length === 0) {
         unnamed += 1
         continue
       }
-      const key = addedByCompany
-        ? `company:${addedByCompany.toLowerCase()}`
-        : organizationId || name.toLowerCase()
-      const existing = byOrg.get(key)
-      if (existing) {
-        existing.count += 1
-      } else {
-        byOrg.set(key, {
-          name: name || "Untitled organization",
-          count: 1,
-        })
+      for (const entry of entries) {
+        const existing = byOrg.get(entry.key)
+        if (existing) existing.count += 1
+        else byOrg.set(entry.key, { name: entry.name, count: 1 })
       }
     }
     const options: DropdownSelectOption[] = [
@@ -668,21 +688,9 @@ function ContactsPage({
         if (ownerFilter === "all") return true
         if (platformAdminCompanyFilter) {
           if (ownerFilter === "__none__") {
-            return (
-              !r.addedByCompanyName?.trim() &&
-              !r.organizationId?.trim() &&
-              !r.organizationName?.trim()
-            )
+            return contactOrganizationEntries(r).length === 0
           }
-          if (ownerFilter.startsWith("company:")) {
-            return (
-              (r.addedByCompanyName?.trim().toLowerCase() ?? "") ===
-              ownerFilter.slice("company:".length)
-            )
-          }
-          const organizationId = r.organizationId?.trim() ?? ""
-          if (organizationId) return organizationId === ownerFilter
-          return (r.organizationName?.trim().toLowerCase() ?? "") === ownerFilter
+          return contactOrganizationEntries(r).some((entry) => entry.key === ownerFilter)
         }
         const want = ownerFilter.trim().toLowerCase()
         return r.owners.some((o) => o.trim().toLowerCase() === want)
@@ -706,6 +714,7 @@ function ContactsPage({
       return {
         ...row,
         dealCount: next.dealCount,
+        organizations: next.organizations ?? row.organizations,
         owners: next.owners.length > 0 ? next.owners : row.owners,
         createdByDisplayName:
           next.createdByDisplayName ?? row.createdByDisplayName,
@@ -720,17 +729,86 @@ function ContactsPage({
     [rows],
   )
 
+  const visibleDirectoryIdsKey = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filteredRows
+      .slice(start, start + pageSize)
+      .map((row) => row.id)
+      .filter(Boolean)
+      .join(",")
+  }, [filteredRows, page, pageSize])
+
+  const dealStatsLoadedIdsRef = useRef(new Set<string>())
+  const dealStatsFlightRef = useRef(new Map<string, symbol>())
+
+  const claimDealStatIds = useCallback((ids: string[], token: symbol) => {
+    const pending: string[] = []
+    for (const id of ids) {
+      if (!id) continue
+      if (dealStatsLoadedIdsRef.current.has(id)) continue
+      if (dealStatsFlightRef.current.has(id)) continue
+      dealStatsFlightRef.current.set(id, token)
+      pending.push(id)
+    }
+    return pending
+  }, [])
+
+  const settleDealStatIds = useCallback(
+    (ids: string[], token: symbol, stats?: Map<string, ContactRow>) => {
+      const ready: string[] = []
+      for (const id of ids) {
+        if (dealStatsFlightRef.current.get(id) !== token) continue
+        dealStatsFlightRef.current.delete(id)
+        if (stats?.has(id)) {
+          dealStatsLoadedIdsRef.current.add(id)
+          ready.push(id)
+        }
+      }
+      if (ready.length === 0) return
+      setDealStatsReadyIds((prev) => {
+        const next = new Set(prev)
+        for (const id of ready) next.add(id)
+        return next
+      })
+    },
+    [],
+  )
+
   useEffect(() => {
-    const ids = directoryContactIdsKey.split(",").filter(Boolean)
-    if (ids.length === 0) return
+    dealStatsLoadedIdsRef.current = new Set()
+    dealStatsFlightRef.current = new Map()
+    setDealStatsReadyIds(new Set())
+  }, [directoryContactIdsKey, dealStatsOptions, tableResetKey])
+
+  useEffect(() => {
+    const token = Symbol()
+    const pending = claimDealStatIds(
+      visibleDirectoryIdsKey.split(",").filter(Boolean),
+      token,
+    )
+    if (pending.length === 0) return
     let cancelled = false
-    void hydrateContactDealStatsInChunks(ids, dealStatsOptions).then((stats) => {
-      if (!cancelled) applyContactDealStats(stats)
+    void fetchContactDealStats(pending, dealStatsOptions).then((stats) => {
+      if (cancelled) {
+        settleDealStatIds(pending, token)
+        return
+      }
+      settleDealStatIds(pending, token, stats)
+      applyContactDealStats(stats)
     })
     return () => {
       cancelled = true
+      settleDealStatIds(pending, token)
     }
-  }, [directoryContactIdsKey, applyContactDealStats, dealStatsOptions])
+  }, [
+    visibleDirectoryIdsKey,
+    directoryContactIdsKey,
+    dealStatsOptions,
+    applyContactDealStats,
+    claimDealStatIds,
+    settleDealStatIds,
+    tableResetKey,
+  ])
 
   const openContactsForTag = useCallback((tagName: string) => {
     const name = tagName.trim()
@@ -1541,16 +1619,35 @@ function ContactsPage({
 
   useEffect(() => {
     if (mainTab !== "platform") return
-    const ids = visiblePlatformIdsKey.split(",").filter(Boolean)
-    if (ids.length === 0) return
+    const token = Symbol()
+    const pending = claimDealStatIds(
+      visiblePlatformIdsKey.split(",").filter(Boolean),
+      token,
+    )
+    if (pending.length === 0) return
     let cancelled = false
-    void fetchContactDealStats(ids, dealStatsOptions).then((stats) => {
-      if (!cancelled) applyContactDealStats(stats)
+    void fetchContactDealStats(pending, dealStatsOptions).then((stats) => {
+      if (cancelled) {
+        settleDealStatIds(pending, token)
+        return
+      }
+      settleDealStatIds(pending, token, stats)
+      applyContactDealStats(stats)
     })
     return () => {
       cancelled = true
+      settleDealStatIds(pending, token)
     }
-  }, [mainTab, visiblePlatformIdsKey, applyContactDealStats, dealStatsOptions])
+  }, [
+    mainTab,
+    visiblePlatformIdsKey,
+    dealStatsOptions,
+    applyContactDealStats,
+    claimDealStatIds,
+    settleDealStatIds,
+    directoryContactIdsKey,
+    tableResetKey,
+  ])
 
   useEffect(() => {
     if (!exportModalOpen) return
@@ -1822,6 +1919,18 @@ function ContactsPage({
         },
       },
       {
+        id: "signupRole",
+        header: "Signup Role",
+        align: "center",
+        sortValue: (row) => row.signupRole ?? "",
+        thClassName: "contacts_th_signup_role",
+        tdClassName: "contacts_td_signup_role",
+        cell: (row) => {
+          const role = row.signupRole?.trim()
+          return role ? role : <span className="um_status_muted">—</span>
+        },
+      },
+      {
         id: "accreditationStatus",
         header: "Accreditation Status",
         align: "center",
@@ -2084,6 +2193,9 @@ function ContactsPage({
         sortValue: (row) =>
           dealCountById.get(row.id.trim().toLowerCase()) ?? row.dealCount ?? 0,
         cell: (row) => {
+          if (!dealStatsReadyIds.has(row.id)) {
+            return <span className="um_status_muted">…</span>
+          }
           const n =
             dealCountById.get(row.id.trim().toLowerCase()) ?? row.dealCount ?? 0
           if (n <= 0) {
@@ -2247,25 +2359,21 @@ function ContactsPage({
         id: "organization",
         header: "Organization/Owners",
         sortValue: (row) =>
-          row.addedByCompanyName?.trim() || row.organizationName || "",
+          (row.organizations ?? [])
+            .map((company) => company.companyName)
+            .filter(Boolean)
+            .join(" ") ||
+          row.organizationName ||
+          row.addedByCompanyName ||
+          "",
         thClassName: "contacts_th_organization",
         tdClassName: "contacts_td_organization",
-        cell: (row) => {
-          const name =
-            row.addedByCompanyName?.trim() || row.organizationName?.trim()
-          if (!name) return <span className="um_status_muted">—</span>
-          return (
-            <span className="um_org_badge" title={name}>
-              <Building2
-                className="um_org_badge_icon"
-                size={15}
-                strokeWidth={2}
-                aria-hidden
-              />
-              <span className="um_org_badge_label">{name}</span>
-            </span>
-          )
-        },
+        cell: (row) =>
+          dealStatsReadyIds.has(row.id) ? (
+            <ContactOrganizationsCell row={row} />
+          ) : (
+            <span className="um_status_muted">…</span>
+          ),
       },
       /* Hidden: Invited by column (restore by uncommenting)
       {
@@ -2356,6 +2464,7 @@ function ContactsPage({
     ],
     [
       dealCountById,
+      dealStatsReadyIds,
       allContactsInFilterSelected,
       contactsListTab,
       exportContactRow,

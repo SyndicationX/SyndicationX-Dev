@@ -20,11 +20,13 @@ import {
   Download,
   Eye,
   LayoutGrid,
+  Mail,
   MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
   Search,
+  Send,
   Upload,
   Users,
   X,
@@ -48,6 +50,8 @@ import { getSessionOrganizationCompanyId, getActiveWorkspaceCompanyName } from "
 import {
   canAccessCompanyPage,
   canAccessMembersPage,
+  getLeadSponsorCompanyIdsFromSession,
+  isLeadSponsorSessionUser,
   isPlatformAdmin,
 } from "../../../common/auth/roleUtils";
 // import { CompanyContactAttributesTab } from "./CompanyContactAttributesTab";
@@ -56,6 +60,7 @@ import {
 import { CompanyBillingTab } from "./CompanyBillingTab";
 import { CompanyCouponsTab } from "./CompanyCouponsTab";
 // import { CompanySettingsTabPanel } from "./CompanySettingsTabPanel";
+import { CustomerCompaniesSendEmailModal } from "./CustomerCompaniesSendEmailModal";
 import { ExportCompaniesModal } from "./ExportCompaniesModal";
 import { UserManagementPage } from "../usermanagement/UserManagementPage";
 import {
@@ -253,6 +258,13 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
   const [searchQuery, setSearchQuery] = useState("");
   const [toolbarNotice, setToolbarNotice] = useState("");
   const [companiesExportOpen, setCompaniesExportOpen] = useState(false);
+  const companySelectAllRef = useRef<HTMLInputElement | null>(null);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [sendEmailCompanyIds, setSendEmailCompanyIds] = useState<string[] | null>(
+    null,
+  );
   const [customersListTab, setCustomersListTab] =
     useState<CustomersListTab>("active");
   const [companyPageTab, setCompanyPageTab] = useState<CompanyPageTab>(() => {
@@ -427,25 +439,28 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
       return "";
     }
     const g = getSessionOrganizationCompanyId();
-    return g && COMPANY_ID_UUID_RE.test(g) ? g : "";
+    const sessionId = g && COMPANY_ID_UUID_RE.test(g) ? g : "";
+    if (!canAccessCompanyPage() && isLeadSponsorSessionUser()) {
+      const leadCompanyIds = getLeadSponsorCompanyIdsFromSession().filter((id) =>
+        COMPANY_ID_UUID_RE.test(id),
+      );
+      if (
+        sessionId &&
+        leadCompanyIds.some((id) => id === sessionId.trim().toLowerCase())
+      ) {
+        return sessionId;
+      }
+      if (leadCompanyIds[0]) return leadCompanyIds[0];
+    }
+    return sessionId;
   }, [platformAdmin, platformAdminWorkspaceCompanyId, userDetailsRev]);
 
   /**
-   * Settings → Members: platform admins use GET /users?organizationId=…
-   * Prefer the signed-in org from session; if the profile has no `organization_id` yet,
-   * use the same workspace company id (stored / first company in directory) as Settings.
+   * Settings → Users & Roles. No organization id is passed here.
+   * Platform admins then load every company member. Company admins still
+   * resolve only their own company inside User Management.
    */
-  const settingsMembersOrganizationScope = useMemo(():
-    | string
-    | false
-    | undefined => {
-    if (!platformAdmin) return undefined;
-    const oid = readSessionOrganizationId().trim().toLowerCase();
-    if (COMPANY_ID_UUID_RE.test(oid)) return oid;
-    const wid = workspaceCompanyId.trim().toLowerCase();
-    if (COMPANY_ID_UUID_RE.test(wid)) return wid;
-    return false;
-  }, [platformAdmin, userDetailsRev, workspaceCompanyId]);
+  const settingsMembersOrganizationScope = undefined;
 
   // const handleCompanyDisplayNamePersisted = useCallback(
   //   (name: string) => {
@@ -523,7 +538,8 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
       billing === "cancel" ||
       billing === "portal_return" ||
       billing === "pay" ||
-      billing === "upgrade"
+      billing === "upgrade" ||
+      billing === "difference"
     ) {
       setCompanyPageTab("billing");
       return;
@@ -573,6 +589,29 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
   }, [companies, customersStandalone, customersTabRows, searchQuery]);
 
   useEffect(() => {
+    setSelectedCompanyIds(new Set());
+  }, [customersListTab]);
+
+  const selectableCompanyIds = useMemo(
+    () => filteredRows.map((row) => row.id),
+    [filteredRows],
+  );
+  const allCompaniesSelected =
+    selectableCompanyIds.length > 0 &&
+    selectableCompanyIds.every((id) => selectedCompanyIds.has(id));
+  const someCompaniesSelected =
+    selectableCompanyIds.some((id) => selectedCompanyIds.has(id)) &&
+    !allCompaniesSelected;
+
+  useLayoutEffect(() => {
+    const el = companySelectAllRef.current;
+    if (el) el.indeterminate = someCompaniesSelected;
+  }, [someCompaniesSelected, allCompaniesSelected, selectableCompanyIds.length]);
+  const sendEmailCompanies = companies.filter((row) =>
+    (sendEmailCompanyIds ?? []).includes(row.id),
+  );
+
+  useEffect(() => {
     setCompaniesPage(1);
   }, [searchQuery, customersListTab]);
 
@@ -596,10 +635,65 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
 
   const customerCompaniesColumns: DataTableColumn<CompanyRow>[] = useMemo(
     () => [
+      ...(customersStandalone && platformAdmin
+        ? [
+            {
+              id: "select",
+              header: (
+                <input
+                  ref={companySelectAllRef}
+                  type="checkbox"
+                  className="um_table_header_select_cb"
+                  checked={allCompaniesSelected}
+                  onChange={() => {
+                    setSelectedCompanyIds(
+                      allCompaniesSelected ? new Set() : new Set(selectableCompanyIds),
+                    );
+                  }}
+                  disabled={companiesLoading || selectableCompanyIds.length === 0}
+                  aria-label="Select all companies in this list"
+                />
+              ),
+              align: "center" as const,
+              colWidth: "2.25rem",
+              thClassName: "um_th_checkbox",
+              tdClassName: "um_td_checkbox",
+              cell: (row: CompanyRow) => (
+                <input
+                  type="checkbox"
+                  className="um_table_row_select_cb"
+                  checked={selectedCompanyIds.has(row.id)}
+                  onChange={() => {
+                    setSelectedCompanyIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(row.id)) next.delete(row.id);
+                      else next.add(row.id);
+                      return next;
+                    });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`Select ${row.name}`}
+                />
+              ),
+            } satisfies DataTableColumn<CompanyRow>,
+            {
+              id: "serial",
+              header: "#",
+              align: "center" as const,
+              colWidth: "3.25rem",
+              thClassName: "um_th_serial",
+              tdClassName: "um_td_serial",
+              cell: (_row: CompanyRow, rowIndex?: number) =>
+                (companiesPageSafe - 1) * companiesPageSize +
+                (rowIndex ?? 0) +
+                1,
+            } satisfies DataTableColumn<CompanyRow>,
+          ]
+        : []),
       {
         id: "company",
         header: "Company",
-        colWidth: "28%",
+        colWidth: "16rem",
         sortValue: (row) => row.name.toLowerCase(),
         thClassName: "cp_company_list_name_th",
         tdClassName: "um_td_user cp_company_list_name_td",
@@ -701,7 +795,17 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
         },
       },
     ],
-    [customersStandalone, platformAdmin, actionMenuCompanyId],
+    [
+      customersStandalone,
+      platformAdmin,
+      actionMenuCompanyId,
+      allCompaniesSelected,
+      companiesLoading,
+      selectableCompanyIds,
+      selectedCompanyIds,
+      companiesPageSafe,
+      companiesPageSize,
+    ],
   );
 
   const customersCompaniesPagination = useMemo(
@@ -1236,6 +1340,11 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
             >
               <CompanyBillingTab
                 workspaceCompanyId={workspaceCompanyId || undefined}
+                leadSponsorCompanyIds={
+                  !canAccessCompanyPage() && isLeadSponsorSessionUser()
+                    ? getLeadSponsorCompanyIdsFromSession()
+                    : undefined
+                }
                 focusDealId={
                   new URLSearchParams(location.search).get("dealId")?.trim() ||
                   undefined
@@ -1329,6 +1438,24 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
                 </button>
                 <button
                   type="button"
+                  className="um_btn_toolbar"
+                  disabled={companiesLoading || selectedCompanyIds.size === 0}
+                  onClick={() => {
+                    if (selectedCompanyIds.size === 0) {
+                      toast.error(
+                        "No companies selected",
+                        "Select one or more companies using the checkboxes.",
+                      );
+                      return;
+                    }
+                    setSendEmailCompanyIds([...selectedCompanyIds]);
+                  }}
+                >
+                  <Send size={18} strokeWidth={2} aria-hidden />
+                  Send email
+                </button>
+                <button
+                  type="button"
                   className="um_toolbar_export_btn"
                   onClick={() => setCompaniesExportOpen(true)}
                   disabled={companiesLoading || customersTabRows.length === 0}
@@ -1369,7 +1496,7 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
               <div className="cp_company_tab_table_wrap">
                 <DataTable
                   visualVariant="members"
-                  stickyFirstColumn={false}
+                  stickyColumnCount={3}
                   membersTableClassName="um_table_members deal_inv_table"
                   initialSort={{ columnId: "company", direction: "asc" }}
                   columns={customerCompaniesColumns}
@@ -1427,6 +1554,27 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
                   View
                 </button>
               </li>
+              {customersStandalone && platformAdmin ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="um_kebab_menuitem"
+                    onClick={() => {
+                      setActionMenuCompanyId(null);
+                      setSendEmailCompanyIds([openMenuContext.id]);
+                    }}
+                  >
+                    <Mail
+                      className="um_kebab_menuitem_icon"
+                      size={16}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    Send email
+                  </button>
+                </li>
+              ) : null}
               {customersStandalone && platformAdmin ? (
                 <li role="none">
                   <button
@@ -1516,6 +1664,9 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
           )
         : null}
 
+      {typeof document !== "undefined"
+        ? createPortal(
+            <>
       {viewRow ? (
         <div
           className="um_modal_overlay"
@@ -1851,12 +2002,26 @@ export default function CompanyPage({ variant = "default" }: CompanyPageProps = 
           </div>
         </div>
       ) : null}
+      {sendEmailCompanies.length > 0 ? (
+        <CustomerCompaniesSendEmailModal
+          companies={sendEmailCompanies}
+          onClose={() => setSendEmailCompanyIds(null)}
+          onSent={() => {
+            setSendEmailCompanyIds(null);
+            setSelectedCompanyIds(new Set());
+          }}
+        />
+      ) : null}
       <ExportCompaniesModal
         open={companiesExportOpen}
         onClose={() => setCompaniesExportOpen(false)}
         companies={customersTabRows}
         listKind={customersListTab}
       />
+            </>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }

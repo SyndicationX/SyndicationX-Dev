@@ -14,12 +14,14 @@ export function investmentRowHasInvestorStake(row: InvestmentListRow): boolean {
 }
 
 /**
+ * Investor archive always moves the row to Archives.
  * Sponsor `archived` hides deals from syndication active lists only. Investors
  * keep seeing deals they are invited to or invested in under Active / Pending.
  */
 export function investmentRowArchivedForInvestorView(
   row: InvestmentListRow,
 ): boolean {
+  if (row.investorArchived) return true
   if (!row.archived) return false
   return !investmentRowHasInvestorStake(row)
 }

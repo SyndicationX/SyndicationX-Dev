@@ -285,8 +285,15 @@ export function nestedDocumentVisibleToCoSponsor(
     if (key && ctx.viewerUserIds.has(key)) return true
   }
 
-  const esignRowId = doc.esignInvestorRowId?.trim().toLowerCase()
-  if (esignRowId && coSponsorLpMatchesSharedInvestorId(esignRowId, ctx.lpInvestors)) {
+  const esignRowIds = [
+    doc.esignInvestorRowId,
+    ...(doc.esignInvestorMatchIds ?? []),
+  ]
+  if (
+    esignRowIds.some((id) =>
+      coSponsorLpMatchesSharedInvestorId(id ?? "", ctx.lpInvestors),
+    )
+  ) {
     return true
   }
 

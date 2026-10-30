@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import emailConfig, {
   outgoingMailCcBcc,
   smtpEnvelopeForSendMail,
@@ -17,6 +17,7 @@ import { getAddDealFormById } from "./dealForm.service.js";
 import { isLpInvestorRole } from "./dealInvestment.service.js";
 import { resolveDealInvestorAssociatedSponsor } from "./dealInvestorAssociatedSponsor.service.js";
 import { buildDealMemberInviteLandingUrl } from "./dealMemberInviteToken.service.js";
+import { resolveEmailForContactMemberId } from "./dealMemberInvitationEmail.service.js";
 import { resolveInvestNowViewerContactOnDeal } from "./dealInvestNowViewerContact.service.js";
 
 const SENDER_DISPLAY_NAME =
@@ -244,22 +245,51 @@ export async function sendInvestmentCommitmentNotifications(params: {
     };
   }
 
+  const contactIds = [...new Set([contactId, viewerUserId].filter(Boolean))];
   const rows = await db
     .select()
     .from(dealInvestment)
     .where(
       and(
         eq(dealInvestment.dealId, dealId),
-        eq(dealInvestment.contactId, contactId),
+        inArray(dealInvestment.contactId, contactIds),
       ),
     )
     .orderBy(desc(dealInvestment.createdAt));
 
-  const requestedId = String(params.investmentId ?? "").trim().toLowerCase();
+  const requestedIdRaw = String(params.investmentId ?? "").trim();
+  const requestedId = requestedIdRaw.toLowerCase();
   const lpRows = rows.filter((row) => isLpInvestorRole(row.investor_role));
-  const investment = requestedId
+  let investment = requestedId
     ? lpRows.find((row) => row.id.toLowerCase() === requestedId)
     : lpRows.find((row) => formatCommitmentAmount(row.commitmentAmount));
+  if (!investment && requestedIdRaw) {
+    const [byId] = await db
+      .select()
+      .from(dealInvestment)
+      .where(
+        and(
+          eq(dealInvestment.dealId, dealId),
+          eq(dealInvestment.id, requestedIdRaw),
+        ),
+      )
+      .limit(1);
+    if (byId && isLpInvestorRole(byId.investor_role)) {
+      const ownerEmail = String(
+        (await resolveEmailForContactMemberId(String(byId.contactId ?? ""))) ??
+          "",
+      )
+        .trim()
+        .toLowerCase();
+      const ownerId = String(byId.contactId ?? "").trim().toLowerCase();
+      if (
+        ownerId === viewerUserId.toLowerCase() ||
+        (ownerEmail && ownerEmail === viewerEmail)
+      ) {
+        investment = byId;
+      }
+    }
+  }
   if (!investment) {
     return {
       ok: false,

@@ -32,10 +32,22 @@ import { userHasAccessToOrganization } from "../org/orgResolution.service.js";
 import { releaseBillingPaymentHold } from "../../middleware/billingPaymentLock.js";
 import {
   createDealStripeSubscription,
-  isDealSaasBillable,
   periodEndFromSubscription,
+  billingPlanRank,
   suggestedPlanIdForDeal,
+  upgradeDealStripeSubscription,
+  restoreSubscriptionToSnapshot,
 } from "./dealBilling.service.js";
+import {
+  catalogPackagePriceCents,
+  countDealCoGps,
+  couponCheckoutLineCents,
+  couponDurationAppliesToOneTime,
+  differenceRepeatPriceCents,
+  priceGapCents,
+  stripePriceIdForPlatformAmount,
+  suggestedSeatBandForDeal,
+} from "./dealExtraCompanyUser.service.js";
 import {
   dealSaasBillingHasStarted,
   dealSaasBillingNotYetDueMessage,
@@ -376,6 +388,96 @@ async function ensureStripeCustomer(params: {
   return after?.stripeCustomerId?.trim() || customer.id;
 }
 
+/**
+ * Stripe customer for one user's saved cards. Company and deal customers are
+ * not used here, so a card saved by one person is not an organization record.
+ */
+async function ensureUserCardStripeCustomer(params: {
+  companyId: string;
+  actorUserId: string;
+}): Promise<string> {
+  const userId = normalizeCompanyId(params.actorUserId);
+  const cid = normalizeCompanyId(params.companyId);
+  if (!userId || !cid) throw new Error("Invalid user id");
+
+  const [actor] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      username: users.username,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      stripeCustomerId: users.stripeCustomerId,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!actor) throw new Error("User not found");
+
+  const stripe = getStripeClient();
+  const storedId = actor.stripeCustomerId?.trim() ?? "";
+  if (storedId) {
+    try {
+      const existing = await stripe.customers.retrieve(storedId);
+      if (!("deleted" in existing && existing.deleted)) return storedId;
+    } catch (err) {
+      const missing =
+        err instanceof Stripe.errors.StripeInvalidRequestError &&
+        err.code === "resource_missing";
+      if (!missing) throw err;
+    }
+    await db
+      .update(users)
+      .set({ stripeCustomerId: null, updatedAt: new Date() })
+      .where(and(eq(users.id, userId), eq(users.stripeCustomerId, storedId)));
+  }
+
+  const name =
+    [actor.firstName, actor.lastName].filter((part) => part?.trim()).join(" ").trim() ||
+    actor.username;
+  const customer = await stripe.customers.create(
+    {
+      name: name || undefined,
+      email: actor.email?.trim() || undefined,
+      metadata: {
+        payerUserId: userId,
+        companyId: cid,
+        billingScope: "user_payment_method",
+      },
+    },
+    {
+      idempotencyKey: storedId
+        ? `user_card_customer_${userId}_replaces_${storedId}`
+        : `user_card_customer_${userId}`,
+    },
+  );
+
+  await db
+    .update(users)
+    .set({ stripeCustomerId: customer.id, updatedAt: new Date() })
+    .where(and(eq(users.id, userId), isNull(users.stripeCustomerId)));
+
+  const [after] = await db
+    .select({ stripeCustomerId: users.stripeCustomerId })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return after?.stripeCustomerId?.trim() || customer.id;
+}
+
+async function userIdForStripeCustomer(
+  customerId: string | null | undefined,
+): Promise<string | null> {
+  const id = String(customerId ?? "").trim();
+  if (!id) return null;
+  const [row] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.stripeCustomerId, id))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 const SQL_ROLE_IS_LEAD = `(
   lower(trim(%COL%)) IN ('lead sponsor', 'lead_sponsor')
   OR (
@@ -617,29 +719,95 @@ async function ensureDealPayerStripeCustomer(params: {
   return customer.id;
 }
 
-function stripeCustomerIdOf(
+export function stripeCustomerIdOf(
   customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
 ): string {
   if (!customer) return "";
   return typeof customer === "string" ? customer : customer.id ?? "";
 }
 
-/** Same physical card or bank account, used to reuse a copy already on the lead sponsor. */
-function savedPaymentFingerprint(pm: Stripe.PaymentMethod): string {
-  if (pm.type === "card" && pm.card?.fingerprint) return `card:${pm.card.fingerprint}`;
-  if (pm.type === "us_bank_account" && pm.us_bank_account?.fingerprint) {
-    return `bank:${pm.us_bank_account.fingerprint}`;
+export const SAVED_CARD_USE_NEW_METHOD_MESSAGE =
+  "This saved card can't be used for this deal. Select Pay with new method. You can enter the same card there.";
+
+export type SavedDealPaymentDecision =
+  | { action: "charge"; customerId: string; paymentMethodId: string }
+  | { action: "attach"; customerId: string; paymentMethodId: string }
+  | { action: "reject"; message: string };
+
+/**
+ * One saved-card attempt charges the Stripe customer that already holds that
+ * card. The paying user's customer and this deal's payer customer are valid.
+ * The organization customer is not.
+ */
+export function decideSavedDealPayment(params: {
+  payerCustomerId: string;
+  attachedCustomerId: string;
+  paymentMethodId: string;
+  /** Company customer and every deal payer customer for this company. */
+  ownedCustomerIds?: string[];
+}): SavedDealPaymentDecision {
+  const payerCustomerId = params.payerCustomerId.trim();
+  const attachedCustomerId = params.attachedCustomerId.trim();
+  const owned = new Set(
+    (params.ownedCustomerIds ?? [])
+      .map((id) => id.trim())
+      .filter(Boolean),
+  );
+  if (payerCustomerId) owned.add(payerCustomerId);
+
+  if (attachedCustomerId) {
+    if (owned.size > 0 && !owned.has(attachedCustomerId)) {
+      return { action: "reject", message: SAVED_CARD_USE_NEW_METHOD_MESSAGE };
+    }
+    return {
+      action: "charge",
+      customerId: attachedCustomerId,
+      paymentMethodId: params.paymentMethodId,
+    };
   }
-  return "";
+  return {
+    action: "attach",
+    customerId: payerCustomerId,
+    paymentMethodId: params.paymentMethodId,
+  };
+}
+
+/** Deal payer customers for this company. The organization customer is excluded. */
+async function dealPayerStripeCustomerIds(companyId: string): Promise<string[]> {
+  const cid = normalizeCompanyId(companyId);
+  if (!cid) return [];
+  const payerRows = await db
+    .select({ stripePayerCustomerId: addDealForm.stripePayerCustomerId })
+    .from(addDealForm)
+    .where(
+      and(
+        eq(addDealForm.organizationId, cid),
+        isNotNull(addDealForm.stripePayerCustomerId),
+      ),
+    );
+  return [
+    ...new Set(
+      payerRows
+        .map((row) => String(row.stripePayerCustomerId ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function organizationStripeCustomerId(companyId: string): Promise<string> {
+  const cid = normalizeCompanyId(companyId);
+  if (!cid) return "";
+  const [company] = await db
+    .select({ stripeCustomerId: companies.stripeCustomerId })
+    .from(companies)
+    .where(eq(companies.id, cid))
+    .limit(1);
+  return company?.stripeCustomerId?.trim() ?? "";
 }
 
 /**
- * Bill the current lead sponsor. A card saved on an older customer stays there
- * for other deals; this payment uses a copy on the lead sponsor's customer.
- *
- * Stripe's share API takes the customer the card is already attached to, then
- * the copy is attached to the lead sponsor. Passing the lead sponsor as
- * `customer` makes Stripe reject the card.
+ * Charge a saved card on the customer that already holds it. A card that
+ * belongs to another company's Stripe customer is not moved or charged.
  */
 async function customerForSavedDealPayment(params: {
   companyId: string;
@@ -650,73 +818,72 @@ async function customerForSavedDealPayment(params: {
   const payerCustomerId = await ensureDealPayerStripeCustomer(params);
   const stripe = getStripeClient();
   const pm = await stripe.paymentMethods.retrieve(params.paymentMethodId);
-  const attached = stripeCustomerIdOf(pm.customer);
-  if (!attached || attached === payerCustomerId) {
-    if (!attached) {
-      await stripe.paymentMethods.attach(params.paymentMethodId, {
-        customer: payerCustomerId,
-      });
-    }
-    return {
-      customerId: payerCustomerId,
-      paymentMethodId: params.paymentMethodId,
-    };
-  }
-  try {
-    const fingerprint = savedPaymentFingerprint(pm);
-    if (fingerprint && pm.type === "card") {
-      const existing = await stripe.paymentMethods.list({
-        customer: payerCustomerId,
-        type: "card",
-        limit: 100,
-      });
-      const reused = existing.data.find(
-        (row) => savedPaymentFingerprint(row) === fingerprint,
-      );
-      if (reused) {
-        return { customerId: payerCustomerId, paymentMethodId: reused.id };
-      }
-    }
-    if (fingerprint && pm.type === "us_bank_account") {
-      const existing = await stripe.paymentMethods.list({
-        customer: payerCustomerId,
-        type: "us_bank_account",
-        limit: 100,
-      });
-      const reused = existing.data.find(
-        (row) => savedPaymentFingerprint(row) === fingerprint,
-      );
-      if (reused) {
-        return { customerId: payerCustomerId, paymentMethodId: reused.id };
-      }
-    }
-
-    const cloned = await stripe.paymentMethods.create({
-      customer: attached,
-      payment_method: params.paymentMethodId,
-      metadata: {
-        clonedFromCustomer: attached,
-        clonedFromPaymentMethod: params.paymentMethodId,
-        dealPayerCustomerId: payerCustomerId,
-      },
-    });
-    let sharedId = cloned.id;
-    if (stripeCustomerIdOf(cloned.customer) !== payerCustomerId) {
-      if (stripeCustomerIdOf(cloned.customer)) {
-        await stripe.paymentMethods.detach(cloned.id);
-      }
-      const attachedCopy = await stripe.paymentMethods.attach(cloned.id, {
-        customer: payerCustomerId,
-      });
-      sharedId = attachedCopy.id;
-    }
-    return { customerId: payerCustomerId, paymentMethodId: sharedId };
-  } catch (err) {
-    console.warn("customerForSavedDealPayment clone:", err);
+  const attachedCustomerId = stripeCustomerIdOf(pm.customer);
+  const organizationCustomerId = await organizationStripeCustomerId(
+    params.companyId,
+  );
+  if (
+    organizationCustomerId &&
+    attachedCustomerId === organizationCustomerId
+  ) {
     throw new Error(
-      "This saved payment method belongs to the previous billing contact. Pay in Stripe so the current lead sponsor is billed.",
+      "Organization cards are not used to pay a deal. Use your own card.",
     );
   }
+  const actorId = normalizeCompanyId(params.actorUserId);
+  let actorCustomerId = "";
+  if (actorId) {
+    const [actor] = await db
+      .select({ stripeCustomerId: users.stripeCustomerId })
+      .from(users)
+      .where(eq(users.id, actorId))
+      .limit(1);
+    actorCustomerId = actor?.stripeCustomerId?.trim() ?? "";
+  }
+  const decision = decideSavedDealPayment({
+    payerCustomerId,
+    attachedCustomerId,
+    paymentMethodId: params.paymentMethodId,
+    ownedCustomerIds: [
+      ...(await dealPayerStripeCustomerIds(params.companyId)),
+      actorCustomerId,
+    ],
+  });
+  if (decision.action === "reject") {
+    throw new Error(decision.message);
+  }
+  if (decision.action === "attach") {
+    await stripe.paymentMethods.attach(decision.paymentMethodId, {
+      customer: decision.customerId,
+    });
+  }
+  return {
+    customerId: decision.customerId,
+    paymentMethodId: decision.paymentMethodId,
+  };
+}
+
+/**
+ * An existing subscription can only be charged with a card on that same
+ * Stripe customer. A card saved on another company customer stays in place.
+ */
+export async function paymentMethodForExistingSubscription(params: {
+  stripe: Stripe;
+  subscriptionId: string;
+  paymentMethodId: string;
+  paymentMethodCustomerId: string;
+}): Promise<string | undefined> {
+  try {
+    const sub = await params.stripe.subscriptions.retrieve(params.subscriptionId);
+    const subCustomer = stripeCustomerIdOf(sub.customer);
+    if (!subCustomer || subCustomer === params.paymentMethodCustomerId) {
+      return params.paymentMethodId;
+    }
+  } catch (err) {
+    console.warn("paymentMethodForExistingSubscription:", err);
+    return params.paymentMethodId;
+  }
+  return undefined;
 }
 
 /**
@@ -747,29 +914,132 @@ export async function syncDealPayerProfileToCurrentLead(
 }
 
 export type CheckoutResult =
-  | { ok: true; url: string }
+  | { ok: true; url: string; upgraded?: boolean }
   | { ok: false; status: number; message: string };
+
+/** Show the customer's saved card and bank account on the Stripe Checkout page. */
+const CHECKOUT_SAVED_PAYMENT_METHODS: Pick<
+  Stripe.Checkout.SessionCreateParams,
+  "saved_payment_method_options"
+> = {
+  saved_payment_method_options: {
+    payment_method_save: "enabled",
+    allow_redisplay_filters: ["always"],
+  },
+};
+
+/**
+ * Checkout may show only this user's saved cards. Other people's methods on
+ * the same Stripe customer stay hidden.
+ */
+async function scopeCheckoutCardsToUser(
+  stripe: Stripe,
+  customerId: string,
+  companyId: string,
+  actorUserId: string,
+): Promise<void> {
+  const id = customerId.trim();
+  const cid = normalizeCompanyId(companyId);
+  const userId = normalizeCompanyId(actorUserId);
+  if (!id || !cid || !userId) return;
+
+  const owned = await db
+    .select({
+      stripePaymentMethodId: companyBillingPaymentMethods.stripePaymentMethodId,
+    })
+    .from(companyBillingPaymentMethods)
+    .where(
+      and(
+        eq(companyBillingPaymentMethods.companyId, cid),
+        eq(companyBillingPaymentMethods.addedByUserId, userId),
+        isNull(companyBillingPaymentMethods.detachedAt),
+      ),
+    );
+  const ownedIds = new Set(owned.map((row) => row.stripePaymentMethodId));
+  const methods = await stripe.paymentMethods.list({ customer: id, limit: 100 });
+  for (const method of methods.data) {
+    const metaOwner = normalizeCompanyId(
+      String(method.metadata?.payerUserId ?? ""),
+    );
+    const mine = ownedIds.has(method.id) || metaOwner === userId;
+    const target = mine ? "always" : "limited";
+    if (method.allow_redisplay === target) continue;
+    try {
+      await stripe.paymentMethods.update(method.id, {
+        allow_redisplay: target,
+      });
+    } catch (err) {
+      console.warn("scopeCheckoutCardsToUser:", err);
+    }
+  }
+}
+
+/**
+ * Checkout uses this user's Stripe customer when they already saved a card,
+ * so another person's cards on the company customer are not offered.
+ */
+async function customerIdShowingSavedCards(
+  stripe: Stripe,
+  preferredCustomerId: string,
+  companyId: string,
+  actorUserId: string,
+): Promise<string> {
+  const preferred = preferredCustomerId.trim();
+  const userId = normalizeCompanyId(actorUserId);
+  const cid = normalizeCompanyId(companyId);
+  let customerId = preferred;
+  if (userId && cid) {
+    const [owned] = await db
+      .select({
+        stripeCustomerId: companyBillingPaymentMethods.stripeCustomerId,
+      })
+      .from(companyBillingPaymentMethods)
+      .where(
+        and(
+          eq(companyBillingPaymentMethods.companyId, cid),
+          eq(companyBillingPaymentMethods.addedByUserId, userId),
+          isNull(companyBillingPaymentMethods.detachedAt),
+          isNotNull(companyBillingPaymentMethods.stripeCustomerId),
+        ),
+      )
+      .orderBy(desc(companyBillingPaymentMethods.createdAt))
+      .limit(1);
+    const ownedCustomer = owned?.stripeCustomerId?.trim() ?? "";
+    if (ownedCustomer) customerId = ownedCustomer;
+    else {
+      const [userRow] = await db
+        .select({ stripeCustomerId: users.stripeCustomerId })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      const userCustomer = userRow?.stripeCustomerId?.trim() ?? "";
+      if (userCustomer) customerId = userCustomer;
+    }
+  }
+  if (customerId) {
+    await scopeCheckoutCardsToUser(stripe, customerId, companyId, actorUserId);
+  }
+  return customerId || preferred;
+}
 
 async function promotionCodeIdFromInput(
   raw: string | undefined,
-  dealId?: string,
 ): Promise<
-  | { ok: true; id?: string; code?: string }
+  | {
+      ok: true;
+      id?: string;
+      code?: string;
+      preview?: {
+        percentOff: number | null;
+        amountOffCents: number | null;
+        duration: string;
+        durationInMonths: number | null;
+      };
+    }
   | { ok: false; status: number; message: string }
 > {
   const code = String(raw ?? "").trim();
   if (!code) return { ok: true };
-  const deal = String(dealId ?? "").trim();
-  if (deal) {
-    const { dealHasRedeemedSaasCoupon } = await import("./dealBilling.service.js");
-    if (await dealHasRedeemedSaasCoupon(deal)) {
-      return {
-        ok: false,
-        status: 400,
-        message: "This deal has already used a coupon.",
-      };
-    }
-  }
   const { lookupActivePromotionCode } = await import("./platformCoupon.service.js");
   const looked = await lookupActivePromotionCode(code);
   if (!looked.ok) return { ok: false, status: 400, message: looked.message };
@@ -777,7 +1047,114 @@ async function promotionCodeIdFromInput(
     ok: true,
     id: looked.preview.promotionCodeId,
     code: looked.preview.code,
+    preview: {
+      percentOff: looked.preview.percentOff,
+      amountOffCents: looked.preview.amountOffCents,
+      duration: looked.preview.duration,
+      durationInMonths: looked.preview.durationInMonths,
+    },
   };
+}
+
+async function redeemCoveredDifferenceCoupon(params: {
+  stripe: Stripe;
+  customerId: string;
+  amountCents: number;
+  promotionCodeId: string;
+  description: string;
+  metadata: Record<string, string>;
+  /** Subtracted after the coupon, so a covered package invoices at $0. */
+  creditCents?: number;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const item = await params.stripe.invoiceItems.create({
+    customer: params.customerId,
+    amount: params.amountCents,
+    currency: "usd",
+    description: params.description,
+    metadata: params.metadata,
+    discounts: [{ promotion_code: params.promotionCodeId }],
+  });
+  let creditId = "";
+  if (params.creditCents != null && params.creditCents > 0) {
+    const credit = await params.stripe.invoiceItems.create({
+      customer: params.customerId,
+      amount: -Math.round(params.creditCents),
+      currency: "usd",
+      description: "Amount already covered",
+      metadata: params.metadata,
+    });
+    creditId = credit.id;
+  }
+  try {
+    let invoice = await params.stripe.invoices.create({
+      customer: params.customerId,
+      collection_method: "charge_automatically",
+      auto_advance: false,
+      pending_invoice_items_behavior: "include",
+      metadata: params.metadata,
+    });
+    invoice = await params.stripe.invoices.finalizeInvoice(invoice.id);
+    if ((invoice.amount_due ?? 0) > 0) {
+      if (invoice.status === "open") {
+        await params.stripe.invoices.voidInvoice(invoice.id);
+      }
+      return { ok: false, message: "Coupon did not cover the difference." };
+    }
+    return { ok: true };
+  } catch (err) {
+    try {
+      await params.stripe.invoiceItems.del(item.id);
+      if (creditId) await params.stripe.invoiceItems.del(creditId);
+    } catch (deleteErr) {
+      console.warn("redeemCoveredDifferenceCoupon cleanup:", deleteErr);
+    }
+    const message =
+      err instanceof Error ? err.message : "Could not apply that coupon.";
+    return { ok: false, message: couponFailureMessage(message) };
+  }
+}
+
+function couponHoldFromMetadata(
+  meta: Stripe.Metadata | null | undefined,
+): {
+  couponCode?: string;
+  couponDuration?: string;
+  couponDurationMonths?: number;
+  repeatPriceCents?: number;
+} {
+  const couponCode = String(meta?.couponCode ?? "").trim();
+  const couponDuration = String(meta?.couponDuration ?? "").trim();
+  const months = Number(meta?.couponDurationMonths ?? "");
+  const repeat = Number(meta?.repeatPriceCents ?? "");
+  return {
+    ...(couponCode ? { couponCode } : {}),
+    ...(couponDuration ? { couponDuration } : {}),
+    ...(Number.isFinite(months) && months > 0
+      ? { couponDurationMonths: months }
+      : {}),
+    ...(meta?.repeatPriceCents != null &&
+    String(meta.repeatPriceCents).trim() !== "" &&
+    Number.isFinite(repeat)
+      ? { repeatPriceCents: repeat }
+      : {}),
+  };
+}
+
+function couponFailureMessage(message: string): string {
+  const text = message.toLowerCase();
+  if (text.includes("cannot be applied to one-time")) {
+    return "A repeating coupon applies to the subscription. The difference due is already reduced.";
+  }
+  if (text.includes("already used a coupon")) return "Coupon redeemed";
+  if (text.includes("expired")) return "Expired";
+  if (
+    text.includes("redeemed") ||
+    text.includes("redemption limit") ||
+    text.includes("maximum number of times")
+  ) {
+    return "Coupon redeemed";
+  }
+  return message;
 }
 
 export async function createCompanyCheckoutSession(params: {
@@ -791,6 +1168,11 @@ export async function createCompanyCheckoutSession(params: {
   dealId?: string;
   extraCompanyUsers?: number;
   promotionCode?: string;
+  /**
+   * `difference` charges only the catalog gap, then the subscription renews at the new package.
+   * `plan` charges that same gap and moves the deal onto the package it needs now.
+   */
+  upgradeMode?: "difference" | "plan";
   /** `null` = org admin (all deals); otherwise only these deal ids. */
   allowedDealIds?: string[] | null;
 }): Promise<CheckoutResult> {
@@ -854,7 +1236,7 @@ export async function createCompanyCheckoutSession(params: {
     };
   }
 
-  const cid = normalizeCompanyId(params.companyId);
+  let cid = normalizeCompanyId(params.companyId);
   if (!cid) {
     return { ok: false, status: 400, message: "Invalid company id" };
   }
@@ -895,6 +1277,7 @@ export async function createCompanyCheckoutSession(params: {
       companyId: cid,
       dealId,
       allowedDealIds: params.allowedDealIds ?? null,
+      actorUserId: params.actorUserId,
       requestedSeatBand: resolvedSeat,
     });
     if (!payable.ok) {
@@ -905,21 +1288,35 @@ export async function createCompanyCheckoutSession(params: {
       };
     }
     const deal = payable.deal;
+    const dealCompanyId = normalizeCompanyId(String(deal.organizationId ?? ""));
+    if (dealCompanyId) cid = dealCompanyId;
     const {
       assertCheckoutPlanMatchesDeal,
-      upgradeDealStripeSubscription,
       clearDealSaasSubscription,
     } = await import("./dealBilling.service.js");
-    const planMatch = await assertCheckoutPlanMatchesDeal({
-      dealId: String(deal.id),
-      planId: resolvedPlan,
-    });
-    if (!planMatch.ok) {
-      return {
-        ok: false,
-        status: planMatch.status,
-        message: planMatch.message,
-      };
+    if (params.upgradeMode === "plan") {
+      const minimumPlan = await suggestedPlanIdForDeal(String(deal.id));
+      if (billingPlanRank(resolvedPlan) < billingPlanRank(minimumPlan)) {
+        const label =
+          minimumPlan.charAt(0).toUpperCase() + minimumPlan.slice(1);
+        return {
+          ok: false,
+          status: 400,
+          message: `${label} is the plan for this deal.`,
+        };
+      }
+    } else {
+      const planMatch = await assertCheckoutPlanMatchesDeal({
+        dealId: String(deal.id),
+        planId: resolvedPlan,
+      });
+      if (!planMatch.ok) {
+        return {
+          ok: false,
+          status: planMatch.status,
+          message: planMatch.message,
+        };
+      }
     }
     const customerId = await ensureDealPayerStripeCustomer({
       companyId: cid,
@@ -927,10 +1324,7 @@ export async function createCompanyCheckoutSession(params: {
       actorUserId: params.actorUserId,
     });
     const stripe = getStripeClient();
-    const promotion = await promotionCodeIdFromInput(
-      params.promotionCode,
-      String(deal.id),
-    );
+    const promotion = await promotionCodeIdFromInput(params.promotionCode);
     if (!promotion.ok) return promotion;
     const promotionCodeId = promotion.id;
     const couponCode = promotion.code;
@@ -953,28 +1347,231 @@ export async function createCompanyCheckoutSession(params: {
         dealSubStatus.toLowerCase(),
       )
     ) {
-      const upgraded = await upgradeDealStripeSubscription({
-        deal,
-        planId: resolvedPlan,
-        cycle,
-        seatBand: resolvedSeat,
-        ...(promotionCodeId ? { promotionCodeId } : {}),
+      const sub = await stripe.subscriptions.retrieve(existingDealSub, {
+        expand: ["items.data.price"],
       });
-      if (!upgraded.ok) {
+      const currentPrice = sub.items.data[0]?.price;
+      const currentPriceId =
+        typeof currentPrice === "string" ? currentPrice : currentPrice?.id;
+      const paidPackage = planAndCycleFromPriceId(currentPriceId);
+      const paidSeat =
+        normalizeBillingSeatBand(deal.stripeSeatBand) ??
+        paidPackage.seatBand ??
+        "5";
+      const suggestedPlan = await suggestedPlanIdForDeal(String(deal.id));
+      const suggestedSeat = suggestedSeatBandForDeal(
+        suggestedPlan,
+        await countDealCoGps(String(deal.id)),
+      );
+      const upgradePlan =
+        params.upgradeMode === "plan" ? resolvedPlan : suggestedPlan;
+      const upgradeSeat =
+        params.upgradeMode === "plan" ? resolvedSeat : suggestedSeat;
+      // The cycle chosen for this payment, not the cycle already on Stripe.
+      const upgradeCycle = cycle;
+      const sameCycle = !paidPackage.cycle || paidPackage.cycle === upgradeCycle;
+      const paidCatalog = catalogPackagePriceCents(
+        paidPackage.planId ?? deal.stripePlanId,
+        upgradeCycle,
+        paidSeat,
+      );
+      const nextCatalog = catalogPackagePriceCents(
+        upgradePlan,
+        upgradeCycle,
+        upgradeSeat,
+      );
+      const paidOnStripe =
+        currentPrice && typeof currentPrice !== "string"
+          ? currentPrice.unit_amount
+          : null;
+      const paidCents =
+        sameCycle && typeof paidOnStripe === "number" && paidOnStripe > 0
+          ? paidOnStripe
+          : paidCatalog;
+      const differenceCents = priceGapCents(paidCents, nextCatalog);
+      if (params.upgradeMode === "plan" && differenceCents <= 0) {
+        const { upgradeDealStripeSubscription } = await import(
+          "./dealBilling.service.js"
+        );
+        const upgraded = await upgradeDealStripeSubscription({
+          deal,
+          planId: upgradePlan,
+          cycle: upgradeCycle,
+          seatBand: upgradeSeat,
+          collectDifference: false,
+          ...(promotionCodeId ? { promotionCodeId } : {}),
+          ...(couponCode ? { couponCode } : {}),
+        });
+        if (!upgraded.ok) {
+          return {
+            ok: false,
+            status: upgraded.status,
+            message: upgraded.message,
+          };
+        }
+        if (upgraded.hostedInvoiceUrl && !upgraded.paid) {
+          return { ok: true, url: upgraded.hostedInvoiceUrl };
+        }
+        await applySubscriptionToCompany(cid, upgraded.subscription, {
+          dealId: String(deal.id),
+        });
+        return { ok: true, url: "", upgraded: true };
+      }
+      if (differenceCents <= 0) {
         return {
           ok: false,
-          status: upgraded.status,
-          message: upgraded.message,
+          status: 409,
+          message: "This deal is already on the package selected.",
         };
       }
-      await applySubscriptionToCompany(cid, upgraded.subscription);
-      if (upgraded.hostedInvoiceUrl) {
-        return { ok: true, url: upgraded.hostedInvoiceUrl };
-      }
-      return {
-        ok: true,
-        url: `${frontend}/settings?billing=success&dealId=${encodeURIComponent(String(deal.id))}`,
+      const couponDuration = promotion.preview?.duration ?? "";
+      const couponMonths = promotion.preview?.durationInMonths ?? null;
+      const repeats =
+        couponDuration === "repeating" || couponDuration === "forever";
+      const priced = promotion.preview
+        ? differenceRepeatPriceCents({
+            paidCents: paidCents ?? 0,
+            differenceCents,
+            percentOff: promotion.preview.percentOff,
+            amountOffCents: promotion.preview.amountOffCents,
+          })
+        : null;
+      const upgradeMetadata: Record<string, string> = {
+        companyId: cid,
+        dealId: String(deal.id),
+        dealName: deal.dealName ?? "",
+        planId: upgradePlan,
+        billingCycle: upgradeCycle,
+        seatBand: upgradeSeat,
+        billingScope: "deal_upgrade",
+        payerUserId: params.actorUserId,
+        ...(couponCode ? { couponCode } : {}),
+        ...(couponDuration ? { couponDuration } : {}),
+        ...(repeats && couponMonths
+          ? { couponDurationMonths: String(couponMonths) }
+          : {}),
+        ...(repeats && priced
+          ? { repeatPriceCents: String(priced.repeatPriceCents) }
+          : {}),
       };
+      const holdDescription =
+        repeats && priced
+          ? couponDuration === "forever"
+            ? `Pays the difference from the amount already paid. This deal then bills $${(priced.repeatPriceCents / 100).toFixed(2)}.`
+            : `Pays the difference from the amount already paid. This deal then bills $${(priced.repeatPriceCents / 100).toFixed(2)} for ${couponMonths ?? 0} months, then the new package price.`
+          : "Pays the difference from the amount already paid. The subscription then renews at the new package price.";
+      const subCustomerId =
+        typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? "";
+      const checkoutCustomerId = await customerIdShowingSavedCards(
+        stripe,
+        subCustomerId || customerId,
+        cid,
+        params.actorUserId,
+      );
+      if (
+        promotionCodeId &&
+        priced &&
+        priced.discountedDifferenceCents === 0
+      ) {
+        const beforeUpgrade = existingDealSub
+          ? await stripe.subscriptions.retrieve(existingDealSub, {
+              expand: ["items.data.price"],
+            })
+          : null;
+        const upgraded = await upgradeDealStripeSubscription({
+          deal,
+          planId: upgradePlan,
+          cycle: upgradeCycle,
+          seatBand: upgradeSeat,
+          collectDifference: false,
+          ...(couponCode ? { couponCode } : {}),
+          ...(couponDuration ? { couponDuration } : {}),
+          ...(couponMonths ? { couponDurationMonths: couponMonths } : {}),
+          ...(repeats ? { repeatPriceCents: priced.repeatPriceCents } : {}),
+        });
+        if (!upgraded.ok && upgraded.status !== 409) {
+          return {
+            ok: false,
+            status: upgraded.status,
+            message: upgraded.message,
+          };
+        }
+        if (couponDurationAppliesToOneTime(couponDuration)) {
+          const redeemed = await redeemCoveredDifferenceCoupon({
+            stripe,
+            customerId: checkoutCustomerId,
+            amountCents: (paidCents ?? 0) + differenceCents,
+            creditCents: priced.repeatPriceCents,
+            promotionCodeId,
+            description: `Upgrade difference for ${deal.dealName?.trim() || "this deal"}`,
+            metadata: upgradeMetadata,
+          });
+          if (!redeemed.ok) {
+            if (beforeUpgrade && upgraded.ok) {
+              try {
+                await restoreSubscriptionToSnapshot(beforeUpgrade);
+              } catch (restoreErr) {
+                console.warn("restore subscription after coupon redeem:", restoreErr);
+              }
+            }
+            return { ok: false, status: 400, message: redeemed.message };
+          }
+        }
+        if (upgraded.ok) {
+          await applySubscriptionToCompany(cid, upgraded.subscription, {
+            dealId: String(deal.id),
+          });
+        }
+        return { ok: true, url: "", upgraded: true };
+      }
+      const netDue = priced?.discountedDifferenceCents ?? differenceCents;
+      const oneTimeCoupon = Boolean(promotionCodeId) && couponDuration === "once";
+      const lineAmount =
+        oneTimeCoupon && promotion.preview
+          ? couponCheckoutLineCents({
+              dueCents: netDue,
+              percentOff: promotion.preview.percentOff,
+              amountOffCents: promotion.preview.amountOffCents,
+            })
+          : netDue;
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer: checkoutCustomerId,
+        payment_method_types: ["card", "us_bank_account"],
+        ...CHECKOUT_SAVED_PAYMENT_METHODS,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "usd",
+              unit_amount: lineAmount,
+              product_data: {
+                name: `Upgrade difference for ${deal.dealName?.trim() || "this deal"}`,
+                description: holdDescription,
+              },
+            },
+          },
+        ],
+        success_url: `${frontend}/settings?billing=success&session_id={CHECKOUT_SESSION_ID}&dealId=${encodeURIComponent(String(deal.id))}`,
+        cancel_url: `${frontend}/settings?billing=cancel&dealId=${encodeURIComponent(String(deal.id))}`,
+        client_reference_id: cid,
+        metadata: upgradeMetadata,
+        payment_intent_data: {
+          description: `Upgrade difference for ${deal.dealName?.trim() || "this deal"}`,
+          metadata: upgradeMetadata,
+        },
+        ...(oneTimeCoupon && promotionCodeId
+          ? { discounts: [{ promotion_code: promotionCodeId }] }
+          : {}),
+      });
+      if (!session.url) {
+        return {
+          ok: false,
+          status: 502,
+          message: "Stripe did not return a checkout URL.",
+        };
+      }
+      return { ok: true, url: session.url };
     }
 
     const {
@@ -996,13 +1593,27 @@ export async function createCompanyCheckoutSession(params: {
       extraUserComment,
       cycle,
     );
+    const platformPriceId =
+      (await stripePriceIdForPlatformAmount({
+        stripe,
+        planId: resolvedPlan,
+        cycle,
+        seatBand: resolvedSeat,
+      })) ?? priceId;
+    const checkoutCustomerId = await customerIdShowingSavedCards(
+      stripe,
+      customerId,
+      cid,
+      params.actorUserId,
+    );
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer: customerId,
+      customer: checkoutCustomerId,
       // Card + ACH (US bank account). Wallet methods follow Dashboard settings.
       payment_method_types: ["card", "us_bank_account"],
+      ...CHECKOUT_SAVED_PAYMENT_METHODS,
       line_items: [
-        { price: priceId, quantity: 1 },
+        { price: platformPriceId, quantity: 1 },
         ...extraLineItems,
       ],
       success_url: `${frontend}/settings?billing=success&session_id={CHECKOUT_SESSION_ID}&dealId=${encodeURIComponent(String(deal.id))}`,
@@ -1067,7 +1678,7 @@ export async function createCompanyCheckoutSession(params: {
         status: missingPrice ? 400 : 502,
         message: missingPrice
           ? `Stripe does not recognize this Price ID in the account for STRIPE_SECRET_KEY (${err.message}). Create the product/price in that same Stripe account (Dashboard → Products) and update backend/.env.local.`
-          : err.message || "Stripe rejected the checkout request.",
+          : couponFailureMessage(err.message || "Stripe rejected the checkout request."),
       };
     }
     const msg =
@@ -1151,7 +1762,12 @@ function resolveBillingSelection(params: {
 }
 
 export type PaySavedMethodResult =
-  | { ok: true; paidDealId: string; status: Awaited<ReturnType<typeof getCompanyBillingStatus>> }
+  | {
+      ok: true;
+      paidDealId: string;
+      status: Awaited<ReturnType<typeof getCompanyBillingStatus>>;
+      checkoutUrl?: string;
+    }
   | { ok: false; status: number; message: string };
 
 /**
@@ -1182,7 +1798,7 @@ export async function payCompanyDealWithSavedMethod(params: {
   const selection = resolveBillingSelection(params);
   if (!selection.ok) return selection;
 
-  const cid = normalizeCompanyId(params.companyId);
+  let cid = normalizeCompanyId(params.companyId);
   if (!cid) {
     return { ok: false, status: 400, message: "Invalid company id" };
   }
@@ -1212,6 +1828,7 @@ export async function payCompanyDealWithSavedMethod(params: {
       companyId: cid,
       dealId,
       allowedDealIds: params.allowedDealIds ?? null,
+      actorUserId: params.actorUserId,
       requestedSeatBand: selection.seatBand,
     });
     if (!payable.ok) {
@@ -1222,6 +1839,8 @@ export async function payCompanyDealWithSavedMethod(params: {
       };
     }
     const deal = payable.deal;
+    const dealCompanyId = normalizeCompanyId(String(deal.organizationId ?? ""));
+    if (dealCompanyId) cid = dealCompanyId;
     const planMatch = await assertCheckoutPlanMatchesDeal({
       dealId: String(deal.id),
       planId: selection.planId,
@@ -1233,7 +1852,9 @@ export async function payCompanyDealWithSavedMethod(params: {
         message: planMatch.message,
       };
     }
-    const methods = await listCompanyPaymentMethods(cid);
+    const methods = await listCompanyPaymentMethods(cid, {
+      userId: params.actorUserId,
+    });
     const found = methods.find(
       (m) => m.stripePaymentMethodId === rawPm || m.id === rawPm,
     );
@@ -1273,10 +1894,7 @@ export async function payCompanyDealWithSavedMethod(params: {
     const customerId = payerPayment.customerId;
     const payerPaymentMethodId = payerPayment.paymentMethodId;
 
-    const promotion = await promotionCodeIdFromInput(
-      params.promotionCode,
-      String(deal.id),
-    );
+    const promotion = await promotionCodeIdFromInput(params.promotionCode);
     if (!promotion.ok) return promotion;
     const promotionCodeId = promotion.id;
     const couponCode = promotion.code;
@@ -1287,14 +1905,32 @@ export async function payCompanyDealWithSavedMethod(params: {
         String(deal.stripeSubscriptionStatus ?? "none").toLowerCase(),
       );
     if (existingActive) {
+      const upgradePaymentMethodId = await paymentMethodForExistingSubscription({
+        stripe,
+        subscriptionId: existingDealSub,
+        paymentMethodId: payerPaymentMethodId,
+        paymentMethodCustomerId: customerId,
+      });
       const upgraded = await upgradeDealStripeSubscription({
         deal,
         planId: selection.planId,
         cycle: selection.cycle,
         seatBand: selection.seatBand,
-        paymentMethodId: payerPaymentMethodId,
+        ...(upgradePaymentMethodId
+          ? { paymentMethodId: upgradePaymentMethodId }
+          : {}),
         ...(promotionCodeId ? { promotionCodeId } : {}),
         ...(couponCode ? { couponCode } : {}),
+        ...(promotion.preview
+          ? {
+              couponDuration: promotion.preview.duration,
+              percentOff: promotion.preview.percentOff,
+              amountOffCents: promotion.preview.amountOffCents,
+              ...(promotion.preview.durationInMonths
+                ? { couponDurationMonths: promotion.preview.durationInMonths }
+                : {}),
+            }
+          : {}),
       });
       if (!upgraded.ok) {
         return {
@@ -1304,6 +1940,16 @@ export async function payCompanyDealWithSavedMethod(params: {
         };
       }
       if (!upgraded.paid) {
+        if (upgraded.hostedInvoiceUrl) {
+          return {
+            ok: true,
+            paidDealId: String(deal.id),
+            status: await getCompanyBillingStatus(cid, {
+              dealIds: params.allowedDealIds,
+            }),
+            checkoutUrl: upgraded.hostedInvoiceUrl,
+          };
+        }
         return {
           ok: false,
           status: 402,
@@ -1385,14 +2031,16 @@ export async function payCompanyDealWithSavedMethod(params: {
       return {
         ok: false,
         status: 402,
-        message: err.message || "The card was declined. Pay in Stripe or try another method.",
+        message: couponFailureMessage(
+          err.message || "The card was declined. Pay in Stripe or try another method.",
+        ),
       };
     }
     if (err instanceof Stripe.errors.StripeInvalidRequestError) {
       return {
         ok: false,
         status: 502,
-        message: err.message || "Stripe rejected the payment.",
+        message: couponFailureMessage(err.message || "Stripe rejected the payment."),
       };
     }
     const msg =
@@ -1401,143 +2049,17 @@ export async function payCompanyDealWithSavedMethod(params: {
   }
 }
 
-const AUTO_DEAL_BILLING_ACTIVE_STATUSES = new Set([
-  "active",
-  "trialing",
-  "past_due",
-  "unpaid",
-]);
-
-function billingCycleForAutomaticDealBilling(
-  raw: string | null | undefined,
-): StripeBillingCycle {
-  const s = String(raw ?? "").trim().toLowerCase();
-  return s === "annual" || s === "annually" || s === "yearly"
-    ? "annual"
-    : "monthly";
-}
-
 export async function processDueDealSaasBillingFromSavedMethods(
-  options: { limit?: number } = {},
+  _options: { limit?: number } = {},
 ): Promise<{
   checked: number;
   started: number;
   skipped: number;
   failed: number;
 }> {
-  if (!getStripeConfig()) {
-    return { checked: 0, started: 0, skipped: 0, failed: 0 };
-  }
-
-  const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 200);
-  const dueRows = await db
-    .select({
-      deal: addDealForm,
-      companyId: companies.id,
-      stripeCustomerId: companies.stripeCustomerId,
-    })
-    .from(addDealForm)
-    .innerJoin(companies, eq(addDealForm.organizationId, companies.id))
-    .where(
-      and(
-        eq(addDealForm.archived, false),
-        sql`${addDealForm.saasBillingStartsAt} IS NOT NULL`,
-        sql`${addDealForm.saasBillingStartsAt} <= now()`,
-        sql`coalesce(${addDealForm.stripeSubscriptionStatus}, 'none') not in ('active', 'trialing', 'past_due', 'unpaid')`,
-      ),
-    )
-    .limit(limit);
-
-  let started = 0;
-  let skipped = 0;
-  let failed = 0;
-
-  for (const row of dueRows) {
-    const deal = row.deal;
-    const dealId = String(deal.id ?? "").trim();
-    const companyId = normalizeCompanyId(String(row.companyId ?? ""));
-    const customerId = String(row.stripeCustomerId ?? "").trim();
-    if (
-      !dealId ||
-      !companyId ||
-      !customerId ||
-      !isDealSaasBillable(deal) ||
-      AUTO_DEAL_BILLING_ACTIVE_STATUSES.has(
-        String(deal.stripeSubscriptionStatus ?? "").trim().toLowerCase(),
-      )
-    ) {
-      skipped += 1;
-      continue;
-    }
-
-    try {
-      const paymentMethodId = await resolveDefaultPaymentMethodId(customerId);
-      if (!paymentMethodId) {
-        skipped += 1;
-        continue;
-      }
-
-      const planId = await suggestedPlanIdForDeal(dealId);
-      const cycle = billingCycleForAutomaticDealBilling(
-        deal.stripeBillingCycle,
-      );
-      const sub = await createDealStripeSubscription({
-        deal,
-        customerId,
-        paymentMethodId,
-        planId,
-        cycle,
-        seatBand: "5",
-        paymentBehavior: "error_if_incomplete",
-      });
-      if (!sub) {
-        failed += 1;
-        continue;
-      }
-
-      const status = String(sub.status ?? "").toLowerCase();
-      if (status !== "active" && status !== "trialing") {
-        try {
-          await getStripeClient().subscriptions.cancel(sub.id);
-        } catch {
-          /* ignore cleanup failure */
-        }
-        failed += 1;
-        continue;
-      }
-
-      await applySubscriptionToCompany(companyId, sub, { dealId });
-      await recordBillingEvent({
-        companyId,
-        eventType: "deal_saas.auto_billing_started",
-        stripeSubscriptionId: sub.id,
-        stripeCustomerId: customerId,
-        message: `Automatic SaaS billing started for deal ${dealId}`,
-        payload: {
-          dealId,
-          planId,
-          cycle,
-          paymentMethodId,
-          saasBillingStartsAt: deal.saasBillingStartsAt,
-        },
-      });
-      started += 1;
-    } catch (err) {
-      failed += 1;
-      console.warn(
-        "processDueDealSaasBillingFromSavedMethods:",
-        dealId,
-        err,
-      );
-    }
-  }
-
-  return {
-    checked: dueRows.length,
-    started,
-    skipped,
-    failed,
-  };
+  // A deal is paid by the person who checks out with their own card.
+  // Organization cards are not charged when a complimentary period ends.
+  return { checked: 0, started: 0, skipped: 0, failed: 0 };
 }
 
 type InvoiceWithSecrets = Stripe.Invoice & {
@@ -1659,7 +2181,7 @@ export async function createCompanySubscriptionPaymentElement(params: {
   const selection = resolveBillingSelection(params);
   if (!selection.ok) return selection;
 
-  const cid = normalizeCompanyId(params.companyId);
+  let cid = normalizeCompanyId(params.companyId);
   if (!cid) {
     return { ok: false, status: 400, message: "Invalid company id" };
   }
@@ -1691,6 +2213,7 @@ export async function createCompanySubscriptionPaymentElement(params: {
       companyId: cid,
       dealId,
       allowedDealIds: params.allowedDealIds ?? null,
+      actorUserId: params.actorUserId,
       requestedSeatBand: selection.seatBand,
     });
     if (!payable.ok) {
@@ -1701,6 +2224,8 @@ export async function createCompanySubscriptionPaymentElement(params: {
       };
     }
     const deal = payable.deal;
+    const dealCompanyId = normalizeCompanyId(String(deal.organizationId ?? ""));
+    if (dealCompanyId) cid = dealCompanyId;
     const planMatch = await assertCheckoutPlanMatchesDeal({
       dealId: String(deal.id),
       planId: selection.planId,
@@ -1769,10 +2294,17 @@ export async function createCompanySubscriptionPaymentElement(params: {
       extraUserComment,
     );
 
+    const platformPriceId =
+      (await stripePriceIdForPlatformAmount({
+        stripe,
+        planId: selection.planId,
+        cycle: selection.cycle,
+        seatBand: selection.seatBand,
+      })) ?? selection.priceId;
     const subscription = await stripe.subscriptions.create({
       customer: customerId,
       items: [
-        { price: selection.priceId, quantity: 1 },
+        { price: platformPriceId, quantity: 1 },
         ...(extraItem ? [extraItem] : []),
       ],
       payment_behavior: "default_incomplete",
@@ -1881,7 +2413,7 @@ export async function createCompanySetupIntent(params: {
   }
 
   try {
-    const customerId = await ensureStripeCustomer({
+    const customerId = await ensureUserCardStripeCustomer({
       companyId: cid,
       actorUserId: params.actorUserId,
     });
@@ -1899,6 +2431,7 @@ export async function createCompanySetupIntent(params: {
       },
       metadata: {
         companyId: cid,
+        payerUserId: params.actorUserId,
       },
     });
 
@@ -1937,6 +2470,7 @@ export async function syncCompanySubscriptionPayment(params: {
   companyId: string;
   subscriptionId?: string;
   paymentIntentId?: string;
+  actorUserId?: string;
 }): Promise<SyncSubscriptionPaymentResult> {
   const cfg = getStripeConfig();
   if (!cfg) {
@@ -2025,9 +2559,27 @@ export async function syncCompanySubscriptionPayment(params: {
     }
     if (customerId) {
       try {
-        await syncCompanyPaymentMethodsFromStripe(cid);
+        await syncCompanyPaymentMethodsFromStripe(cid, {
+          actorUserId: params.actorUserId,
+        });
       } catch (pmErr) {
         console.warn("syncCompanySubscriptionPayment payment methods:", pmErr);
+      }
+    }
+    const payerUserId = normalizeCompanyId(params.actorUserId ?? "");
+    if (payerUserId && paymentIntentId) {
+      try {
+        const paidIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const paidMethodId = stripeIdRef(paidIntent.payment_method);
+        if (paidMethodId) {
+          await assignPaymentMethodOwner({
+            companyId: cid,
+            stripePaymentMethodId: paidMethodId,
+            userId: payerUserId,
+          });
+        }
+      } catch (ownerErr) {
+        console.warn("syncCompanySubscriptionPayment card owner:", ownerErr);
       }
     }
 
@@ -2078,7 +2630,7 @@ export async function createCompanyBillingPortalSession(params: {
   }
 
   try {
-    const customerId = await ensureStripeCustomer({
+    const customerId = await ensureUserCardStripeCustomer({
       companyId: cid,
       actorUserId: params.actorUserId,
     });
@@ -2114,7 +2666,52 @@ export type BillingInvoiceRow = {
   dealName: string | null;
   billingScope?: "deal" | "extra_company_user" | null;
   comment?: string | null;
+  /** Portal user who started the deal payment, when Stripe metadata has one. */
+  paidByName?: string | null;
 };
+
+function payerUserIdFromStripeInvoice(inv: Stripe.Invoice): string | null {
+  const fromInvoice = normalizeCompanyId(String(inv.metadata?.payerUserId ?? ""));
+  if (fromInvoice) return fromInvoice;
+  const parentMeta = inv.parent?.subscription_details?.metadata;
+  return normalizeCompanyId(String(parentMeta?.payerUserId ?? ""));
+}
+
+async function billingUserDisplayNames(
+  userIds: Array<string | null | undefined>,
+): Promise<Map<string, string>> {
+  const ids = [
+    ...new Set(
+      userIds
+        .map((id) => normalizeCompanyId(String(id ?? "")))
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const names = new Map<string, string>();
+  if (ids.length === 0) return names;
+  const rows = await db
+    .select({
+      id: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      username: users.username,
+      email: users.email,
+    })
+    .from(users)
+    .where(inArray(users.id, ids));
+  for (const row of rows) {
+    const full = [row.firstName, row.lastName]
+      .map((part) => String(part ?? "").trim())
+      .filter(Boolean)
+      .join(" ");
+    const label =
+      full ||
+      String(row.username ?? "").trim() ||
+      String(row.email ?? "").trim();
+    if (label) names.set(String(row.id).toLowerCase(), label);
+  }
+  return names;
+}
 
 function extrasFromStripeInvoice(inv: Stripe.Invoice): {
   periodStart: string;
@@ -2526,13 +3123,16 @@ export async function listCompanyStripeInvoices(
     string,
     ReturnType<typeof extrasFromStripeInvoice>
   >();
+  const payerByInvoiceId = new Map<string, string>();
+  const payerBySubscriptionId = new Map<string, string>();
 
   // Prefer refreshing from Stripe when configured, then serve from DB.
   if (getStripeConfig() && company.stripeCustomerId?.trim()) {
+    const customerId = company.stripeCustomerId.trim();
     try {
       const stripe = getStripeClient();
       const list = await stripe.invoices.list({
-        customer: company.stripeCustomerId.trim(),
+        customer: customerId,
         limit: 50,
         expand: ["data.lines"],
       });
@@ -2543,6 +3143,25 @@ export async function listCompanyStripeInvoices(
           markPaid: inv.status === "paid",
         });
         extrasByInvoice.set(inv.id, extrasFromStripeInvoice(inv));
+        const payerUserId = payerUserIdFromStripeInvoice(inv);
+        if (payerUserId) {
+          payerByInvoiceId.set(inv.id, payerUserId);
+          const subscriptionId = subscriptionIdFromInvoice(inv);
+          if (subscriptionId) {
+            payerBySubscriptionId.set(subscriptionId, payerUserId);
+          }
+        }
+      }
+      const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+      });
+      for (const sub of subscriptions.data) {
+        const payerUserId = normalizeCompanyId(
+          String(sub.metadata?.payerUserId ?? ""),
+        );
+        if (payerUserId) payerBySubscriptionId.set(sub.id, payerUserId);
       }
     } catch (err) {
       console.warn("listCompanyStripeInvoices Stripe refresh:", err);
@@ -2555,6 +3174,41 @@ export async function listCompanyStripeInvoices(
     .where(eq(companyBillingInvoices.companyId, cid))
     .orderBy(desc(companyBillingInvoices.invoiceDate))
     .limit(50);
+
+  if (getStripeConfig()) {
+    const missingSubscriptionIds = [
+      ...new Set(
+        rows
+          .map((row) => row.stripeSubscriptionId?.trim() ?? "")
+          .filter((id) => id && !payerBySubscriptionId.has(id)),
+      ),
+    ];
+    if (missingSubscriptionIds.length > 0) {
+      try {
+        const { mapWithConcurrency } = await import(
+          "../../common/mapWithConcurrency.js"
+        );
+        const stripe = getStripeClient();
+        await mapWithConcurrency(missingSubscriptionIds, 4, async (subscriptionId) => {
+          try {
+            const sub = await stripe.subscriptions.retrieve(subscriptionId);
+            const payerUserId = normalizeCompanyId(
+              String(sub.metadata?.payerUserId ?? ""),
+            );
+            if (payerUserId) payerBySubscriptionId.set(subscriptionId, payerUserId);
+          } catch (err) {
+            console.warn(
+              "listCompanyStripeInvoices payer lookup:",
+              subscriptionId,
+              err,
+            );
+          }
+        });
+      } catch (err) {
+        console.warn("listCompanyStripeInvoices payer lookup:", err);
+      }
+    }
+  }
 
   const { mapStripeSubscriptionsToDeals } = await import(
     "./dealBilling.service.js"
@@ -2573,6 +3227,7 @@ export async function listCompanyStripeInvoices(
     : null;
 
   const invoices: BillingInvoiceRow[] = [];
+  const payerUserIdByInvoiceId = new Map<string, string>();
   for (const row of rows) {
     const sub = row.stripeSubscriptionId?.trim() ?? "";
     const deal = sub ? dealBySub.get(sub) : undefined;
@@ -2587,6 +3242,11 @@ export async function listCompanyStripeInvoices(
     const dealName =
       (deal?.dealName?.trim() ? deal.dealName : null) ||
       (dealId ? dealNames.get(dealId) || null : null);
+    const payerUserId =
+      payerByInvoiceId.get(row.stripeInvoiceId) ||
+      (sub ? payerBySubscriptionId.get(sub) : undefined) ||
+      null;
+    if (payerUserId) payerUserIdByInvoiceId.set(row.stripeInvoiceId, payerUserId);
     invoices.push({
       id: row.stripeInvoiceId,
       invoiceNumber: row.invoiceNumber || row.stripeInvoiceId,
@@ -2612,6 +3272,16 @@ export async function listCompanyStripeInvoices(
       dealName,
       billingScope: "deal",
     });
+  }
+
+  const paidByNames = await billingUserDisplayNames([
+    ...payerUserIdByInvoiceId.values(),
+  ]);
+  for (const invoice of invoices) {
+    const payerUserId = payerUserIdByInvoiceId.get(invoice.id);
+    invoice.paidByName = payerUserId
+      ? paidByNames.get(payerUserId) ?? null
+      : null;
   }
 
   const customerId = company.stripeCustomerId?.trim();
@@ -2826,6 +3496,78 @@ async function persistInvoicesForSubscription(params: {
  * Sync company billing from a Checkout Session id (success redirect).
  * Works locally and in production even if the webhook is delayed/missing briefly.
  */
+async function syncDealUpgradeCheckoutSession(params: {
+  companyId: string;
+  session: Stripe.Checkout.Session;
+}): Promise<
+  | { ok: true; status: CompanyBillingStatus; paidDealId: string | null }
+  | { ok: false; status: number; message: string }
+> {
+  const cid = params.companyId;
+  const session = params.session;
+  const metaCompany = normalizeCompanyId(
+    String(session.metadata?.companyId ?? session.client_reference_id ?? ""),
+  );
+  if (!metaCompany || metaCompany !== cid) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Checkout session does not belong to this company.",
+    };
+  }
+  if (session.payment_status !== "paid") {
+    return {
+      ok: false,
+      status: 409,
+      message: "Checkout payment is not complete yet.",
+    };
+  }
+  const dealId = normalizeCompanyId(String(session.metadata?.dealId ?? ""));
+  const planId = normalizeBillingPlanId(session.metadata?.planId);
+  const seatBand = normalizeBillingSeatBand(session.metadata?.seatBand);
+  const cycleRaw = String(session.metadata?.billingCycle ?? "").trim();
+  const cycle: StripeBillingCycle | null =
+    cycleRaw === "monthly"
+      ? "monthly"
+      : cycleRaw === "annual" || cycleRaw === "annually" || cycleRaw === "yearly"
+        ? "annual"
+        : null;
+  if (!dealId || !planId || !seatBand || !cycle) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Checkout session is missing the upgrade package.",
+    };
+  }
+  const [deal] = await db
+    .select()
+    .from(addDealForm)
+    .where(eq(addDealForm.id, dealId))
+    .limit(1);
+  if (!deal) {
+    return { ok: false, status: 404, message: "Deal not found." };
+  }
+  const upgraded = await upgradeDealStripeSubscription({
+    deal,
+    planId,
+    cycle,
+    seatBand,
+    collectDifference: false,
+    ...couponHoldFromMetadata(session.metadata),
+  });
+  if (!upgraded.ok && upgraded.status !== 409) {
+    return { ok: false, status: upgraded.status, message: upgraded.message };
+  }
+  if (upgraded.ok) {
+    await applySubscriptionToCompany(cid, upgraded.subscription, { dealId });
+  }
+  const status = await getCompanyBillingStatus(cid);
+  if (!status) {
+    return { ok: false, status: 404, message: "Company not found" };
+  }
+  return { ok: true, status, paidDealId: dealId };
+}
+
 export async function syncCompanyBillingFromCheckoutSession(params: {
   companyId: string;
   checkoutSessionId: string;
@@ -2855,6 +3597,12 @@ export async function syncCompanyBillingFromCheckoutSession(params: {
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
       expand: ["subscription", "subscription.latest_invoice", "invoice"],
     });
+    if (
+      session.mode === "payment" &&
+      String(session.metadata?.billingScope ?? "") === "deal_upgrade"
+    ) {
+      return syncDealUpgradeCheckoutSession({ companyId: cid, session });
+    }
     if (session.mode !== "subscription") {
       return {
         ok: false,
@@ -3063,9 +3811,18 @@ type PaymentMethodIdentity = {
   stripePaymentMethodId: string;
   stripeCustomerId: string | null;
   fingerprint: string | null;
+  addedByUserId?: string | null;
   isDefault: boolean;
   createdAt: Date;
 };
+
+function paymentMethodFingerprintKey(
+  row: Pick<PaymentMethodIdentity, "fingerprint" | "addedByUserId">,
+): string {
+  const fingerprint = row.fingerprint?.trim() ?? "";
+  if (!fingerprint) return "";
+  return `${row.addedByUserId ?? ""}:${fingerprint}`;
+}
 
 /**
  * Keep the default method, then the one on the company Stripe customer,
@@ -3098,7 +3855,7 @@ function duplicatePaymentMethodLosers<T extends PaymentMethodIdentity>(
   const drop: { loser: T; winner: T }[] = [];
 
   for (const row of rows) {
-    const fingerprint = row.fingerprint?.trim() ?? "";
+    const fingerprint = paymentMethodFingerprintKey(row);
     if (!fingerprint) {
       keep.push(row);
       continue;
@@ -3207,12 +3964,33 @@ export async function upsertPaymentMethodFromStripe(params: {
   companyId: string;
   paymentMethod: Stripe.PaymentMethod;
   isDefault?: boolean;
+  addedByUserId?: string | null;
 }): Promise<void> {
   const cid = normalizeCompanyId(params.companyId);
   if (!cid || !params.paymentMethod?.id) return;
   const fields = paymentMethodRowFields(params.paymentMethod, {
     isDefault: params.isDefault,
   });
+  const ownerFromMetadata = normalizeCompanyId(
+    String(params.paymentMethod.metadata?.payerUserId ?? ""),
+  );
+  const ownerFromCustomer = await userIdForStripeCustomer(fields.stripeCustomerId);
+  const requestedOwner =
+    normalizeCompanyId(params.addedByUserId ?? "") ??
+    ownerFromMetadata ??
+    ownerFromCustomer;
+
+  const [existingOwner] = await db
+    .select({ addedByUserId: companyBillingPaymentMethods.addedByUserId })
+    .from(companyBillingPaymentMethods)
+    .where(
+      eq(
+        companyBillingPaymentMethods.stripePaymentMethodId,
+        params.paymentMethod.id,
+      ),
+    )
+    .limit(1);
+  const ownerId = existingOwner?.addedByUserId ?? requestedOwner;
 
   const fingerprint = fields.fingerprint?.trim() ?? "";
   if (fingerprint) {
@@ -3222,6 +4000,7 @@ export async function upsertPaymentMethodFromStripe(params: {
           companyBillingPaymentMethods.stripePaymentMethodId,
         stripeCustomerId: companyBillingPaymentMethods.stripeCustomerId,
         fingerprint: companyBillingPaymentMethods.fingerprint,
+        addedByUserId: companyBillingPaymentMethods.addedByUserId,
         isDefault: companyBillingPaymentMethods.isDefault,
         createdAt: companyBillingPaymentMethods.createdAt,
       })
@@ -3235,6 +4014,9 @@ export async function upsertPaymentMethodFromStripe(params: {
             params.paymentMethod.id,
           ),
           isNull(companyBillingPaymentMethods.detachedAt),
+          ownerId
+            ? eq(companyBillingPaymentMethods.addedByUserId, ownerId)
+            : isNull(companyBillingPaymentMethods.addedByUserId),
         ),
       );
     if (others.length > 0) {
@@ -3246,6 +4028,7 @@ export async function upsertPaymentMethodFromStripe(params: {
         stripePaymentMethodId: params.paymentMethod.id,
         stripeCustomerId: fields.stripeCustomerId,
         fingerprint,
+        addedByUserId: ownerId,
         isDefault: Boolean(params.isDefault),
         createdAt: new Date(),
       };
@@ -3277,12 +4060,14 @@ export async function upsertPaymentMethodFromStripe(params: {
     .values({
       companyId: cid,
       ...fields,
+      addedByUserId: ownerId,
     })
     .onConflictDoUpdate({
       target: companyBillingPaymentMethods.stripePaymentMethodId,
       set: {
         companyId: cid,
         ...fields,
+        addedByUserId: ownerId,
       },
     });
 
@@ -3298,8 +4083,41 @@ export async function upsertPaymentMethodFromStripe(params: {
             params.paymentMethod.id,
           ),
           eq(companyBillingPaymentMethods.isDefault, true),
+          ownerId
+            ? eq(companyBillingPaymentMethods.addedByUserId, ownerId)
+            : isNull(companyBillingPaymentMethods.addedByUserId),
         ),
       );
+  }
+}
+
+async function assignPaymentMethodOwner(params: {
+  companyId: string;
+  stripePaymentMethodId: string;
+  userId: string;
+}): Promise<void> {
+  const cid = normalizeCompanyId(params.companyId);
+  const userId = normalizeCompanyId(params.userId);
+  const pmId = String(params.stripePaymentMethodId ?? "").trim();
+  if (!cid || !userId || !pmId) return;
+  await db
+    .update(companyBillingPaymentMethods)
+    .set({ addedByUserId: userId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(companyBillingPaymentMethods.companyId, cid),
+        eq(companyBillingPaymentMethods.stripePaymentMethodId, pmId),
+        isNull(companyBillingPaymentMethods.addedByUserId),
+      ),
+    );
+  if (!getStripeConfig()) return;
+  try {
+    const stripe = getStripeClient();
+    await stripe.paymentMethods.update(pmId, {
+      metadata: { payerUserId: userId, companyId: cid },
+    });
+  } catch (err) {
+    console.warn("assignPaymentMethodOwner metadata:", err);
   }
 }
 
@@ -3332,11 +4150,26 @@ async function syncDefaultPaymentMethodFlags(params: {
   customerId: string;
 }): Promise<void> {
   const defaultPmId = await resolveDefaultPaymentMethodId(params.customerId);
+  if (!defaultPmId) return;
+  const [ownerRow] = await db
+    .select({ addedByUserId: companyBillingPaymentMethods.addedByUserId })
+    .from(companyBillingPaymentMethods)
+    .where(eq(companyBillingPaymentMethods.stripePaymentMethodId, defaultPmId))
+    .limit(1);
+  const ownerId = ownerRow?.addedByUserId ?? null;
   await db
     .update(companyBillingPaymentMethods)
     .set({ isDefault: false, updatedAt: new Date() })
-    .where(eq(companyBillingPaymentMethods.companyId, params.companyId));
-  if (!defaultPmId) return;
+    .where(
+      and(
+        eq(companyBillingPaymentMethods.companyId, params.companyId),
+        eq(companyBillingPaymentMethods.isDefault, true),
+        ne(companyBillingPaymentMethods.stripePaymentMethodId, defaultPmId),
+        ownerId
+          ? eq(companyBillingPaymentMethods.addedByUserId, ownerId)
+          : isNull(companyBillingPaymentMethods.addedByUserId),
+      ),
+    );
   await db
     .update(companyBillingPaymentMethods)
     .set({ isDefault: true, updatedAt: new Date() })
@@ -3351,21 +4184,25 @@ async function syncDefaultPaymentMethodFlags(params: {
 
 export async function listCompanyPaymentMethods(
   companyId: string,
-  opts?: { includeDetached?: boolean },
+  opts?: { includeDetached?: boolean; userId?: string | null },
 ): Promise<CompanyBillingPaymentMethodDto[]> {
   const cid = normalizeCompanyId(companyId);
   if (!cid) return [];
+  const userId = normalizeCompanyId(opts?.userId ?? "");
 
   const rows = await db
     .select()
     .from(companyBillingPaymentMethods)
     .where(
-      opts?.includeDetached
-        ? eq(companyBillingPaymentMethods.companyId, cid)
-        : and(
-            eq(companyBillingPaymentMethods.companyId, cid),
-            isNull(companyBillingPaymentMethods.detachedAt),
-          ),
+      and(
+        eq(companyBillingPaymentMethods.companyId, cid),
+        ...(opts?.includeDetached
+          ? []
+          : [isNull(companyBillingPaymentMethods.detachedAt)]),
+        ...(userId
+          ? [eq(companyBillingPaymentMethods.addedByUserId, userId)]
+          : []),
+      ),
     )
     .orderBy(
       desc(companyBillingPaymentMethods.isDefault),
@@ -3376,7 +4213,7 @@ export async function listCompanyPaymentMethods(
   const seenFingerprints = new Set<string>();
   let hasDuplicateFingerprint = false;
   for (const row of activeRows) {
-    const fingerprint = row.fingerprint?.trim() ?? "";
+    const fingerprint = paymentMethodFingerprintKey(row);
     if (!fingerprint) continue;
     if (seenFingerprints.has(fingerprint)) {
       hasDuplicateFingerprint = true;
@@ -3439,6 +4276,7 @@ export async function listCompanyPaymentMethods(
  */
 export async function syncCompanyPaymentMethodsFromStripe(
   companyId: string,
+  opts?: { actorUserId?: string | null },
 ): Promise<
   | { ok: true; paymentMethods: CompanyBillingPaymentMethodDto[] }
   | { ok: false; status: number; message: string }
@@ -3478,16 +4316,30 @@ export async function syncCompanyPaymentMethodsFromStripe(
         isNotNull(addDealForm.stripePayerCustomerId),
       ),
     );
+  const actorUserId = normalizeCompanyId(opts?.actorUserId ?? "");
+  let actorCustomerId = "";
+  if (actorUserId) {
+    const [actor] = await db
+      .select({ stripeCustomerId: users.stripeCustomerId })
+      .from(users)
+      .where(eq(users.id, actorUserId))
+      .limit(1);
+    actorCustomerId = actor?.stripeCustomerId?.trim() ?? "";
+  }
   const customerIds = [
     ...new Set(
-      [co.stripeCustomerId?.trim() ?? "", ...payerRows.map((row) => row.stripePayerCustomerId?.trim() ?? "")]
-        .filter(Boolean),
+      [
+        co.stripeCustomerId?.trim() ?? "",
+        ...payerRows.map((row) => row.stripePayerCustomerId?.trim() ?? ""),
+        actorCustomerId,
+      ].filter(Boolean),
     ),
   ];
   if (customerIds.length === 0) {
     return { ok: true, paymentMethods: [] };
   }
   const customerId = co.stripeCustomerId?.trim() || customerIds[0];
+  const listedCustomerIdSet = new Set(customerIds);
 
   try {
     const stripe = getStripeClient();
@@ -3507,6 +4359,10 @@ export async function syncCompanyPaymentMethodsFromStripe(
             companyId: cid,
             paymentMethod: pm,
             isDefault: defaultPmId ? pm.id === defaultPmId : false,
+            addedByUserId:
+              actorUserId && listedCustomerId === actorCustomerId
+                ? actorUserId
+                : undefined,
           });
         }
       } catch (listErr) {
@@ -3531,34 +4387,14 @@ export async function syncCompanyPaymentMethodsFromStripe(
     for (const row of existing) {
       const owner = row.stripeCustomerId?.trim() ?? "";
       if (owner && unreachableCustomers.has(owner)) continue;
+      if (owner && !listedCustomerIdSet.has(owner)) continue;
       if (!activeIds.has(row.stripePaymentMethodId) && !row.detachedAt) {
         await markPaymentMethodDetached(row.stripePaymentMethodId);
       }
     }
 
-    if (defaultPmId) {
-      await db
-        .update(companyBillingPaymentMethods)
-        .set({ isDefault: false, updatedAt: new Date() })
-        .where(
-          and(
-            eq(companyBillingPaymentMethods.companyId, cid),
-            isNull(companyBillingPaymentMethods.detachedAt),
-            ne(companyBillingPaymentMethods.stripePaymentMethodId, defaultPmId),
-          ),
-        );
-      await db
-        .update(companyBillingPaymentMethods)
-        .set({ isDefault: true, updatedAt: new Date() })
-        .where(
-          and(
-            eq(companyBillingPaymentMethods.companyId, cid),
-            eq(
-              companyBillingPaymentMethods.stripePaymentMethodId,
-              defaultPmId,
-            ),
-          ),
-        );
+    if (defaultPmId && customerId) {
+      await syncDefaultPaymentMethodFlags({ companyId: cid, customerId });
     }
 
     await recordBillingEvent({
@@ -3586,6 +4422,7 @@ export async function syncCompanyPaymentMethodsFromStripe(
 
     const paymentMethods = await listCompanyPaymentMethods(cid, {
       includeDetached: false,
+      ...(actorUserId ? { userId: actorUserId } : {}),
     });
     return { ok: true, paymentMethods };
   } catch (err) {
@@ -3721,10 +4558,17 @@ export async function createExtraCompanyUserCheckoutSession(params: {
     const {
       extraCompanyUserCheckoutLineItems,
     } = await import("./dealExtraCompanyUser.service.js");
+    const checkoutCustomerId = await customerIdShowingSavedCards(
+      stripe,
+      customerId,
+      cid,
+      params.actorUserId,
+    );
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      customer: customerId,
+      customer: checkoutCustomerId,
       payment_method_types: ["card", "us_bank_account"],
+      ...CHECKOUT_SAVED_PAYMENT_METHODS,
       line_items: extraCompanyUserCheckoutLineItems(
         charge.extraUsersToPay,
         charge.description,
@@ -3813,7 +4657,9 @@ export async function payExtraCompanyUserWithSavedMethod(params: {
   if (!charge.ok) return charge;
 
   try {
-    const methods = await listCompanyPaymentMethods(cid);
+    const methods = await listCompanyPaymentMethods(cid, {
+      userId: params.actorUserId,
+    });
     const found = methods.find(
       (m) => m.stripePaymentMethodId === rawPm || m.id === rawPm,
     );
@@ -4006,6 +4852,26 @@ async function processStripeWebhookEvent(event: Stripe.Event): Promise<void> {
         }
         return;
       }
+      if (
+        session.mode === "payment" &&
+        String(session.metadata?.billingScope ?? "") === "deal_upgrade"
+      ) {
+        const companyId = normalizeCompanyId(
+          String(session.metadata?.companyId ?? session.client_reference_id ?? ""),
+        );
+        if (!companyId) return;
+        const synced = await syncDealUpgradeCheckoutSession({
+          companyId,
+          session,
+        });
+        if (!synced.ok) {
+          console.warn(
+            "[stripe webhook] deal upgrade checkout:",
+            synced.message,
+          );
+        }
+        return;
+      }
       if (session.mode !== "subscription") return;
       const companyIdRaw =
         String(session.metadata?.companyId ?? "").trim() ||
@@ -4038,7 +4904,22 @@ async function processStripeWebhookEvent(event: Stripe.Event): Promise<void> {
       }
       if (customerId) {
         try {
-          await syncCompanyPaymentMethodsFromStripe(companyId);
+          const payerUserId = normalizeCompanyId(
+            String(
+              session.metadata?.payerUserId ?? sub.metadata?.payerUserId ?? "",
+            ),
+          );
+          await syncCompanyPaymentMethodsFromStripe(companyId, {
+            actorUserId: payerUserId,
+          });
+          const pmId = stripeIdRef(sub.default_payment_method);
+          if (payerUserId && pmId) {
+            await assignPaymentMethodOwner({
+              companyId,
+              stripePaymentMethodId: pmId,
+              userId: payerUserId,
+            });
+          }
         } catch (pmErr) {
           console.warn(
             "[stripe webhook] sync payment methods after checkout:",
@@ -4139,6 +5020,43 @@ async function processStripeWebhookEvent(event: Stripe.Event): Promise<void> {
         invoice: inv,
         markPaid: true,
       });
+
+      if (String(inv.metadata?.billingScope ?? "") === "deal_upgrade") {
+        const dealId = normalizeCompanyId(String(inv.metadata?.dealId ?? ""));
+        const planId = normalizeBillingPlanId(inv.metadata?.planId);
+        const seatBand = normalizeBillingSeatBand(inv.metadata?.seatBand);
+        const cycleRaw = String(inv.metadata?.billingCycle ?? "").trim();
+        const cycle: StripeBillingCycle | null =
+          cycleRaw === "monthly"
+            ? "monthly"
+            : cycleRaw === "annual" ||
+                cycleRaw === "annually" ||
+                cycleRaw === "yearly"
+              ? "annual"
+              : null;
+        if (dealId && planId && seatBand && cycle) {
+          const [deal] = await db
+            .select()
+            .from(addDealForm)
+            .where(eq(addDealForm.id, dealId))
+            .limit(1);
+          if (deal?.stripeSubscriptionId) {
+            const upgraded = await upgradeDealStripeSubscription({
+              deal,
+              planId,
+              cycle,
+              seatBand,
+              collectDifference: false,
+              ...couponHoldFromMetadata(inv.metadata),
+            });
+            if (upgraded.ok) {
+              await applySubscriptionToCompany(companyId, upgraded.subscription, {
+                dealId,
+              });
+            }
+          }
+        }
+      }
 
       if (subId) {
         try {
@@ -4404,11 +5322,23 @@ async function processStripeWebhookEvent(event: Stripe.Event): Promise<void> {
       const companyId =
         normalizeCompanyId(String(si.metadata?.companyId ?? "").trim()) ||
         (customerId ? await findCompanyIdForStripeCustomer(customerId) : null);
+      const payerUserId = normalizeCompanyId(
+        String(si.metadata?.payerUserId ?? ""),
+      );
       if (!companyId || !customerId) return;
       try {
         const stripe = getStripeClient();
-        await syncCompanyPaymentMethodsFromStripe(companyId);
+        await syncCompanyPaymentMethodsFromStripe(companyId, {
+          actorUserId: payerUserId,
+        });
         const pmId = stripeIdRef(si.payment_method);
+        if (pmId && payerUserId) {
+          await assignPaymentMethodOwner({
+            companyId,
+            stripePaymentMethodId: pmId,
+            userId: payerUserId,
+          });
+        }
         if (pmId) {
           await stripe.customers.update(customerId, {
             invoice_settings: { default_payment_method: pmId },

@@ -74,6 +74,11 @@ export const contact = pgTable("contact", {
   importSource: varchar("import_source", { length: 32 })
     .notNull()
     .default("manual"),
+  /**
+   * Self-serve “Are you an” answer copied from the portal user: `investor`,
+   * `syndicator`, or `both`. Empty when that choice was never stored.
+   */
+  signupAs: varchar("signup_as", { length: 32 }).notNull().default(""),
   createdBy: uuid("created_by")
     .notNull()
     .references(() => users.id, { onDelete: "restrict" }),

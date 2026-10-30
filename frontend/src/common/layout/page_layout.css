@@ -686,12 +686,66 @@
   position: relative;
 }
 
+.app_cosponsor_company_alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  margin: 0.85rem 0 0;
+  padding: 0.8rem 1rem;
+  border: 1px solid #f0c36a;
+  border-left: 4px solid #d89412;
+  border-radius: 0.55rem;
+  background: #fff8e6;
+  color: #6b4700;
+  box-sizing: border-box;
+}
+
+.app_cosponsor_company_alert > svg {
+  flex: 0 0 auto;
+  margin-top: 0.05rem;
+  color: #b87500;
+}
+
+.app_cosponsor_company_alert > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.app_cosponsor_company_alert strong {
+  font-size: 0.95rem;
+  color: #5d3d00;
+}
+
+.app_cosponsor_company_alert a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.app_cosponsor_company_alert a:hover {
+  color: #3f2800;
+}
+
+.um_modal_desc.cosponsor_company_required_message {
+  color: #1b1b1d;
+}
+
+:root[data-theme="dark"] .um_modal_desc.cosponsor_company_required_message {
+  color: var(--portal-text, #fff);
+}
+
 .app_main_content {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
@@ -700,6 +754,12 @@
   margin-right: clamp(1rem, 2vw, 1.5rem);
   padding: 0 0 2em;
   background: transparent;
+}
+
+/* Dialog open: keep the page from growing a blank scroll region behind the popup. */
+html.app_modal_open .app_main_content {
+  overflow: hidden;
+  scroll-behavior: auto;
 }
 
 /* Create / edit deal wizard: avoid an extra blank band after the footer when scrolling */

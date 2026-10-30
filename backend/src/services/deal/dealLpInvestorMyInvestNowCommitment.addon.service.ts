@@ -1,11 +1,10 @@
 /**
- * LP “Invest now”: by default **adds** the posted amount to the existing committed total on the
- * latest LP `deal_investment` for this deal + contact (locked row), with optional `status` and
- * `doc_signed_date`. First commitment (no LP row yet) stores the amount as-is.
- * When the user selects a **different** saved “My profile” (both old and new book ids present and
- * different) or a **different** commitment kind (`profile_id` individual / joint / …) than the
- * locked row, a **new** `deal_investment` row is inserted for this tranche; prior rows are kept.
- * Syncs `deal_lp_investor.committed_amount` to the **sum** of that contact’s LP investment rows.
+ * LP “Invest now” stores each new commitment as its own `deal_investment` row.
+ * A save that names an existing investment id continues that row (the in-progress
+ * Invest Now session). A save with no investment id inserts a new row and leaves
+ * earlier investments on the same profile unchanged.
+ * Syncs `deal_lp_investor.committed_amount` to the **sum** of that contact’s open LP investment rows.
+ * A removed or unlinked investment is left as history.
  */
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../database/db.js";
@@ -20,9 +19,9 @@ import {
   dealInvestment,
   type DealInvestmentInsert,
 } from "../../schema/deal.schema/deal-investment.schema.js";
-import { committedNumericFromDealInvestmentRow, insertDealInvestment, isLpInvestorRole, LP_INVESTOR_ROLE_STORED, resolveFirstLpInvestorClassForDeal, resolveInvestorClassForDealInvestment, } from "./dealInvestment.service.js";
+import { committedNumericFromDealInvestmentRow, insertDealInvestment, isLpInvestorRole, isRetiredDealInvestment, LP_INVESTOR_ROLE_STORED, resolveFirstLpInvestorClassForDeal, resolveInvestorClassForDealInvestment, } from "./dealInvestment.service.js";
 import { resolveInvestNowViewerContactOnDeal } from "./dealInvestNowViewerContact.service.js";
-import { upsertDealLpInvestor } from "./dealLpInvestor.service.js";
+import { lpRosterActiveAgain, upsertDealLpInvestor } from "./dealLpInvestor.service.js";
 import {
   resolveOfferingPreviewSponsorAttribution,
 } from "./offeringPreviewSponsorRef.service.js";
@@ -56,6 +55,7 @@ async function sumLpDealInvestmentCommittedForContact(
     );
   let t = 0;
   for (const r of rows) {
+    if (isRetiredDealInvestment(r)) continue;
     if (isLpInvestorRole(r.investor_role)) {
       t += committedNumericFromDealInvestmentRow(r);
     }
@@ -64,7 +64,7 @@ async function sumLpDealInvestmentCommittedForContact(
 }
 
 export type ApplyMyInvestNowCommitmentResult =
-  | { ok: true }
+  | { ok: true; investmentId: string }
   | {
       ok: false;
       message: string;
@@ -453,52 +453,23 @@ export async function applyMyInvestNowCommitmentAddon(
         .from(dealInvestment)
         .where(and(eq(dealInvestment.dealId, params.dealId), eq(dealInvestment.contactId, targetContactMemberId)))
         .orderBy(desc(dealInvestment.createdAt));
-    const scopedUip = String(params.userInvestorProfileId ?? "").trim();
-    const scopedProfile = profileOpt ?? "";
     const scopedInvestmentId = String(params.investmentId ?? "").trim();
     let inv: (typeof invCandidates)[number] | undefined;
     if (scopedInvestmentId) {
-        inv = invCandidates.find(
+        const byId = invCandidates.find(
             (row) =>
                 isLpInvestorRole(row.investor_role) &&
                 String(row.id).trim().toLowerCase() ===
                     scopedInvestmentId.toLowerCase(),
         );
-        if (!inv) {
+        if (!byId) {
             return {
                 ok: false,
                 message: "The selected investment was not found for this deal.",
             };
         }
-    }
-    else {
-        for (const row of invCandidates) {
-            if (!isLpInvestorRole(row.investor_role))
-                continue;
-            if (scopedUip) {
-                const rowUip = String(row.userInvestorProfileId ?? "").trim();
-                if (!rowUip || rowUip.toLowerCase() !== scopedUip.toLowerCase())
-                    continue;
-            }
-            else if (scopedProfile) {
-                if (String(row.profileId ?? "").trim() !== scopedProfile)
-                    continue;
-            }
-            inv = row;
-            break;
-        }
-    }
-    const duplicateProfileInv = !scopedInvestmentId && inv ? inv : undefined;
-    if (duplicateProfileInv && params.allowDuplicateProfile) {
-        inv = undefined;
-    }
-    if (!inv && !scopedInvestmentId && !scopedUip && !scopedProfile) {
-        for (const row of invCandidates) {
-            if (isLpInvestorRole(row.investor_role)) {
-                inv = row;
-                break;
-            }
-        }
+        // A removed or unlinked id is history. Do not overwrite a different open row.
+        inv = isRetiredDealInvestment(byId) ? undefined : byId;
     }
     const now = new Date();
     if (!inv) {
@@ -577,12 +548,17 @@ export async function applyMyInvestNowCommitmentAddon(
                 roleFromClient: LP_INVESTOR_TABLE_ROLE,
             });
         }
+        const syncedSum = await sumLpDealInvestmentCommittedForContact(
+            params.dealId,
+            targetContactMemberId,
+        );
         await db
             .update(dealLpInvestor)
             .set({
             profileId: profileOpt,
-            committed_amount: incrementStr,
+            committed_amount: syncedSum,
             updatedAt: now,
+            ...lpRosterActiveAgain,
             ...(!sUip.skip
                 ? { userInvestorProfileId: sUip.value as string | null }
                 : {}),
@@ -590,7 +566,7 @@ export async function applyMyInvestNowCommitmentAddon(
             .where(eq(dealLpInvestor.id, target.id));
         await keepInviteSponsor(target.id);
         await keepSameOrgSponsor(target.id);
-        return { ok: true };
+        return { ok: true, investmentId: createdInv.id };
     }
     const oldUip = String(inv.userInvestorProfileId ?? "").trim();
     const newUipFromBody = sUip.skip
@@ -678,14 +654,25 @@ export async function applyMyInvestNowCommitmentAddon(
               : {}),
             ...(params.w9FormInBody ? { investorW9FormJson: w9FormJson } : {}),
         };
+        let insertedTrancheId = "";
         try {
-            await db.insert(dealInvestment).values(insertRow);
+            const [insertedTranche] = await db
+                .insert(dealInvestment)
+                .values(insertRow)
+                .returning({ id: dealInvestment.id });
+            insertedTrancheId = insertedTranche?.id ?? "";
         }
         catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return {
                 ok: false,
                 message: `Could not record this commitment: ${msg}`,
+            };
+        }
+        if (!insertedTrancheId) {
+            return {
+                ok: false,
+                message: "Could not record this commitment.",
             };
         }
         const syncedSum = await sumLpDealInvestmentCommittedForContact(
@@ -699,11 +686,12 @@ export async function applyMyInvestNowCommitmentAddon(
                 updatedAt: now,
                 profileId: rowProfileId,
                 userInvestorProfileId: rowUip,
+                ...lpRosterActiveAgain,
             })
             .where(eq(dealLpInvestor.id, roster.id));
         await keepInviteSponsor(roster.id);
         await keepSameOrgSponsor(roster.id);
-        return { ok: true };
+        return { ok: true, investmentId: insertedTrancheId };
     }
     let resolvedInvestorClass: string | undefined;
     try {
@@ -796,12 +784,10 @@ export async function applyMyInvestNowCommitmentAddon(
         }
         throw e;
     }
-    const [invAfterCommit] = await db
-        .select({ commitmentAmount: dealInvestment.commitmentAmount })
-        .from(dealInvestment)
-        .where(eq(dealInvestment.id, inv.id))
-        .limit(1);
-    const syncedCommittedFromInvestment = String(invAfterCommit?.commitmentAmount ?? "").trim();
+    const syncedCommittedFromInvestment = await sumLpDealInvestmentCommittedForContact(
+        params.dealId,
+        targetContactMemberId,
+    );
     if (!target) {
         if (!viewerUserId) {
             return {
@@ -839,6 +825,7 @@ export async function applyMyInvestNowCommitmentAddon(
         .set({
         committed_amount: syncedCommittedFromInvestment,
         updatedAt: now,
+        ...lpRosterActiveAgain,
         ...(profileOpt ? { profileId: profileOpt } : {}),
         ...(!sUip.skip ? { userInvestorProfileId: sUip.value as string | null } : {}),
         ...(resolvedInvestorClass !== undefined
@@ -848,5 +835,5 @@ export async function applyMyInvestNowCommitmentAddon(
         .where(eq(dealLpInvestor.id, target.id));
     await keepInviteSponsor(target.id);
     await keepSameOrgSponsor(target.id);
-    return { ok: true };
+    return { ok: true, investmentId: inv.id };
 }

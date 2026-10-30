@@ -8,10 +8,17 @@ import {
   setRuntimeOfferingPreviewFlatDocuments,
 } from "./offeringPreviewRuntimeStore"
 
-/** Mirrors document Visibility; drives who sees the doc on Preview offering + shared link. */
+/**
+ * Mirrors document Visibility checkboxes.
+ * `offering_page`: Offering link and LP portal.
+ * `offering_link_only`: Offering link, not the LP portal.
+ * `lp_investor`: LP portal only.
+ * `not_visible`: sponsor workspace only.
+ */
 export type OfferingPreviewDocSharedWithScope =
   | "lp_investor"
   | "offering_page"
+  | "offering_link_only"
   | "not_visible"
 
 export type OfferingPreviewDocument = {
@@ -22,6 +29,7 @@ export type OfferingPreviewDocument = {
   dateAdded?: string
   /**
    * `offering_page`: Preview offering, shared offering link, and portal LPs.
+   * `offering_link_only`: Preview offering and the shared offering link — not the LP portal.
    * `lp_investor`: LP portal only — omitted from Preview offering and the offering link.
    * `not_visible`: hidden from offering link, preview, and LP portal (sponsor workspace only).
    */
@@ -59,9 +67,11 @@ function normalizeDoc(raw: unknown): OfferingPreviewDocument | null {
       ? "lp_investor"
       : sw === "offering_page"
         ? "offering_page"
-        : sw === "not_visible"
-          ? "not_visible"
-          : undefined
+        : sw === "offering_link_only"
+          ? "offering_link_only"
+          : sw === "not_visible"
+            ? "not_visible"
+            : undefined
   return {
     id,
     name,

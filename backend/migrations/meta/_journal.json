@@ -736,6 +736,83 @@
       "when": 1895800000000,
       "tag": "0105_deal_saas_coupon_code",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1895850000000,
+      "tag": "0106_deal_stripe_seat_band",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1895900000000,
+      "tag": "0107_user_saved_payment_methods",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1895950000000,
+      "tag": "0108_user_invited_by",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1896000000000,
+      "tag": "0109_investor_deal_participation",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1896050000000,
+      "tag": "0110_deal_member_removal_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1896100000000,
+      "tag": "0111_user_signup_as",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1896150000000,
+      "tag": "0112_contact_signup_as",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1896160000000,
+      "tag": "0113_investor_investment_removal",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1896170000000,
+      "tag": "0114_deal_investment_optional_position_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1896180000000,
+      "tag": "0115_investor_bank_account_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1896190000000,
+      "tag": "0116_deal_investment_fund_approved_at_history",
+      "breakpoints": true
     }
   ]
 }

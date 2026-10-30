@@ -55,6 +55,7 @@ import {
 import {
   fetchDealInvestorClasses,
   fetchDealMembers,
+  fetchRosterPersonHasCompany,
   fetchUsersForMemberSelect,
   postDealInvestment,
   postDealLpInvestor,
@@ -77,6 +78,7 @@ import {
   isGeneralPartnerRole,
   isLeadSponsorRole,
   isLpInvestorRole,
+  isSponsorRosterRole,
   leadSponsorContactIdExcludingRow,
   leadSponsorTakenByAnotherMember,
   type DealInvestmentModalEntry,
@@ -362,7 +364,15 @@ export function AddInvestmentModal({
     Partial<Record<InvestorEditSectionTab, HTMLElement | null>>
   >({})
   const ignoreScrollSpyUntilRef = useRef(0)
+  const companyCheckSeqRef = useRef(0)
   const [submitting, setSubmitting] = useState(false)
+  const [noCompanyAddNotice, setNoCompanyAddNotice] = useState<{
+    name: string
+  } | null>(
+    null,
+  )
+  const [selectedPersonOwnsCompany, setSelectedPersonOwnsCompany] =
+    useState(false)
   const [memberRows, setMemberRows] = useState<Record<string, unknown>[]>([])
   const [contactRows, setContactRows] = useState<ContactRow[]>([])
   const [platformContactRows, setPlatformContactRows] = useState<ContactRow[]>(
@@ -389,6 +399,7 @@ export function AddInvestmentModal({
       profileId?: string
       userEmail?: string
       displayName?: string
+      addedByCompanyName?: string
     }[]
   >([])
 
@@ -402,6 +413,7 @@ export function AddInvestmentModal({
           profileId: r.profileId,
           userEmail: r.userEmail,
           displayName: r.displayName,
+          addedByCompanyName: r.addedByCompanyName,
         })),
       )
     })
@@ -520,6 +532,46 @@ export function AddInvestmentModal({
     [mode, form.investorRole, startedAsLeadSponsor],
   )
 
+  useEffect(() => {
+    if (!open || isInvestorEntry || isGpEntry) {
+      setSelectedPersonOwnsCompany(false)
+      return
+    }
+    const id = form.contactId.trim()
+    if (!id) {
+      setSelectedPersonOwnsCompany(false)
+      return
+    }
+    let cancelled = false
+    void fetchRosterPersonHasCompany(dealId, id).then((hasCompany) => {
+      if (!cancelled) setSelectedPersonOwnsCompany(hasCompany === true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, isInvestorEntry, isGpEntry, form.contactId, dealId])
+
+  const noticeIfSponsorHasNoCompany = useCallback(
+    (contactId: string, role: string, displayName?: string) => {
+      if (isInvestorEntry || isGpEntry) return
+      const seq = ++companyCheckSeqRef.current
+      if (!isAdminSponsorOrCoSponsorRole(role) || !contactId.trim()) {
+        setNoCompanyAddNotice(null)
+        return
+      }
+      const who = displayName?.trim() || "This person"
+      void fetchRosterPersonHasCompany(dealId, contactId).then((hasCompany) => {
+        if (seq !== companyCheckSeqRef.current) return
+        if (hasCompany !== false) {
+          setNoCompanyAddNotice(null)
+          return
+        }
+        setNoCompanyAddNotice({ name: who })
+      })
+    },
+    [isInvestorEntry, isGpEntry, dealId],
+  )
+
   const investorRoleDropdownOptions = useMemo(
     () =>
       isInvestorEntry
@@ -542,7 +594,10 @@ export function AddInvestmentModal({
               (o) =>
                 (!o.value || DEAL_MEMBERS_TAB_ROLE_VALUES.has(o.value)) &&
                 (o.value !== DEAL_MEMBER_ROLE_VALUE ||
-                  form.investorRole === DEAL_MEMBER_ROLE_VALUE),
+                  form.investorRole === DEAL_MEMBER_ROLE_VALUE) &&
+                (!selectedPersonOwnsCompany ||
+                  !o.value ||
+                  isSponsorRosterRole(o.value)),
             ).map((o) => ({
               value: o.value,
               label: o.label,
@@ -558,6 +613,7 @@ export function AddInvestmentModal({
       form.investorRole,
       leadSponsorOptionDisabled,
       adminCoBlockedForSelectedContact,
+      selectedPersonOwnsCompany,
     ],
   )
 
@@ -1107,12 +1163,14 @@ export function AddInvestmentModal({
           platformContactRows.find((x) => x.id === id)
         if (c) {
           const display = contactOptionLabel(c)
+          const name = display.split(" — ")[0]?.trim() || display
           patch({
             contactId: id,
-            contactDisplayName: display.split(" — ")[0]?.trim() || display,
+            contactDisplayName: name,
             contactEmail: c.email.trim(),
             contactUsername: undefined,
           })
+          noticeIfSponsorHasNoCompany(id, form.investorRole, name)
         }
         return
       }
@@ -1133,6 +1191,7 @@ export function AddInvestmentModal({
           contactEmail: String(u.email ?? "").trim(),
           contactUsername: String(u.username ?? ""),
         })
+        noticeIfSponsorHasNoCompany(userId, form.investorRole, display)
         return
       }
 
@@ -1163,6 +1222,7 @@ export function AddInvestmentModal({
       leadSponsorContactId,
       form.investorRole,
       memberContactSelectLocked,
+      noticeIfSponsorHasNoCompany,
     ],
   )
 
@@ -2029,6 +2089,11 @@ export function AddInvestmentModal({
                               return
                             }
                             patch({ investorRole: v })
+                            noticeIfSponsorHasNoCompany(
+                              form.contactId,
+                              v,
+                              form.contactDisplayName,
+                            )
                           }}
                           placeholder="Select role"
                           ariaLabel="Role"
@@ -2504,6 +2569,53 @@ export function AddInvestmentModal({
         </form>
       </div>
     </div>
+    {noCompanyAddNotice ? (
+      <div
+        className="um_modal_overlay deals_add_inv_no_company_overlay"
+        role="presentation"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) setNoCompanyAddNotice(null)
+        }}
+      >
+        <div
+          className="um_modal um_modal_view"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="add-member-no-company-title"
+        >
+          <div className="um_modal_head">
+            <h3 id="add-member-no-company-title" className="um_modal_title">
+              No company
+            </h3>
+            <button
+              type="button"
+              className="um_modal_close"
+              onClick={() => setNoCompanyAddNotice(null)}
+              aria-label="Close"
+            >
+              <X size={20} strokeWidth={2} aria-hidden />
+            </button>
+          </div>
+          <p className="um_modal_desc deals_add_inv_no_company_message">
+            <strong className="deals_add_inv_no_company_name">
+              {noCompanyAddNotice.name}
+            </strong>{" "}
+            has no company. You can still add them. They cannot open this deal
+            until they add a company.
+          </p>
+          <div className="um_modal_actions">
+            <button
+              type="button"
+              className="um_btn_primary"
+              onClick={() => setNoCompanyAddNotice(null)}
+            >
+              <Plus size={16} strokeWidth={2} aria-hidden />
+              Add anyway
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
     <AddContactPanel
       open={addContactModalOpen}
       onClose={() => setAddContactModalOpen(false)}

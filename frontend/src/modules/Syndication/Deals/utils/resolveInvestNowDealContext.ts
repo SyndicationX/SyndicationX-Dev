@@ -113,8 +113,8 @@ function usableSponsorLabel(value: string | null | undefined): string {
 }
 
 /**
- * Sponsor who brought this investor onto the deal, then a referring link,
- * then the lead sponsor.
+ * Company of the sponsor this investor is investing with.
+ * That sponsor is the Lead Sponsor, an Admin sponsor, or a Co-sponsor.
  */
 function companyLabel(value: string | null | undefined): string {
   const name = String(value ?? "")
@@ -159,9 +159,6 @@ export function pickInvestNowSponsorDisplayName(
   const fromRosterCompany = companyLabel(options?.investorAddedByCompanyName)
   if (fromRosterCompany) return fromRosterCompany
 
-  const fromInviteCompany = companyLabel(membersPayload.inviteSponsorCompanyName)
-  if (fromInviteCompany) return fromInviteCompany
-
   const fromReferralCompany = companyLabel(
     membersPayload.referringSponsorCompanyName,
   )
@@ -170,23 +167,10 @@ export function pickInvestNowSponsorDisplayName(
   const fromLeadCompany = companyLabel(membersPayload.leadSponsorCompanyName)
   if (fromLeadCompany) return fromLeadCompany
 
-  const fromOnboarding = usableSponsorLabel(
-    membersPayload.onboardingSponsorDisplayName,
-  )
-  if (fromOnboarding) return fromOnboarding
+  const fromInviteCompany = companyLabel(membersPayload.inviteSponsorCompanyName)
+  if (fromInviteCompany) return fromInviteCompany
 
-  const fromRoster = usableSponsorLabel(options?.investorAddedByDisplayName)
-  if (fromRoster) return fromRoster
-
-  const fromSameOrganization = usableSponsorLabel(
-    membersPayload.sameOrganizationSponsorDisplayName,
-  )
-  if (fromSameOrganization) return fromSameOrganization
-
-  const fromReferral = usableSponsorLabel(options?.referringSponsorDisplayName)
-  if (fromReferral) return fromReferral
-
-  return pickInvestNowLeadSponsorDisplayName(membersPayload)
+  return "—"
 
 }
 

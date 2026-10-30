@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Link,
@@ -638,6 +638,7 @@ export function ClassSetupPage() {
                   className="cs_subtle_btn"
                   onClick={() => setShowCreatePanel(false)}
                 >
+                  <X size={14} strokeWidth={2} aria-hidden />
                   Dismiss
                 </button>
               </div>

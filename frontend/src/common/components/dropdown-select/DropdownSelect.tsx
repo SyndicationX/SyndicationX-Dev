@@ -277,8 +277,7 @@ export function DropdownSelect({
     const gap = 4
     const pad = 8
     const panel = panelRef.current
-    const measuredW = panel?.offsetWidth ?? 0
-    const width = Math.min(Math.max(r.width, measuredW), vw - pad * 2)
+    const width = Math.min(r.width, vw - pad * 2)
     let left = r.left
     if (left + width > vw - pad) left = vw - pad - width
     if (left < pad) left = pad
@@ -547,6 +546,7 @@ export function DropdownSelect({
                       ]
                         .filter(Boolean)
                         .join(" ")}
+                      title={opt.label}
                       onMouseEnter={() => setActiveIndex(i)}
                       onClick={() => selectByVisibleIndex(i)}
                       aria-label={
@@ -585,6 +585,7 @@ export function DropdownSelect({
                   ]
                     .filter(Boolean)
                     .join(" ")}
+                  title={opt.label}
                   onMouseEnter={() => setActiveIndex(i)}
                   onClick={() => selectByVisibleIndex(i)}
                   aria-label={

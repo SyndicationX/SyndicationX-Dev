@@ -116,6 +116,8 @@ export interface DistributionFeeConfig {
   /** Inclusive period end YYYY-MM-DD */
   periodEnd: string
   classSplits: DistributionFeeClassSplit[]
+  /** Class ids hidden from this fee split. The class stays in Class Setup. */
+  excludedClassIds?: string[]
 }
 
 export interface DistributionSetupBundle {

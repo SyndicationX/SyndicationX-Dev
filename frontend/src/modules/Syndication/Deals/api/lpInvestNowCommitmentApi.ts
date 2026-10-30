@@ -22,12 +22,19 @@ export type MyLpDealInvestNowCommitmentPayload = {
   status: string
   docSignedDate: string | null
   questionnaireAnswers: Record<string, string>
+  /** Answers from an earlier investment on this profile, when this one has none. */
+  priorQuestionnaireAnswers: Record<string, string>
   w9Form: Record<string, string> | null
 }
 
 export type FetchMyLpDealInvestNowCommitmentResult =
   | { ok: true; payload: MyLpDealInvestNowCommitmentPayload }
-  | { ok: false; message: string; notFound?: boolean }
+  | {
+      ok: false
+      message: string
+      notFound?: boolean
+      priorQuestionnaireAnswers?: Record<string, string>
+    }
 
 export type InvestNowCommitmentScope = {
   userInvestorProfileId?: string
@@ -69,6 +76,17 @@ export type PostMyLpDealInvestNowEsignSendResult =
       documentNames: string[]
     }
   | { ok: false; message: string }
+
+function questionnaireAnswersFromPayload(
+  raw: unknown,
+): Record<string, string> {
+  const answers: Record<string, string> = {}
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return answers
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string") answers[key] = value
+  }
+  return answers
+}
 
 function commitmentScopeQuery(scope?: InvestNowCommitmentScope): string {
   if (!scope) return ""
@@ -116,21 +134,18 @@ export async function fetchMyLpDealInvestNowCommitment(
       return {
         ok: false,
         notFound: true,
+        priorQuestionnaireAnswers: questionnaireAnswersFromPayload(
+          data.priorQuestionnaireAnswers ?? data.prior_questionnaire_answers,
+        ),
         message:
           typeof data.message === "string"
             ? data.message
             : "No saved investment progress was found for this profile on this deal.",
       }
     }
-    const questionnaireRaw = data.questionnaireAnswers ?? data.questionnaire_answers
-    const answers: Record<string, string> = {}
-    if (questionnaireRaw && typeof questionnaireRaw === "object") {
-      for (const [k, v] of Object.entries(
-        questionnaireRaw as Record<string, unknown>,
-      )) {
-        if (typeof v === "string") answers[k] = v
-      }
-    }
+    const answers = questionnaireAnswersFromPayload(
+      data.questionnaireAnswers ?? data.questionnaire_answers,
+    )
     const w9Raw = data.w9Form ?? data.w9_form
     return {
       ok: true,
@@ -156,6 +171,9 @@ export async function fetchMyLpDealInvestNowCommitment(
             : String(data.docSignedDate ?? data.doc_signed_date ?? "").trim() ||
               null,
         questionnaireAnswers: answers,
+        priorQuestionnaireAnswers: questionnaireAnswersFromPayload(
+          data.priorQuestionnaireAnswers ?? data.prior_questionnaire_answers,
+        ),
         w9Form:
           w9Raw && typeof w9Raw === "object" && !Array.isArray(w9Raw)
             ? (w9Raw as Record<string, string>)

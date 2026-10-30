@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Save,
+  Search,
   Sparkles,
   X,
 } from "lucide-react"
@@ -19,8 +20,12 @@ import {
   type MouseEvent,
 } from "react"
 import { createPortal } from "react-dom"
+import { FormTooltip } from "@/common/components/form-tooltip/FormTooltip"
 import { toast } from "@/common/components/Toast"
-import { postDealEsignAddInvestorDataField } from "@/modules/Syndication/Deals/api/dealsApi"
+import {
+  postDealEsignAddInvestorDataField,
+  postDealEsignSyncEmbeddedTemplateFields,
+} from "@/modules/Syndication/Deals/api/dealsApi"
 import {
   ESIGN_ENTITY_CATEGORIES,
   ESIGN_ENTITY_CATEGORY_COLUMN_LABELS,
@@ -141,15 +146,20 @@ export function SignFlowEmbeddedEditor({
   const [hasLocalFieldEdits, setHasLocalFieldEdits] = useState(false)
   const hasLocalFieldEditsRef = useRef(false)
   const [saving, setSaving] = useState(false)
+  const [persistingClose, setPersistingClose] = useState(false)
+  /** True while the embed is reloading after an API field add. Don't flush a stale viewer over that write. */
+  const awaitEmbedReloadRef = useRef(false)
   /** Visible embed generation. */
   const [viewNonce, setViewNonce] = useState(0)
   /** Background embed generation loading behind the visible one. */
   const [preloadNonce, setPreloadNonce] = useState<number | null>(null)
   const [selectedFieldKey, setSelectedFieldKey] = useState("")
   const [fieldPickerOpen, setFieldPickerOpen] = useState(false)
+  const [fieldSearch, setFieldSearch] = useState("")
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>(() => [
     ...ESIGN_ENTITY_PROFILE_IDS,
   ])
+  const [fieldRequired, setFieldRequired] = useState(true)
   const [builderCurrentPage, setBuilderCurrentPage] = useState(1)
   /** Page the next field-add refresh should reopen. Page 1 is the embed default. */
   const embedOpenPageRef = useRef(1)
@@ -158,9 +168,26 @@ export function SignFlowEmbeddedEditor({
   const ignorePageOneUntilRef = useRef(0)
   const [addingField, setAddingField] = useState(false)
   const fieldSelectId = useId()
+  const fieldSearchId = useId()
   const profileGroupId = useId()
+  const requiredGroupId = useId()
   const fieldPickerRef = useRef<HTMLDivElement | null>(null)
+  const fieldSearchRef = useRef<HTMLInputElement | null>(null)
   const fieldGroups = groupEsignInvestorDataFields()
+  const fieldSearchQuery = fieldSearch.trim().toLowerCase()
+  const visibleFieldGroups = useMemo(() => {
+    if (!fieldSearchQuery) return fieldGroups
+    return fieldGroups
+      .map((group) => ({
+        ...group,
+        fields: group.fields.filter(
+          (field) =>
+            field.label.toLowerCase().includes(fieldSearchQuery) ||
+            group.section.toLowerCase().includes(fieldSearchQuery),
+        ),
+      }))
+      .filter((group) => group.fields.length > 0)
+  }, [fieldGroups, fieldSearchQuery])
   const selectedFieldLabel = useMemo(() => {
     if (!selectedFieldKey) return ""
     return (
@@ -168,6 +195,16 @@ export function SignFlowEmbeddedEditor({
       ""
     )
   }, [selectedFieldKey])
+
+  useEffect(() => {
+    if (!fieldPickerOpen) return
+    fieldSearchRef.current?.focus()
+  }, [fieldPickerOpen])
+
+  useEffect(() => {
+    if (fieldPickerOpen) return
+    setFieldSearch("")
+  }, [fieldPickerOpen])
 
   useEffect(() => {
     if (!fieldPickerOpen) return
@@ -291,6 +328,7 @@ export function SignFlowEmbeddedEditor({
         }
       }
       if (data.event === "builder-ready" || data.event === "builder-document-loaded") {
+        awaitEmbedReloadRef.current = false
         const stayOn = embedOpenPageRef.current
         if (stayOn > 1 && event.source && "postMessage" in event.source) {
           requestSignFlowEmbedPage(event.source as Window, stayOn)
@@ -349,12 +387,48 @@ export function SignFlowEmbeddedEditor({
     return () => window.clearTimeout(timer)
   }, [url, sessionLoading, viewNonce])
 
+  const handleClose = useCallback(async () => {
+    if (saving || embedBusy || persistingClose) return
+    const dId = dealId?.trim()
+    const fId = fileId?.trim()
+    const dirty = hasLocalFieldEdits || hasLocalFieldEditsRef.current
+    if (dirty && dId && fId && iframeLoaded && builderReady) {
+      setPersistingClose(true)
+      try {
+        // Skip the embed flush while it is still reloading a field the API just wrote.
+        if (!awaitEmbedReloadRef.current) {
+          await flushEmbedLayout()
+        }
+        const synced = await postDealEsignSyncEmbeddedTemplateFields(dId, fId)
+        if (!synced.ok) {
+          toast.error("Could not keep field changes", synced.message)
+        }
+      } finally {
+        setPersistingClose(false)
+      }
+    }
+    onCancel?.()
+  }, [
+    builderReady,
+    dealId,
+    embedBusy,
+    fileId,
+    flushEmbedLayout,
+    hasLocalFieldEdits,
+    iframeLoaded,
+    onCancel,
+    persistingClose,
+    saving,
+  ])
+
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = "hidden"
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !saving && !embedBusy) onCancel?.()
+      if (event.key === "Escape" && !saving && !embedBusy && !persistingClose) {
+        void handleClose()
+      }
     }
     window.addEventListener("keydown", onKeyDown)
 
@@ -362,7 +436,7 @@ export function SignFlowEmbeddedEditor({
       document.body.style.overflow = previousOverflow
       window.removeEventListener("keydown", onKeyDown)
     }
-  }, [embedBusy, onCancel, saving])
+  }, [embedBusy, handleClose, persistingClose, saving])
 
   const promotePreloadedEmbed = useCallback((nonce: number) => {
     setViewNonce(nonce)
@@ -372,7 +446,7 @@ export function SignFlowEmbeddedEditor({
   }, [])
 
   const handleSave = useCallback(() => {
-    if (!allowSave || saving || !iframeLoaded || !builderReady || addingField) return
+    if (!allowSave || saving || persistingClose || !iframeLoaded || !builderReady || addingField) return
 
     setSaving(true)
     requestSignFlowEmbedSave(iframeRef.current)
@@ -399,6 +473,7 @@ export function SignFlowEmbeddedEditor({
     addingField,
     allowSave,
     builderReady,
+    persistingClose,
     completeTemplateSave,
     displayTitle,
     docId,
@@ -441,6 +516,7 @@ export function SignFlowEmbeddedEditor({
         key,
         selectedProfileIds,
         builderCurrentPage,
+        fieldRequired,
       )
       if (!result.ok) {
         toast.error("Could not add field", result.message)
@@ -461,6 +537,7 @@ export function SignFlowEmbeddedEditor({
       // starts the PDF on page 1.
       requestSignFlowEmbedRefresh(frame)
       requestSignFlowEmbedPage(frame, stayOnPage)
+      awaitEmbedReloadRef.current = true
     } finally {
       setAddingField(false)
     }
@@ -471,12 +548,14 @@ export function SignFlowEmbeddedEditor({
     flushEmbedLayout,
     markTemplateDirty,
     builderCurrentPage,
+    fieldRequired,
     selectedFieldKey,
     selectedProfileIds,
   ])
 
   const saveDisabled =
     saving ||
+    persistingClose ||
     sessionLoading ||
     !url ||
     !docId ||
@@ -487,10 +566,10 @@ export function SignFlowEmbeddedEditor({
 
   const handleBackdropMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      if (saving || embedBusy) return
-      if (event.target === event.currentTarget) onCancel?.()
+      if (saving || embedBusy || persistingClose) return
+      if (event.target === event.currentTarget) void handleClose()
     },
-    [embedBusy, onCancel, saving],
+    [embedBusy, handleClose, persistingClose, saving],
   )
 
   if (!sessionLoading && (!url || !docId)) return null
@@ -541,9 +620,9 @@ export function SignFlowEmbeddedEditor({
             <button
               type="button"
               className="um_modal_close"
-              onClick={() => onCancel?.()}
+              onClick={() => void handleClose()}
               aria-label="Close template editor"
-              disabled={saving || embedBusy}
+              disabled={saving || embedBusy || persistingClose}
             >
               <X size={20} strokeWidth={2} aria-hidden />
             </button>
@@ -563,12 +642,26 @@ export function SignFlowEmbeddedEditor({
                 Select which investor profile value should auto-populate, choose
                 which profiles see it, then add it to the PDF.
               </p>
-              <label
-                htmlFor={fieldSelectId}
-                className="signflow_editor_data_panel_label"
-              >
-                Choose field
-              </label>
+              <div className="signflow_editor_data_panel_label_row">
+                <label
+                  htmlFor={fieldSelectId}
+                  className="signflow_editor_data_panel_label"
+                >
+                  Choose field
+                </label>
+                <FormTooltip
+                  label="How chosen fields are filled"
+                  placement="bottom"
+                  panelAlign="start"
+                  content={
+                    <div className="signflow_editor_field_sides_tip">
+                      <p>
+                        Fields chosen will auto-fill with the investor’s data.
+                      </p>
+                    </div>
+                  }
+                />
+              </div>
               <div
                 className="signflow_editor_field_picker"
                 ref={fieldPickerRef}
@@ -580,7 +673,12 @@ export function SignFlowEmbeddedEditor({
                   aria-haspopup="listbox"
                   aria-expanded={fieldPickerOpen}
                   disabled={embedBusy || sessionLoading || !builderReady}
-                  onClick={() => setFieldPickerOpen((open) => !open)}
+                  onClick={() =>
+                    setFieldPickerOpen((open) => {
+                      if (open) setFieldSearch("")
+                      return !open
+                    })
+                  }
                 >
                   <span
                     className={
@@ -594,43 +692,75 @@ export function SignFlowEmbeddedEditor({
                   <ChevronDown size={16} strokeWidth={2} aria-hidden />
                 </button>
                 {fieldPickerOpen ? (
-                  <div
-                    className="signflow_editor_field_picker_menu"
-                    role="listbox"
-                    aria-label="Investor data fields"
-                  >
-                    {fieldGroups.map((group) => (
-                      <div
-                        key={group.section}
-                        className="signflow_editor_field_picker_group"
-                        role="group"
-                        aria-label={group.section}
-                      >
-                        <div className="signflow_editor_field_picker_group_label">
-                          {group.section}
-                        </div>
-                        {group.fields.map((field: EsignInvestorDataField) => {
-                          const selected = field.key === selectedFieldKey
-                          return (
-                            <button
-                              key={field.key}
-                              type="button"
-                              role="option"
-                              aria-selected={selected}
-                              className={`signflow_editor_field_picker_option${
-                                selected ? " is-selected" : ""
-                              }`}
-                              onClick={() => {
-                                setSelectedFieldKey(field.key)
-                                setFieldPickerOpen(false)
-                              }}
-                            >
-                              {field.label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    ))}
+                  <div className="signflow_editor_field_picker_menu">
+                    <label
+                      className="signflow_editor_field_picker_search"
+                      htmlFor={fieldSearchId}
+                    >
+                      <Search size={14} strokeWidth={2} aria-hidden />
+                      <input
+                        ref={fieldSearchRef}
+                        id={fieldSearchId}
+                        type="search"
+                        className="signflow_editor_field_picker_search_input"
+                        placeholder="Search fields"
+                        value={fieldSearch}
+                        autoComplete="off"
+                        onChange={(e) => setFieldSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.preventDefault()
+                          if (e.key === "Escape" && fieldSearch.trim()) {
+                            e.stopPropagation()
+                            setFieldSearch("")
+                          }
+                        }}
+                      />
+                    </label>
+                    <div
+                      className="signflow_editor_field_picker_menu_list"
+                      role="listbox"
+                      aria-label="Investor data fields"
+                    >
+                      {visibleFieldGroups.length === 0 ? (
+                        <p className="signflow_editor_field_picker_empty">
+                          No matching fields
+                        </p>
+                      ) : (
+                        visibleFieldGroups.map((group) => (
+                          <div
+                            key={group.section}
+                            className="signflow_editor_field_picker_group"
+                            role="group"
+                            aria-label={group.section}
+                          >
+                            <div className="signflow_editor_field_picker_group_label">
+                              {group.section}
+                            </div>
+                            {group.fields.map((field: EsignInvestorDataField) => {
+                              const selected = field.key === selectedFieldKey
+                              return (
+                                <button
+                                  key={field.key}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  className={`signflow_editor_field_picker_option${
+                                    selected ? " is-selected" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setSelectedFieldKey(field.key)
+                                    setFieldSearch("")
+                                    setFieldPickerOpen(false)
+                                  }}
+                                >
+                                  {field.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -642,7 +772,7 @@ export function SignFlowEmbeddedEditor({
                   id={profileGroupId}
                   className="signflow_editor_data_panel_label"
                 >
-                  Profiles
+                  Profile types for this field
                 </legend>
                 <p className="signflow_editor_data_panel_profiles_hint">
                   Investors only see this field when signing with a selected
@@ -677,6 +807,46 @@ export function SignFlowEmbeddedEditor({
                     )
                   })}
                 </ul>
+              </fieldset>
+              <fieldset
+                className="signflow_editor_data_panel_required"
+                disabled={embedBusy || sessionLoading || !builderReady}
+              >
+                <legend
+                  id={requiredGroupId}
+                  className="signflow_editor_data_panel_label"
+                >
+                  Required
+                </legend>
+                <p className="signflow_editor_data_panel_profiles_hint">
+                  {fieldRequired
+                    ? "Investors must complete this field before they can finish signing."
+                    : "Investors can leave this field blank."}
+                </p>
+                <div
+                  className="signflow_editor_data_panel_required_options"
+                  role="radiogroup"
+                  aria-labelledby={requiredGroupId}
+                >
+                  <label className="signflow_editor_data_panel_profile_option">
+                    <input
+                      type="radio"
+                      name={requiredGroupId}
+                      checked={fieldRequired}
+                      onChange={() => setFieldRequired(true)}
+                    />
+                    <span>Required</span>
+                  </label>
+                  <label className="signflow_editor_data_panel_profile_option">
+                    <input
+                      type="radio"
+                      name={requiredGroupId}
+                      checked={!fieldRequired}
+                      onChange={() => setFieldRequired(false)}
+                    />
+                    <span>Optional</span>
+                  </label>
+                </div>
               </fieldset>
               <button
                 type="button"
@@ -779,11 +949,20 @@ export function SignFlowEmbeddedEditor({
             <button
               type="button"
               className="signflow_editor_btn signflow_editor_btn--secondary"
-              onClick={() => onCancel?.()}
-              disabled={saving || embedBusy}
+              onClick={() => void handleClose()}
+              disabled={saving || embedBusy || persistingClose}
             >
-              <X size={16} strokeWidth={2} aria-hidden />
-              Cancel
+              {persistingClose ? (
+                <Loader2
+                  className="signflow_editor_spin"
+                  size={16}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+              ) : (
+                <X size={16} strokeWidth={2} aria-hidden />
+              )}
+              {persistingClose ? "Saving fields…" : "Cancel"}
             </button>
             <button
               type="button"

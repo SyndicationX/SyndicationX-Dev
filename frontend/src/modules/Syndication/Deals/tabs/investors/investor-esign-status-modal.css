@@ -120,11 +120,57 @@
   flex: 1 1 12rem;
 }
 
+.deal_esign_status_doc_copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
 .deal_esign_status_doc_name {
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--portal-text, #0f172a);
   word-break: break-word;
+}
+
+.deal_esign_status_doc_signers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.deal_esign_status_doc_role {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: #1d4ed8;
+}
+
+.deal_esign_status_doc_signer {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--portal-text, #0f172a);
+}
+
+.deal_esign_status_doc_role--sponsor {
+  color: #b45309;
+}
+
+:root[data-theme="dark"] .deal_esign_status_doc_role {
+  color: #93c5fd;
+}
+
+:root[data-theme="dark"] .deal_esign_status_doc_role--sponsor {
+  color: #fbbf24;
 }
 
 .deal_esign_status_doc_badge {
@@ -135,7 +181,7 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  border-radius: 4px;
+  border-radius: 999px;
   color: #166534;
   background: color-mix(in srgb, #15803d 12%, transparent);
 }

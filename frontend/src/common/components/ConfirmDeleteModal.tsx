@@ -15,6 +15,7 @@ export interface ConfirmDeleteModalProps {
   itemLabel?: string
   busy?: boolean
   confirmLabel?: string
+  busyLabel?: string
   onCancel: () => void
   onConfirm: () => void
 }
@@ -26,6 +27,7 @@ export function ConfirmDeleteModal({
   itemLabel,
   busy = false,
   confirmLabel = "Delete",
+  busyLabel = "Deleting…",
   onCancel,
   onConfirm,
 }: ConfirmDeleteModalProps) {
@@ -85,7 +87,7 @@ export function ConfirmDeleteModal({
               onClick={() => void onConfirm()}
               disabled={busy}
               busy={busy}
-              busyLabel="Deleting…"
+              busyLabel={busyLabel}
             >
               {confirmLabel}
             </ModalDeleteButton>

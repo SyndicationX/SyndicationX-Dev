@@ -15,6 +15,7 @@ import {
   getUsers,
   patchUser,
   postMembersExportNotify,
+  postRemoveMember,
 } from "../controllers/userAdmin.controller.js";
 import {
   getMyProfile,
@@ -59,6 +60,7 @@ userRoutes
 .get("/users", getUsers)
 .post("/users/export-notify", postMembersExportNotify)
 .get("/users/:userId/audit-logs", getMemberAuditLogs)
+.post("/users/:userId/remove", postRemoveMember)
 .patch("/users/:userId", patchUser);
 
 export default userRoutes;

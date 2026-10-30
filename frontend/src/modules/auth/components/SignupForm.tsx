@@ -42,7 +42,6 @@ import {
 } from "../../../common/phone/usPhoneNumber";
 import { getApiV1Base } from "../../../common/utils/apiBaseUrl";
 import { dealInvestNowPath } from "../../Syndication/Deals/utils/dealInvestNowPath";
-import { dealWorkspacePath } from "../../Syndication/Deals/utils/dealWorkspacePath";
 import { consumeInvestNowIntent } from "../../Syndication/Deals/utils/investNowIntent";
 import {
   applyOfferingPortfolioPostAuth,
@@ -430,12 +429,14 @@ export default function SignupForm() {
       parseSafeNextPath(sessionStorage.getItem(AUTH_RETURN_NEXT_KEY));
     sessionStorage.removeItem(AUTH_RETURN_NEXT_KEY);
 
-    const dealId = (dealIdForPrefillQuery || resolvedInviteDealId).trim();
-    let redirectTo = from
-      ? from
-      : isPlatformAdmin()
-        ? "/metrics"
-        : "/dashboard";
+    const fromOpensMissingDeal =
+      from != null && /^\/deals\/[^/?#]+/i.test(from);
+    let redirectTo =
+      from && !fromOpensMissingDeal
+        ? from
+        : isPlatformAdmin()
+          ? "/metrics"
+          : "/dashboard";
     let postAuthState: { investNow: true } | { returnTo: string } | undefined;
     if (portfolioIntent?.dealId) {
       const applied = applyOfferingPortfolioPostAuth(portfolioIntent.dealId);
@@ -444,8 +445,6 @@ export default function SignupForm() {
           ? from
           : applied.redirectTo;
       postAuthState = applied.postAuthState;
-    } else if (!from && dealId) {
-      redirectTo = dealWorkspacePath(dealId);
     } else if (!from && storedIntent?.dealId) {
       redirectTo = dealInvestNowPath(storedIntent.dealId);
       postAuthState = { investNow: true as const };

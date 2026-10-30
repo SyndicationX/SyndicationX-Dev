@@ -127,6 +127,7 @@ export async function postInviteUser(req: Request, res: Response): Promise<void>
     companyContext,
     roleForPending,
     result.inviteExpiresAt,
+    jwtUser.id,
   );
   if (!pending.ok) {
     res.status(pending.status).json({ message: pending.message });

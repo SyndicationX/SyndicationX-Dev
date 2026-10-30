@@ -49,7 +49,7 @@ export function LpDealDetailsPage({
         state: {
           returnTo: backTo,
           mode: "resume",
-          phaseId: phaseId ?? draftSnapshot.progress.phaseId,
+          phaseId,
           investmentId: draftSnapshot.resumeScope.investmentId,
           userInvestorProfileId: draftSnapshot.resumeScope.userInvestorProfileId,
           profileId: draftSnapshot.resumeScope.profileId,

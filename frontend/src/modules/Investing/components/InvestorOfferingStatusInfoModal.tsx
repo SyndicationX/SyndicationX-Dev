@@ -1,4 +1,4 @@
-import { X } from "lucide-react"
+import { CircleCheck, X } from "lucide-react"
 import { useEffect, useId } from "react"
 import { createPortal } from "react-dom"
 import "@/modules/Syndication/Deals/tabs/investors/add-investment-modal.css"
@@ -90,6 +90,7 @@ export function InvestorOfferingStatusInfoModal({
 
         <div className="um_modal_actions um_modal_actions_view investor_offering_status_modal_actions">
           <button type="button" className="um_btn_primary" onClick={onClose}>
+            <CircleCheck size={16} strokeWidth={2} aria-hidden />
             OK
           </button>
         </div>

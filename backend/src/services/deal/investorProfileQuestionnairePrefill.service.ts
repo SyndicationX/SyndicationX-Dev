@@ -5,6 +5,7 @@ import {
 } from "../investing/investingProfileBook.service.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../../database/db.js";
+import { users } from "../../schema/schema.js";
 import { dealInvestment } from "../../schema/deal.schema/deal-investment.schema.js";
 import type { InvestorEsignRowTarget } from "./dealMemberEsignStatus.service.js";
 import {
@@ -66,9 +67,45 @@ function formatAddressLine(addr: SavedAddress): string {
 function readWizardState(
   profile: ProfileBookSnapshot["profiles"][0],
 ): Record<string, unknown> | null {
-  const raw = profile.profileWizardState;
+  let raw: unknown = profile.profileWizardState;
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    if (!text) return null;
+    try {
+      raw = JSON.parse(text) as unknown;
+    } catch {
+      return null;
+    }
+  }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  return raw as Record<string, unknown>;
+  let src = raw as Record<string, unknown>;
+  const inner = src.form;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const form = inner as Record<string, unknown>;
+    if (
+      "firstName" in form ||
+      "first_name" in form ||
+      "lastName" in form ||
+      "last_name" in form ||
+      "entityLegalName" in form ||
+      "profileType" in form
+    ) {
+      src = form;
+    }
+  }
+  return src;
+}
+
+function wizardStr(
+  wizard: Record<string, unknown> | null,
+  ...keys: string[]
+): string {
+  if (!wizard) return "";
+  for (const key of keys) {
+    const value = String(wizard[key] ?? "").trim();
+    if (value) return value;
+  }
+  return "";
 }
 
 function resolveAddressById(
@@ -211,10 +248,17 @@ function buildPrefillContext(
   wizard: Record<string, unknown> | null,
   addresses: SavedAddress[],
   profiles: ProfileBookSnapshot["profiles"],
+  accountName?: { firstName: string; lastName: string },
 ): QuestionnairePrefillContext {
-  const firstName = strField(wizard, "firstName");
-  const middleName = strField(wizard, "middleName");
-  const lastName = strField(wizard, "lastName");
+  const firstName =
+    wizardStr(wizard, "firstName", "first_name") ||
+    accountName?.firstName ||
+    "";
+  const middleName = wizardStr(wizard, "middleName", "middle_name");
+  const lastName =
+    wizardStr(wizard, "lastName", "last_name") ||
+    accountName?.lastName ||
+    "";
   const fullName = joinNameParts([firstName, middleName, lastName]);
 
   const taxAddr = resolveTaxAddress(wizard, addresses);
@@ -258,6 +302,21 @@ function buildPrefillContext(
     relationshipAddress: mailingAddressLine || addressLine,
     usTaxResident: isUsAddress(taxAddr) ? "yes" : "",
   };
+}
+
+function personNameAnswer(
+  question: { id: string; label?: string },
+  ctx: QuestionnairePrefillContext,
+): string | undefined {
+  const id = question.id.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const label = String(question.label ?? "").trim().toLowerCase();
+  if (id === "first_name" || id === "firstname" || label === "first name") {
+    return ctx.firstName || undefined;
+  }
+  if (id === "last_name" || id === "lastname" || label === "last name") {
+    return ctx.lastName || undefined;
+  }
+  return undefined;
 }
 
 function resolveQuestionnairePrefillValue(
@@ -326,10 +385,12 @@ function resolveQuestionnairePrefillValue(
 export function buildQuestionnairePrefillFromProfileBook(
   profileBook: ProfileBookSnapshot,
   userInvestorProfileId: string,
-  questions?: Pick<
-    InvestorQuestionnaireQuestion,
-    "id" | "investorProfileFieldKey"
-  >[],
+  questions?: Array<
+    Pick<InvestorQuestionnaireQuestion, "id" | "investorProfileFieldKey"> & {
+      label?: string;
+    }
+  >,
+  accountName?: { firstName: string; lastName: string },
 ): InvestorQuestionnaireAnswersMap {
   const profileId = userInvestorProfileId.trim();
   if (!profileId) return {};
@@ -342,13 +403,16 @@ export function buildQuestionnairePrefillFromProfileBook(
     wizard,
     profileBook.addresses,
     profileBook.profiles,
+    accountName,
   );
 
   const out: InvestorQuestionnaireAnswersMap = {};
 
   if (questions?.length) {
     for (const question of questions) {
-      const byId = resolveQuestionnairePrefillValue(question.id, ctx);
+      const byId =
+        personNameAnswer(question, ctx) ??
+        resolveQuestionnairePrefillValue(question.id, ctx);
       const value =
         byId ??
         (question.investorProfileFieldKey
@@ -400,6 +464,7 @@ export function buildQuestionnairePrefillFromProfileBook(
   // Must run even when a deal questionnaire exists — those questions early-path
   // only cover questionnaire ids, not sponsor-placed PDF data fields.
   for (const field of ESIGN_INVESTOR_DATA_FIELDS) {
+    if (field.signFlowType === "signature") continue;
     const answerKey = esignInvestorDataAnswerKey(field);
     if (out[answerKey]?.trim()) continue;
     const value = resolveInvestorProfileFieldValue(
@@ -449,10 +514,12 @@ export async function enrichQuestionnaireAnswersFromInvestorProfile(params: {
   }
 
   const book = await getProfileBookForUser(params.viewerUserId);
+  const accountName = await accountNameForUser(params.viewerUserId);
   const prefill = buildQuestionnairePrefillFromProfileBook(
     book,
     profileId,
     questions,
+    accountName,
   );
   if (!Object.keys(prefill).length) return params.answers ?? null;
 
@@ -461,6 +528,23 @@ export async function enrichQuestionnaireAnswersFromInvestorProfile(params: {
     prefill,
   );
   return Object.keys(merged).length > 0 ? merged : null;
+}
+
+async function accountNameForUser(
+  userId: string,
+): Promise<{ firstName: string; lastName: string } | undefined> {
+  const id = userId.trim();
+  if (!id) return undefined;
+  const [row] = await db
+    .select({ firstName: users.firstName, lastName: users.lastName })
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  if (!row) return undefined;
+  const firstName = String(row.firstName ?? "").trim();
+  const lastName = String(row.lastName ?? "").trim();
+  if (!firstName && !lastName) return undefined;
+  return { firstName, lastName };
 }
 
 async function readUserInvestorProfileIdForTarget(

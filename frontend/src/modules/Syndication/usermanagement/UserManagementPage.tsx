@@ -37,6 +37,7 @@ import {
   Upload,
   User,
   UserCog,
+  UserMinus,
   UserPlus,
   Users,
   X,
@@ -51,12 +52,13 @@ import { getApiV1Base } from "../../../common/utils/apiBaseUrl";
 import { isCompanyAdmin, isPlatformAdmin } from "../../../common/auth/roleUtils";
 import {
   getSessionOrganizationCompanyId,
-  resolvePlatformAdminMembersListScope,
 } from "../../../common/auth/sessionOrganization";
 import { DataTablePagination } from "../../../common/components/DataTablePagination/DataTablePagination";
 import { TableHScrollShell } from "../../../common/components/data-table/TableHScrollShell";
 import { ViewReadonlyField } from "../../../common/components/ViewReadonlyField";
 import { toast } from "../../../common/components/Toast";
+import { MemberInvitationSection } from "./MemberInvitationSection";
+import { MemberRemoveConfirmModal } from "./MemberRemoveConfirmModal";
 import { MemberRoleBadge } from "./MemberRoleBadge";
 import {
   COMPANY_EDIT_ROLE_OPTIONS,
@@ -73,7 +75,6 @@ import {
   formatOrganizationsCsvCell,
   formatRoleCsvCell,
   formatValue,
-  isOrgStaffPortalRole,
   memberUserCellPrimaryLabel,
   memberInvitePending,
   memberRowIsCurrentUser,
@@ -232,6 +233,22 @@ function memberSortValue(
     default:
       return "";
   }
+}
+
+const USERS_ROLES_TABLE_ROLES = new Set(["company_admin", "company_user"])
+
+function memberRowsFromList(list: unknown[]): Record<string, unknown>[] {
+  return list.filter(
+    (x): x is Record<string, unknown> =>
+      x !== null &&
+      typeof x === "object" &&
+      !Array.isArray(x) &&
+      USERS_ROLES_TABLE_ROLES.has(
+        String((x as Record<string, unknown>).role ?? "")
+          .trim()
+          .toLowerCase(),
+      ),
+  )
 }
 
 function buildSortColumns(organizationScoped = false): {
@@ -463,8 +480,8 @@ export default function UserManagementPage({
     if (membersOrganizationScope !== undefined) {
       return membersOrganizationScope;
     }
-    const platformScope = resolvePlatformAdminMembersListScope();
-    if (platformScope !== undefined) return platformScope;
+    // Users & Roles for a platform admin is the whole directory, not one company.
+    if (isPlatformAdmin()) return undefined;
     const active = getSessionOrganizationCompanyId();
     if (active && ORG_UUID_RE.test(active)) return active;
     return undefined;
@@ -519,14 +536,7 @@ export default function UserManagementPage({
           return;
         }
         const list = Array.isArray(data.users) ? data.users : [];
-        const normalized = list.filter(
-          (x): x is Record<string, unknown> =>
-            x !== null &&
-            typeof x === "object" &&
-            !Array.isArray(x) &&
-            isOrgStaffPortalRole(x.role),
-        );
-        setMemberRows(normalized);
+        setMemberRows(memberRowsFromList(list));
         setActionMenuRowId(null);
         setActionMenuRow(null);
         setMenuPos(null);
@@ -558,14 +568,7 @@ export default function UserManagementPage({
       };
       if (!res.ok) return;
       const list = Array.isArray(data.users) ? data.users : [];
-      const normalized = list.filter(
-        (x): x is Record<string, unknown> =>
-          x !== null &&
-          typeof x === "object" &&
-          !Array.isArray(x) &&
-          isOrgStaffPortalRole(x.role),
-      );
-      setMemberRows(normalized);
+      setMemberRows(memberRowsFromList(list));
     } catch {
       /* ignore */
     }
@@ -585,12 +588,14 @@ export default function UserManagementPage({
    * the current members list organization only (no picker).
    */
   const showCompanyColumn = isPlatformAdmin();
+  const showSerialNumbers = true;
   const showInviteRolePicker = showCompanyColumn || isCompanyAdmin();
   const sortColumns = useMemo(
     () => buildSortColumns(Boolean(organizationDisplayScope?.companyId)),
     [organizationDisplayScope],
   );
-  const membersTableColSpan = 1 + sortColumns.length + 1;
+  const membersTableColSpan =
+    (showSerialNumbers ? 1 : 0) + 1 + sortColumns.length + 1;
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -629,6 +634,9 @@ export default function UserManagementPage({
     null,
   );
   const [viewRow, setViewRow] = useState<Record<string, unknown> | null>(null);
+  const [removeRow, setRemoveRow] = useState<Record<string, unknown> | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeErr, setRemoveErr] = useState("");
   const [reinviteBusyId, setReinviteBusyId] = useState<string | null>(null);
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null);
   const [editOrganizationId, setEditOrganizationId] = useState("");
@@ -1488,6 +1496,58 @@ export default function UserManagementPage({
     };
   }, [inviteOpen, editRow, showCompanyColumn, token, apiV1]);
 
+  function openRemoveMember(row: Record<string, unknown>) {
+    if (memberRowIsCurrentUser(row, currentUserId)) {
+      toast.error("Cannot remove", "You cannot remove your own account.");
+      return;
+    }
+    setRemoveErr("");
+    setRemoveRow(row);
+  }
+
+  async function confirmRemoveMember() {
+    if (!removeRow || !token || !apiV1 || removeBusy) return;
+    const id = String(removeRow.id ?? "").trim();
+    const orgFromScope =
+      typeof membersListScope === "string" && ORG_UUID_RE.test(membersListScope)
+        ? membersListScope
+        : "";
+    const orgId = orgFromScope || (rowOrganizationId(removeRow) ?? "");
+    if (!id || !ORG_UUID_RE.test(orgId)) {
+      setRemoveErr("This member is not tied to an organization.");
+      return;
+    }
+    setRemoveBusy(true);
+    setRemoveErr("");
+    try {
+      const res = await fetch(`${apiV1}/users/${encodeURIComponent(id)}/remove`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ organizationId: orgId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      if (!res.ok) {
+        const msg = data.message || "Could not remove member.";
+        setRemoveErr(msg);
+        toast.error("Could not remove member", msg);
+        return;
+      }
+      setMemberRows((prev) => prev.filter((r) => String(r.id ?? "") !== id));
+      if (viewRow && String(viewRow.id ?? "") === id) setViewRow(null);
+      setRemoveRow(null);
+      toast.success("Member removed", "They are back on All Contacts.");
+    } catch {
+      const msg = "Unable to connect. Try again later.";
+      setRemoveErr(msg);
+      toast.error("Could not remove member", msg);
+    } finally {
+      setRemoveBusy(false);
+    }
+  }
+
   async function submitInvite(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !apiV1) return;
@@ -1636,6 +1696,13 @@ export default function UserManagementPage({
           </div>
         ) : null}
       </div>
+      {membersTab === "users" ? (
+        <p className="um_users_roles_scope">
+          {showCompanyColumn
+            ? "Company admins and company users from every company."
+            : "Company admins and company users in this company."}
+        </p>
+      ) : null}
 
       <div className="um_members_tab_content">
       {membersTab === "users" ? (
@@ -1724,6 +1791,11 @@ export default function UserManagementPage({
                       aria-label="Select all members in this list"
                     />
                   </th>
+                  {showSerialNumbers ? (
+                    <th scope="col" className="um_th_serial" aria-label="Serial number">
+                      #
+                    </th>
+                  ) : null}
                   {sortColumns.map(({ key, label }) => {
                     const active = sortKey === key;
                     const ariaSort = active
@@ -1839,6 +1911,9 @@ export default function UserManagementPage({
                           }
                         />
                       </td>
+                      {showSerialNumbers ? (
+                        <td className="um_td_serial">{globalIndex + 1}</td>
+                      ) : null}
                       <td className="um_td_user">
                         <div className="um_user_cell">
                           <div className="um_user_avatar_ring" aria-hidden>
@@ -1847,15 +1922,17 @@ export default function UserManagementPage({
                             </span>
                           </div>
                           <div className="um_user_meta">
-                            <span
-                              className={`um_user_meta_username${
+                            <button
+                              type="button"
+                              className={`um_user_meta_username um_user_meta_name_btn${
                                 displayName === "—"
                                   ? " um_user_meta_username--placeholder"
                                   : ""
                               }`}
+                              onClick={() => setViewRow(row)}
                             >
                               {displayName}
-                            </span>
+                            </button>
                             {isDisplayableEmail(rawEmail) ? (
                               <a
                                 href={`mailto:${encodeURIComponent(rawEmail)}`}
@@ -2074,6 +2151,34 @@ export default function UserManagementPage({
                 <button
                   type="button"
                   role="menuitem"
+                  className="um_kebab_menuitem deals_kebab_menuitem_danger"
+                  disabled={memberRowIsCurrentUser(
+                    openMenuContext.row,
+                    currentUserId,
+                  )}
+                  title={
+                    memberRowIsCurrentUser(openMenuContext.row, currentUserId)
+                      ? "You cannot remove your own account."
+                      : undefined
+                  }
+                  onClick={() => {
+                    closeActionMenu();
+                    openRemoveMember(openMenuContext.row);
+                  }}
+                >
+                  <UserMinus
+                    className="um_kebab_menuitem_icon"
+                    size={16}
+                    strokeWidth={2}
+                    aria-hidden
+                  />
+                  Remove
+                </button>
+              </li>
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
                   className="um_kebab_menuitem"
                   onClick={() => exportRowCsv(openMenuContext.row)}
                 >
@@ -2085,6 +2190,20 @@ export default function UserManagementPage({
             document.body,
           )
         : null}
+
+      {removeRow ? (
+        <MemberRemoveConfirmModal
+          memberName={memberUserCellPrimaryLabel(removeRow)}
+          busy={removeBusy}
+          error={removeErr}
+          onClose={() => {
+            if (removeBusy) return;
+            setRemoveRow(null);
+            setRemoveErr("");
+          }}
+          onConfirm={() => void confirmRemoveMember()}
+        />
+      ) : null}
 
       {viewRow ? (
         <div
@@ -2163,6 +2282,7 @@ export default function UserManagementPage({
                 value={<StatusWithDot {...accountStatusForUi(viewRow)} />}
               />
             </div>
+            <MemberInvitationSection row={viewRow} />
             <div className="um_modal_actions um_modal_actions_view">
               <button
                 type="button"

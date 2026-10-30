@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import {
   DataTable,
@@ -157,6 +157,31 @@ export function MyDistributionsTable({
     return cols
   }, [showDeal, investmentId])
 
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const visibleRows = loading ? [] : rows
+  useEffect(() => {
+    setPage(1)
+  }, [rows.length])
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(visibleRows.length / pageSize))
+    if (page > totalPages) setPage(totalPages)
+  }, [visibleRows.length, pageSize, page])
+  const pagination = useMemo(
+    () => ({
+      page,
+      pageSize,
+      totalItems: visibleRows.length,
+      onPageChange: setPage,
+      onPageSizeChange: (n: number) => {
+        setPageSize(n)
+        setPage(1)
+      },
+      ariaLabel: "Distributions table pagination",
+    }),
+    [page, pageSize, visibleRows.length],
+  )
+
   return (
     <div className="deal_dist_tab" role="region" aria-label="Your distributions">
       <div className="deal_dist_summary" aria-live="polite">
@@ -182,12 +207,13 @@ export function MyDistributionsTable({
         visualVariant="members"
         membersTableClassName="um_table_members deal_inv_table deal_dist_table"
         columns={columns}
-        rows={loading ? [] : rows}
+        rows={visibleRows}
         getRowKey={(row) =>
           `${row.distributionId}:${row.classId}:${row.payment}:${row.date}`
         }
         emptyLabel={loading ? "Loading distributions…" : emptyLabel}
         initialSort={{ columnId: "date", direction: "desc" }}
+        pagination={visibleRows.length > 0 ? pagination : undefined}
         onBodyRowClick={(row) => navigate(detailPath(row, investmentId))}
         getRowClassName={() => "deal_dist_table_row"}
       />

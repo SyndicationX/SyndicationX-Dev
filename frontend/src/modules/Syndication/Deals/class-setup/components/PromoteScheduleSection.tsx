@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import { TableHScrollShell } from "../../../../../common/components/data-table/TableHScrollShell"
 import type {
@@ -165,7 +166,8 @@ export function PromoteScheduleSection({
               className="cs_add_btn"
               onClick={() => onChange(addPromoteHurdle(normalized, classes))}
             >
-              ＋ Add hurdle
+              <Plus size={14} strokeWidth={2} aria-hidden />
+              Add hurdle
             </button>
             <span className="cs_unit">
               a new stage starts as a copy of the previous one, so its column

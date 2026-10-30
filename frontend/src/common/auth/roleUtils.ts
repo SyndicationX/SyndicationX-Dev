@@ -79,12 +79,45 @@ export function canAccessSyndicationWorkspaceSettings(): boolean {
   return canAccessCompanyPage();
 }
 
+/** Lead Sponsor on at least one deal (session flag from sign-in / GET /auth/me). */
+export function isLeadSponsorSessionUser(): boolean {
+  const u = getStoredSessionUserRecord();
+  return u?.is_lead_sponsor === true;
+}
+
+/** Company ids for deals this user leads. Empty when the session has not been refreshed. */
+export function getLeadSponsorCompanyIdsFromSession(): string[] {
+  const u = getStoredSessionUserRecord();
+  const raw = u?.lead_sponsor_company_ids;
+  if (!Array.isArray(raw)) return [];
+  return [
+    ...new Set(
+      raw
+        .map((id) => String(id ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/**
+ * True once sign-in or GET /auth/me has written `is_lead_sponsor`.
+ * Older sessions omit the flag until the profile is refreshed.
+ */
+export function isLeadSponsorSessionFlagKnown(): boolean {
+  const u = getStoredSessionUserRecord();
+  return typeof u?.is_lead_sponsor === "boolean";
+}
+
 /**
  * Sidebar “Settings” target in Syndicating mode.
- * Deal participants (e.g. Lead / Admin / Co-sponsor on a deal) use My account instead.
+ * Company staff open workspace Settings. Lead sponsors open Settings so the
+ * Billing tab is available. Other deal participants use My account.
  */
 export function resolveSyndicationSettingsNavPath(): "/settings" | "/account" {
-  return canAccessSyndicationWorkspaceSettings() ? "/settings" : "/account";
+  if (canAccessSyndicationWorkspaceSettings() || isLeadSponsorSessionUser()) {
+    return "/settings";
+  }
+  return "/account";
 }
 
 export function isCompanyAdmin(): boolean {

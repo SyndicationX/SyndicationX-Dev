@@ -1,5 +1,7 @@
-import { useMemo } from "react"
+import { X } from "lucide-react"
+import { useMemo, useState } from "react"
 import { TableHScrollShell } from "../../../../../common/components/data-table/TableHScrollShell"
+import { MemberRemoveConfirmModal } from "../../../usermanagement/MemberRemoveConfirmModal"
 import {
   DropdownSelect,
   type DropdownSelectOption,
@@ -14,13 +16,12 @@ import type {
   DistributionSetupClass,
 } from "../types/distribution-setup.types"
 import { CLASS_TYPE_TONE } from "../types/distribution-setup.types"
-import { CreatableDropdownField } from "./CreatableDropdownField"
 import {
   allocateFeeCashByClass,
   feeClassSplitTotal,
   feeWindowForPeriodFactor,
+  includedFeeClassSplits,
   listFeeClassSplitStatuses,
-  mergeFeeTypeOptions,
   parseFeePercent,
   validateDistributionFee,
 } from "../utils/distributionFee"
@@ -36,8 +37,6 @@ type DistributionFeePanelProps = {
   classes: DistributionSetupClass[]
   investors?: Array<{ investorClass?: string | null }>
   onChange: (next: DistributionFeeConfig) => void
-  completing?: boolean
-  onComplete?: () => void
 }
 
 function formatMoneyPlain(n: number): string {
@@ -66,8 +65,6 @@ export function DistributionFeePanel({
   classes,
   investors = [],
   onChange,
-  completing = false,
-  onComplete,
 }: DistributionFeePanelProps) {
   const validation = useMemo(
     () =>
@@ -80,61 +77,64 @@ export function DistributionFeePanel({
     [fee, classes, investors],
   )
 
+  const excludedClassIds = fee.excludedClassIds ?? []
+  const visibleClasses = useMemo(
+    () => classes.filter((c) => !excludedClassIds.includes(c.id)),
+    [classes, excludedClassIds],
+  )
+  const activeSplits = useMemo(() => includedFeeClassSplits(fee), [fee])
+
   const totalPct = useMemo(
-    () => feeClassSplitTotal(fee.classSplits),
-    [fee.classSplits],
+    () => feeClassSplitTotal(activeSplits),
+    [activeSplits],
   )
 
   const splitStatuses = useMemo(
     () =>
       listFeeClassSplitStatuses({
-        classes,
-        splits: fee.classSplits,
+        classes: visibleClasses,
+        splits: activeSplits,
         investors,
       }),
-    [classes, fee.classSplits, investors],
+    [visibleClasses, activeSplits, investors],
   )
 
   const allocations = useMemo(
     () =>
       allocateFeeCashByClass({
         cashAvailable: fee.cashAvailable,
-        splits: fee.classSplits,
+        splits: activeSplits,
       }),
-    [fee.cashAvailable, fee.classSplits],
-  )
-
-  const typeOptions = useMemo(
-    () =>
-      mergeFeeTypeOptions({
-        options: fee.typeOptions,
-        extra: fee.type ? [fee.type] : [],
-      }),
-    [fee.typeOptions, fee.type],
+    [fee.cashAvailable, activeSplits],
   )
 
   const cashNum = Math.max(0, parseMoneyDigits(fee.cashAvailable))
   const totalOk = Math.abs(totalPct - 100) <= 0.005
-  const canComplete =
-    Boolean(onComplete) &&
-    validation.ok &&
-    cashNum > 0 &&
-    totalOk &&
-    !completing
+  const [pendingRemoveClassId, setPendingRemoveClassId] = useState<string | null>(
+    null,
+  )
+  const pendingRemoveClass = visibleClasses.find(
+    (c) => c.id === pendingRemoveClassId,
+  )
+  const pendingRemoveName = pendingRemoveClass?.name?.trim() || "this class"
 
   function patch(partial: Partial<DistributionFeeConfig>) {
     onChange({ ...fee, ...partial })
   }
 
-  function commitType(nextType: string) {
-    const type = nextType.trim()
+  function removeClass(classId: string) {
     patch({
-      type,
-      typeOptions: mergeFeeTypeOptions({
-        options: fee.typeOptions,
-        extra: type ? [type] : [],
-      }),
+      excludedClassIds: [...new Set([...(fee.excludedClassIds ?? []), classId])],
+      classSplits: fee.classSplits.map((s) =>
+        s.classId === classId ? { ...s, percent: "0" } : s,
+      ),
     })
+  }
+
+  function confirmRemoveClass() {
+    if (!pendingRemoveClassId) return
+    removeClass(pendingRemoveClassId)
+    setPendingRemoveClassId(null)
   }
 
   function setClassPercent(classId: string, percent: string) {
@@ -148,7 +148,7 @@ export function DistributionFeePanel({
   return (
     <div className="ds_fee_panel" role="region" aria-label="Acquisition fee">
       <div className="ds_sim_head">
-        <h2>Acquisition Fee</h2>
+        {/* <h2>Acquisition Fee</h2> */}
         <p className="ds_table_subtitle">
           Name the fee and allocate available cash across investor classes. The
           split is yours to set — the system does not assume a GP-only fee.
@@ -171,6 +171,7 @@ export function DistributionFeePanel({
               aria-label="Acquisition fee name"
             />
           </label>
+          {/* Type — re-enable when fee type should be collected again.
           <label className="ds_field ds_field_type">
             <span>
               Type <span className="ds_req" aria-hidden>*</span>
@@ -185,6 +186,7 @@ export function DistributionFeePanel({
               invalid={!fee.type.trim()}
             />
           </label>
+          */}
           <label className="ds_field">
             <span>Cash Available</span>
             <input
@@ -226,8 +228,6 @@ export function DistributionFeePanel({
               useFixedPanel
             />
           </label>
-        </div>
-        <div className="ds_sim_row ds_sim_row_dates">
           <label className="ds_field">
             <span>Period start date</span>
             <input
@@ -255,11 +255,8 @@ export function DistributionFeePanel({
           <div>
             <h2 className="ds_table_title">Class Split</h2>
             <p className="ds_table_subtitle">
-              Enter a percentage for each investor class. Combined allocation
-              must equal 100%. A class is paid only when it has a percentage
-              and investors. If a class has a percentage but no investors, that
-              class is not paid and this distribution is not paid to other
-              classes either.
+              Percentages must total 100%. A class is paid only when it has
+              both a percentage and investors.
             </p>
           </div>
           <p
@@ -281,6 +278,10 @@ export function DistributionFeePanel({
             No investor classes yet. Finish Class Setup, then return here to
             allocate the fee.
           </p>
+        ) : visibleClasses.length === 0 ? (
+          <p className="ds_muted ds_fee_empty">
+            Every investor class was removed from this fee.
+          </p>
         ) : (
           <div className="ds_table_scroll">
             <TableHScrollShell ariaLabel="Fee split columns">
@@ -297,7 +298,7 @@ export function DistributionFeePanel({
                 </tr>
               </thead>
               <tbody>
-                {classes.map((cls) => {
+                {visibleClasses.map((cls) => {
                   const split = fee.classSplits.find((s) => s.classId === cls.id)
                   const pctRaw = split?.percent ?? "0"
                   const pctN = parseFeePercent(pctRaw)
@@ -316,10 +317,21 @@ export function DistributionFeePanel({
                     >
                       <td>
                         <div className="ds_fee_class_cell">
-                          <span
-                            className={`ds_chip tone-${CLASS_TYPE_TONE[cls.classType] || "lp"}`}
-                          >
-                            {cls.name || "Class"}
+                          <span className="ds_fee_class_name">
+                            <span
+                              className={`ds_chip tone-${CLASS_TYPE_TONE[cls.classType] || "lp"}`}
+                            >
+                              {cls.name || "Class"}
+                            </span>
+                            <button
+                              type="button"
+                              className="ds_icon_btn danger"
+                              title={`Remove ${cls.name || "class"}`}
+                              aria-label={`Remove ${cls.name || "class"}`}
+                              onClick={() => setPendingRemoveClassId(cls.id)}
+                            >
+                              <X size={14} strokeWidth={2.25} aria-hidden />
+                            </button>
                           </span>
                           <span className="ds_fee_class_role">
                             {classTypeLabel(cls.classType)}
@@ -359,7 +371,7 @@ export function DistributionFeePanel({
                         <span className="ds_fee_amount">
                           {cashNum > 0 && totalOk && payable
                             ? formatMoneyPlain(amount)
-                            : "—"}
+                            : formatMoneyPlain(0)}
                         </span>
                       </td>
                     </tr>
@@ -385,22 +397,21 @@ export function DistributionFeePanel({
         ) : null}
       </section>
 
-      {onComplete ? (
-        <div className="ds_complete_row ds_fee_complete_row">
-          <button
-            type="button"
-            className="ds_primary_btn ds_complete_btn"
-            disabled={!canComplete}
-            onClick={onComplete}
-            title={
-              canComplete
-                ? "Record this fee distribution — Source: GP Payment, Type: selected type"
-                : "Enter fee name, type, cash > $0, and a class-scoped split totaling 100% (each allocated class must have investors)"
-            }
-          >
-            {completing ? "Completing…" : "Complete acquisition fee"}
-          </button>
-        </div>
+      {pendingRemoveClassId ? (
+        <MemberRemoveConfirmModal
+          memberName={pendingRemoveName}
+          busy={false}
+          error=""
+          submitLabel="Remove"
+          message={
+            <>
+              This will remove <strong>{pendingRemoveName}</strong> from this
+              acquisition fee. The class stays in Class Setup.
+            </>
+          }
+          onClose={() => setPendingRemoveClassId(null)}
+          onConfirm={confirmRemoveClass}
+        />
       ) : null}
     </div>
   )

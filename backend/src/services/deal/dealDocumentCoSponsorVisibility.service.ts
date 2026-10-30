@@ -104,8 +104,11 @@ export function nestedDocumentVisibleToCoSponsorRaw(
     if (ctx.viewerUserIds.has(id.toLowerCase())) return true;
   }
 
-  const esignRowId = String(doc.esignInvestorRowId ?? "").trim();
-  if (esignRowId && lpMatchesSharedInvestorId(esignRowId, ctx.lpRows)) {
+  const esignRowIds = [
+    String(doc.esignInvestorRowId ?? ""),
+    ...parseIdList(doc.esignInvestorMatchIds),
+  ];
+  if (esignRowIds.some((id) => lpMatchesSharedInvestorId(id, ctx.lpRows))) {
     return true;
   }
 

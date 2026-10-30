@@ -82,6 +82,7 @@ export function UnsavedChangesModal({
               disabled={busy}
               onClick={onDiscard}
             >
+              <X size={16} strokeWidth={2} aria-hidden />
               Don&apos;t save
             </button>
             <ModalSaveButton

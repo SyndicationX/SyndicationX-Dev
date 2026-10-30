@@ -212,6 +212,12 @@ function parseDistributionFee(raw: unknown): DistributionFeeConfig | undefined {
   const typeOptions = typeOptionsRaw
     .map((item) => str(item))
     .filter(Boolean);
+  const excludedRaw = Array.isArray(o.excludedClassIds)
+    ? o.excludedClassIds
+    : Array.isArray(o.excluded_class_ids)
+      ? o.excluded_class_ids
+      : [];
+  const excludedClassIds = excludedRaw.map((item) => str(item)).filter(Boolean);
   return {
     name,
     type,
@@ -221,6 +227,7 @@ function parseDistributionFee(raw: unknown): DistributionFeeConfig | undefined {
     periodStart: resolvedStart,
     periodEnd: resolvedEnd,
     classSplits,
+    ...(excludedClassIds.length > 0 ? { excludedClassIds } : {}),
   };
 }
 
@@ -243,6 +250,9 @@ function serializeDistributionFee(
   const typeOptions = (fee.typeOptions ?? [])
     .map((t) => str(t))
     .filter(Boolean);
+  const excludedClassIds = (fee.excludedClassIds ?? [])
+    .map((id) => str(id))
+    .filter(Boolean);
   return {
     name,
     type,
@@ -252,6 +262,7 @@ function serializeDistributionFee(
     periodStart: /^\d{4}-\d{2}-\d{2}$/.test(periodStart) ? periodStart : "",
     periodEnd: /^\d{4}-\d{2}-\d{2}$/.test(periodEnd) ? periodEnd : "",
     classSplits,
+    ...(excludedClassIds.length > 0 ? { excludedClassIds } : {}),
   };
 }
 

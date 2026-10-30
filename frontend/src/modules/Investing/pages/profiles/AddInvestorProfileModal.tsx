@@ -920,7 +920,7 @@ interface AddInvestorProfileModalProps {
   savedAddresses?: SavedAddress[]
   /** Saved beneficiaries; only the Individual path shows the beneficiary step (a dropdown, no inline add). */
   savedBeneficiaries?: ProfileBookSnapshot["beneficiaries"]
-  /** Active profile list used to block duplicate name + type on save. */
+  /** Finished profiles used to block a duplicate name + type when leaving profile details. */
   existingProfiles?: InvestorProfileListRow[]
   /** Called after a new address is saved from the profile wizard dropdown. */
   onAddressAdded?: (address: SavedAddress) => void
@@ -1264,10 +1264,20 @@ export function AddInvestorProfileModal({
   const stepScrollBootRef = useRef(true)
   const [lastEditReason, setLastEditReason] = useState("")
   const [lastEditReasonError, setLastEditReasonError] = useState<string | null>(null)
-  const [backendProfileId, setBackendProfileId] = useState<string | null>(null)
-  const backendProfileIdRef = useRef<string | null>(null)
+  const [backendProfileId, setBackendProfileId] = useState<string | null>(() => {
+    if (mode === "edit" || !resumeDraft) return null
+    const fromApi = resumeFromProfile?.id?.trim()
+    if (fromApi) return fromApi
+    return loadAddProfileDraft()?.backendProfileId?.trim() || null
+  })
+  const backendProfileIdRef = useRef<string | null>(backendProfileId)
   const createPostInFlightRef = useRef(false)
   const backendAutosaveInFlightRef = useRef(false)
+  const backendAutosavePendingRef = useRef(false)
+  const autosaveWaitersRef = useRef<Array<() => void>>([])
+  const addWizardBootstrappedRef = useRef(false)
+  const resumeProfileIdRef = useRef<string | null>(resumeFromProfile?.id?.trim() || null)
+  resumeProfileIdRef.current = resumeFromProfile?.id?.trim() || null
   const addProfileDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const backendAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestAddProfileDraftRef = useRef({
@@ -1396,6 +1406,7 @@ export function AddInvestorProfileModal({
   useEffect(() => {
     if (!open) {
       lastEditPrefillIdRef.current = null
+      addWizardBootstrappedRef.current = false
       return
     }
     if (isEdit && editTarget) {
@@ -1415,6 +1426,8 @@ export function AddInvestorProfileModal({
       return
     }
     lastEditPrefillIdRef.current = null
+    if (addWizardBootstrappedRef.current) return
+    addWizardBootstrappedRef.current = true
     setFieldError({})
     setSsnVisible(false)
     setSpouseSsnVisible(false)
@@ -1551,6 +1564,123 @@ export function AddInvestorProfileModal({
     }
   }, [open, enableAddDraftAutosave, form, step, backendProfileId])
 
+  /**
+   * One wizard session writes one draft row: resume/session id is reused,
+   * and a second autosave waits for the in-flight create instead of inserting again.
+   */
+  const persistBackendDraftNow = useCallback(async (): Promise<string | null> => {
+    if (!getApiV1Base() || !enableAddDraftAutosave) {
+      return backendProfileIdRef.current
+    }
+    const { form: f, step: st } = latestAddProfileDraftRef.current
+    const draftCheck = {
+      form: profileWizardStateForPersist(f, st),
+      step: st,
+    }
+    if (!addProfileDraftHasContent(draftCheck)) return backendProfileIdRef.current
+
+    const profileName = buildProfileNameForPersist(f)
+    const profileType = f.profileType.trim() || "—"
+    const profileWizardState = profileWizardStateForPersist(f, st)
+
+    let persistedId = backendProfileIdRef.current?.trim() || ""
+    if (!persistedId && resumeDraft) {
+      persistedId =
+        resumeProfileIdRef.current?.trim() ||
+        loadAddProfileDraft()?.backendProfileId?.trim() ||
+        ""
+      if (persistedId) {
+        backendProfileIdRef.current = persistedId
+        setBackendProfileId(persistedId)
+      }
+    }
+
+    if (createPostInFlightRef.current || backendAutosaveInFlightRef.current) {
+      backendAutosavePendingRef.current = true
+      await new Promise<void>((resolve) => {
+        autosaveWaitersRef.current.push(resolve)
+      })
+      return backendProfileIdRef.current
+    }
+
+    const rememberId = (id: string) => {
+      backendProfileIdRef.current = id
+      setBackendProfileId(id)
+      saveAddProfileDraft({
+        form: profileWizardState,
+        step: st,
+        backendProfileId: id,
+      })
+    }
+
+    const finishInFlight = async () => {
+      createPostInFlightRef.current = false
+      backendAutosaveInFlightRef.current = false
+      const followUp = backendAutosavePendingRef.current
+      backendAutosavePendingRef.current = false
+      if (followUp) await persistBackendDraftNow()
+      const waiters = autosaveWaitersRef.current.splice(0)
+      for (const resolve of waiters) resolve()
+    }
+
+    if (persistedId) {
+      backendAutosaveInFlightRef.current = true
+      try {
+        await putInvestorProfile(persistedId, {
+          profileName,
+          profileType,
+          profileWizardState,
+          autosave: true,
+        })
+        rememberId(persistedId)
+        return persistedId
+      } catch (e) {
+        if (import.meta.env.DEV) {
+          console.warn(
+            "[Add profile] Autosave failed:",
+            e instanceof Error ? e.message : e,
+          )
+        }
+        return persistedId
+      } finally {
+        await finishInFlight()
+      }
+    }
+
+    createPostInFlightRef.current = true
+    backendAutosaveInFlightRef.current = true
+    try {
+      const row = await postInvestorProfile({
+        profileName,
+        profileType,
+        profileWizardState,
+        autosave: true,
+      })
+      rememberId(row.id)
+      notifyProfileBookRefetch()
+      return row.id
+    } catch (e) {
+      if (import.meta.env.DEV) {
+        console.warn(
+          "[Add profile] Autosave failed:",
+          e instanceof Error ? e.message : e,
+        )
+      }
+      return backendProfileIdRef.current
+    } finally {
+      await finishInFlight()
+    }
+  }, [enableAddDraftAutosave, resumeDraft])
+
+  const flushBackendDraftId = useCallback(async (): Promise<string | undefined> => {
+    if (backendAutosaveTimerRef.current) {
+      clearTimeout(backendAutosaveTimerRef.current)
+      backendAutosaveTimerRef.current = null
+    }
+    await persistBackendDraftNow()
+    return backendProfileIdRef.current?.trim() || undefined
+  }, [persistBackendDraftNow])
+
   /** Debounced POST (first save) or PUT — persists wizard progress for the profiles table. */
   useEffect(() => {
     if (!getApiV1Base() || !open || !enableAddDraftAutosave) {
@@ -1563,72 +1693,7 @@ export function AddInvestorProfileModal({
     if (backendAutosaveTimerRef.current) clearTimeout(backendAutosaveTimerRef.current)
     backendAutosaveTimerRef.current = setTimeout(() => {
       backendAutosaveTimerRef.current = null
-      void (async () => {
-        const { form: f, step: st } = latestAddProfileDraftRef.current
-        const draftCheck = {
-          form: profileWizardStateForPersist(f, st),
-          step: st,
-        }
-        if (!addProfileDraftHasContent(draftCheck)) return
-
-        const profileName = buildProfileNameForPersist(f)
-        const profileType = f.profileType.trim() || "—"
-        const profileWizardState = profileWizardStateForPersist(f, st)
-        const persistedId = backendProfileIdRef.current
-
-        if (persistedId) {
-          if (backendAutosaveInFlightRef.current) return
-          backendAutosaveInFlightRef.current = true
-          try {
-            await putInvestorProfile(persistedId, {
-              profileName,
-              profileType,
-              profileWizardState,
-              autosave: true,
-            })
-          } catch (e) {
-            if (import.meta.env.DEV) {
-              console.warn(
-                "[Add profile] Autosave failed:",
-                e instanceof Error ? e.message : e,
-              )
-            }
-          } finally {
-            backendAutosaveInFlightRef.current = false
-          }
-          return
-        }
-
-        if (createPostInFlightRef.current) return
-        createPostInFlightRef.current = true
-        backendAutosaveInFlightRef.current = true
-        try {
-          const row = await postInvestorProfile({
-            profileName,
-            profileType,
-            profileWizardState,
-            autosave: true,
-          })
-          backendProfileIdRef.current = row.id
-          setBackendProfileId(row.id)
-          saveAddProfileDraft({
-            form: profileWizardState,
-            step: st,
-            backendProfileId: row.id,
-          })
-          notifyProfileBookRefetch()
-        } catch (e) {
-          if (import.meta.env.DEV) {
-            console.warn(
-              "[Add profile] Autosave failed:",
-              e instanceof Error ? e.message : e,
-            )
-          }
-        } finally {
-          createPostInFlightRef.current = false
-          backendAutosaveInFlightRef.current = false
-        }
-      })()
+      void persistBackendDraftNow()
     }, 1200)
     return () => {
       if (backendAutosaveTimerRef.current) {
@@ -1636,7 +1701,7 @@ export function AddInvestorProfileModal({
         backendAutosaveTimerRef.current = null
       }
     }
-  }, [open, enableAddDraftAutosave, form, step, backendProfileId])
+  }, [open, enableAddDraftAutosave, form, step, backendProfileId, persistBackendDraftNow])
 
   useEffect(() => {
     if (!isIndividual && !isJointTenancy && !isEntity && step > 1) setStep(1)
@@ -1774,6 +1839,43 @@ export function AddInvestorProfileModal({
 
   const validateStepFor = useCallback((stepNum: number): boolean => {
     const noErr: AddProfileFieldErrors = {}
+    const rejectDuplicateOnDetails = (err: AddProfileFieldErrors): void => {
+      if (stepNum !== 2) return
+      if (Object.keys(err).length > 0) return
+      const profileName = buildDisplayProfileName(form).trim()
+      if (
+        !profileName ||
+        profileName === "—" ||
+        profileName === AUTOSAVE_DEFAULT_PROFILE_NAME
+      ) {
+        return
+      }
+      const excludeId =
+        (isEdit && editTarget
+          ? editTarget.id
+          : backendProfileIdRef.current?.trim() ||
+            (resumeDraft
+              ? resumeProfileIdRef.current?.trim() ||
+                loadAddProfileDraft()?.backendProfileId?.trim()
+              : "")) || undefined
+      if (
+        !hasActiveProfileDuplicate(
+          existingProfiles,
+          profileName,
+          form.profileType,
+          excludeId,
+        )
+      ) {
+        return
+      }
+      const field: AddProfileFieldErrorKey =
+        form.profileType === PROFILE_TYPE_ENTITY
+          ? form.custodianIra === "yes"
+            ? "legalIraName"
+            : "entityLegalName"
+          : "firstName"
+      err[field] = PROFILE_DUPLICATE_MESSAGE
+    }
     if (stepNum === 1) {
       const err: AddProfileFieldErrors = {}
       if (!form.profileType.trim()) {
@@ -1811,6 +1913,7 @@ export function AddInvestorProfileModal({
         }
         if (!form.entityEin.trim()) err.entityEin = REQUIRED_MSG
       }
+      rejectDuplicateOnDetails(err)
       setFieldError(err)
       return Object.keys(err).length === 0
     }
@@ -1825,6 +1928,7 @@ export function AddInvestorProfileModal({
       applyOptionalUsPhoneFieldError(form.phone2, err, "phone2")
       applyRequiredSsnItinFieldError(form.ssn, err)
       applyOptionalSsnItinFieldError(form.spouseSsn, err, "spouseSsn")
+      rejectDuplicateOnDetails(err)
       setFieldError(err)
       return Object.keys(err).length === 0
     }
@@ -1833,6 +1937,7 @@ export function AddInvestorProfileModal({
       if (!form.firstName.trim()) err.firstName = REQUIRED_MSG
       if (!form.lastName.trim()) err.lastName = REQUIRED_MSG
       applyRequiredSsnItinFieldError(form.ssn, err)
+      rejectDuplicateOnDetails(err)
       setFieldError(err)
       return Object.keys(err).length === 0
     }
@@ -1882,6 +1987,9 @@ export function AddInvestorProfileModal({
     isEntity,
     hasBeneficiaryStep,
     isEdit,
+    editTarget,
+    resumeDraft,
+    existingProfiles,
     totalSteps,
   ])
 
@@ -2110,24 +2218,15 @@ export function AddInvestorProfileModal({
     return false
   }
 
-  function rejectDuplicateProfile(profileName: string, profileType: string): boolean {
-    const excludeId =
-      isEdit && editTarget
-        ? editTarget.id
-        : backendProfileIdRef.current?.trim() || undefined
-    if (
-      hasActiveProfileDuplicate(
-        existingProfiles,
-        profileName,
-        profileType,
-        excludeId,
-      )
-    ) {
-      toast.error("Duplicate profile", PROFILE_DUPLICATE_MESSAGE)
-      setStep(1)
-      return true
-    }
-    return false
+  function showDuplicateOnDetailsPage() {
+    const field: AddProfileFieldErrorKey =
+      form.profileType === PROFILE_TYPE_ENTITY
+        ? form.custodianIra === "yes"
+          ? "legalIraName"
+          : "entityLegalName"
+        : "firstName"
+    setFieldError({ [field]: PROFILE_DUPLICATE_MESSAGE })
+    setStep(2)
   }
 
   function handleSubmit() {
@@ -2136,20 +2235,25 @@ export function AddInvestorProfileModal({
     if (!runFullFormValidationForSave()) return
     const profileName = buildDisplayProfileName(form)
     const profileType = form.profileType
-    if (rejectDuplicateProfile(profileName, profileType)) return
     const payload: NewInvestorProfilePayload = {
       profileName,
       profileType,
       profileWizardState: profileWizardStateForPersist(form, step),
     }
-    const existingId = backendProfileIdRef.current?.trim() || undefined
     if (onProfileCreated) {
       void (async () => {
         try {
+          const existingId = enableAddDraftAutosave
+            ? await flushBackendDraftId()
+            : backendProfileIdRef.current?.trim() || undefined
           await onProfileCreated(payload, existingId ? { existingId } : undefined)
           if (enableAddDraftAutosave) clearAddProfileDraft()
           onClose()
         } catch (e) {
+          if (e instanceof Error && e.message === PROFILE_DUPLICATE_MESSAGE) {
+            showDuplicateOnDetailsPage()
+            return
+          }
           toast.error(
             "Could not save profile",
             e instanceof Error ? e.message : "Please try again.",
@@ -2180,7 +2284,6 @@ export function AddInvestorProfileModal({
     }
     const profileName = buildDisplayProfileName(form)
     const profileType = form.profileType
-    if (rejectDuplicateProfile(profileName, profileType)) return
     const payload: UpdateInvestorProfilePayload = {
       profileName,
       profileType,
@@ -2193,6 +2296,10 @@ export function AddInvestorProfileModal({
           await onProfileUpdated(editTarget.id, payload)
           onClose()
         } catch (e) {
+          if (e instanceof Error && e.message === PROFILE_DUPLICATE_MESSAGE) {
+            showDuplicateOnDetailsPage()
+            return
+          }
           toast.error(
             "Could not save profile",
             e instanceof Error ? e.message : "Please try again.",

@@ -84,15 +84,90 @@
   text-decoration: none;
 }
 
+/* Pin the commit bar to the bottom of the main pane. The form scrolls above it. */
+.app_main_content:has(> .deals_dist_setup_page):not(:has(.deal_dist_details_page)) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.deals_dist_setup_page:not(.deal_dist_details_page) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .deals_dist_setup_page .ds_page_body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding-bottom: 2rem;
+  padding-bottom: 1.25rem;
+}
+
+.deals_dist_setup_page:not(.deal_dist_details_page) > .ds_page_body {
+  flex: 1 1 auto;
+  min-height: 0;
+  justify-content: flex-start;
+  align-items: stretch;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
+  scrollbar-width: none;
+}
+
+.deals_dist_setup_page:not(.deal_dist_details_page) > .ds_page_body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.deals_dist_setup_page .ds_commit_bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--ds-hairline);
+  background: var(--ds-page);
+}
+
+.deals_dist_setup_page .ds_commit_hint {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ds-ink-2);
+}
+
+.deals_dist_setup_page .ds_commit_bar .ds_primary_btn {
+  width: auto;
+  flex-shrink: 0;
+  padding: 9px 16px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .deals_dist_setup_page .ds_commit_bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .deals_dist_setup_page .ds_wf_tabs_outer {
   margin: 0;
+}
+
+.deals_dist_setup_page:not(.deal_dist_details_page) > .ds_wf_tabs_outer {
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  background: var(--ds-page);
+  padding-bottom: 0.35rem;
 }
 
 .deals_dist_setup_page .ds_sr_only {
@@ -222,6 +297,27 @@
   flex-direction: column;
   gap: 20px;
   min-width: 0;
+}
+
+.deals_dist_setup_page .ds_tab_enter {
+  animation: ds_tab_enter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes ds_tab_enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deals_dist_setup_page .ds_tab_enter {
+    animation: none;
+  }
 }
 
 .deals_dist_setup_page .ds_layout {
@@ -743,7 +839,12 @@
 }
 
 .deals_dist_setup_page .ds_fee_inputs .ds_sim_row_primary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns:
+    minmax(11rem, 1.45fr)
+    minmax(8rem, 0.9fr)
+    minmax(7.5rem, 0.8fr)
+    minmax(9.5rem, 1fr)
+    minmax(9.5rem, 1fr);
 }
 
 .deals_dist_setup_page .ds_sim_inputs_test .ds_sim_row_dates {
@@ -756,6 +857,12 @@
 
 .deals_dist_setup_page .ds_sim_inputs_advanced .ds_field_name {
   grid-column: 1 / -1;
+}
+
+@media (max-width: 1100px) {
+  .deals_dist_setup_page .ds_fee_inputs .ds_sim_row_primary {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 960px) {
@@ -972,6 +1079,12 @@
   padding-left: 24px;
   margin-top: 3px;
   color: var(--ds-ink-2);
+  cursor: default;
+}
+
+.deals_dist_setup_page .ds_stage_toggle input {
+  pointer-events: none;
+  cursor: default;
 }
 
 .deals_dist_setup_page .ds_leftover {
@@ -1311,7 +1424,17 @@
 }
 
 .deals_dist_setup_page .ds_fee_split_panel {
-  margin-top: 0.25rem;
+  margin-top: 0;
+}
+
+.deals_dist_setup_page .ds_fee_split_panel .ds_table_toolbar {
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.deals_dist_setup_page .ds_fee_split_panel .ds_table_scroll {
+  max-height: none;
+  overflow: visible;
 }
 
 .deals_dist_setup_page .ds_fee_split_total {
@@ -1352,6 +1475,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem 0.65rem;
+  min-width: 0;
+}
+
+.deals_dist_setup_page .ds_fee_class_name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
   min-width: 0;
 }
 
@@ -1413,14 +1543,16 @@
   color: #15803d;
 }
 
-.deals_dist_setup_page .ds_fee_complete_row {
+.deals_dist_setup_page .ds_fee_complete_row,
+.deals_dist_setup_page .ds_wf_complete_row {
   display: flex;
   justify-content: flex-end;
   align-items: center;
   margin-top: 0.35rem;
 }
 
-.deals_dist_setup_page .ds_fee_complete_row .ds_primary_btn {
+.deals_dist_setup_page .ds_fee_complete_row .ds_primary_btn,
+.deals_dist_setup_page .ds_wf_complete_row .ds_primary_btn {
   width: auto;
   min-width: 0;
   max-width: 100%;

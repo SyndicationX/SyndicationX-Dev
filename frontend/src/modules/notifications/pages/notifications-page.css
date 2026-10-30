@@ -54,6 +54,9 @@
 }
 
 .notifications_mark_all_btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   margin-left: auto;
   padding: 0.45rem 0.85rem;
   border: 1px solid var(--portal-border, #e2e8f0);
@@ -240,6 +243,9 @@
 }
 
 .notifications_empty_link_btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   margin-top: 0.5rem;
   padding: 0;
   border: none;

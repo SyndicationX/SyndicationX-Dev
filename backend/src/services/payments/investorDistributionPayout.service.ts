@@ -30,6 +30,11 @@ import {
   handleDealDistributionFundingWebhookEvent,
   requireDealDistributionFundingSource,
 } from "./dealDistributionFunding.service.js";
+import {
+  archivedConnectAccountIds,
+  isInvestorConnectBankArchived,
+  recordInvestorBankAccountAudit,
+} from "../bankAccounts/index.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -118,17 +123,59 @@ async function listInvestorConnectBankAccount(
 async function syncConnectAccount(
   account: ConnectRecipientAccount,
 ): Promise<void> {
+  const next = {
+    stripeConnectDetailsSubmitted: detailsSubmittedForAccount(account),
+    // Recipient accounts do not take charges; keep column for status APIs.
+    stripeConnectChargesEnabled: false,
+    stripeConnectPayoutsEnabled: payoutsEnabledForAccount(account),
+    stripeConnectStatus: payoutStatusForAccount(account),
+    stripeConnectUpdatedAt: new Date(),
+  };
+  const previous = await db
+    .select({
+      id: userInvestorProfiles.id,
+      userId: userInvestorProfiles.userId,
+      status: userInvestorProfiles.stripeConnectStatus,
+      detailsSubmitted: userInvestorProfiles.stripeConnectDetailsSubmitted,
+      payoutsEnabled: userInvestorProfiles.stripeConnectPayoutsEnabled,
+    })
+    .from(userInvestorProfiles)
+    .where(eq(userInvestorProfiles.stripeConnectAccountId, account.id));
   await db
     .update(userInvestorProfiles)
-    .set({
-      stripeConnectDetailsSubmitted: detailsSubmittedForAccount(account),
-      // Recipient accounts do not take charges; keep column for status APIs.
-      stripeConnectChargesEnabled: false,
-      stripeConnectPayoutsEnabled: payoutsEnabledForAccount(account),
-      stripeConnectStatus: payoutStatusForAccount(account),
-      stripeConnectUpdatedAt: new Date(),
-    })
+    .set(next)
     .where(eq(userInvestorProfiles.stripeConnectAccountId, account.id));
+  const before = previous[0];
+  if (!before) return;
+  const changed =
+    before.status !== next.stripeConnectStatus ||
+    before.detailsSubmitted !== next.stripeConnectDetailsSubmitted ||
+    before.payoutsEnabled !== next.stripeConnectPayoutsEnabled;
+  if (!changed) return;
+  try {
+    await recordInvestorBankAccountAudit({
+      actorUserId: before.userId,
+      ownerUserId: before.userId,
+      action: "updated",
+      bankAccountRecordId: account.id,
+      profileIds: previous.map((row) => row.id),
+      changes: {
+        source: "connect_sync",
+        before: {
+          status: before.status,
+          detailsSubmitted: before.detailsSubmitted,
+          payoutsEnabled: before.payoutsEnabled,
+        },
+        after: {
+          status: next.stripeConnectStatus,
+          detailsSubmitted: next.stripeConnectDetailsSubmitted,
+          payoutsEnabled: next.stripeConnectPayoutsEnabled,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("syncConnectAccount audit:", err);
+  }
 }
 
 function connectFieldsFromAccount(account: ConnectRecipientAccount) {
@@ -148,6 +195,11 @@ async function shareConnectAccountToProfilesWithoutBank(params: {
   account: ConnectRecipientAccount;
 }): Promise<number> {
   if (!payoutsEnabledForAccount(params.account)) return 0;
+  if (
+    await isInvestorConnectBankArchived(params.userId, params.account.id)
+  ) {
+    return 0;
+  }
   const fields = connectFieldsFromAccount(params.account);
   const updated = await db
     .update(userInvestorProfiles)
@@ -200,6 +252,7 @@ export async function listInvestorSharedConnectBanks(params: {
     .from(userInvestorProfiles)
     .where(eq(userInvestorProfiles.userId, userId));
 
+  const archived = await archivedConnectAccountIds(userId);
   const byAccount = new Map<
     string,
     {
@@ -210,7 +263,7 @@ export async function listInvestorSharedConnectBanks(params: {
   >();
   for (const row of rows) {
     const accountId = row.accountId?.trim() || "";
-    if (!accountId) continue;
+    if (!accountId || archived.has(accountId)) continue;
     const existing = byAccount.get(accountId);
     // Prefer active non-draft profile ids in "Used by", but still keep the bank.
     const includeProfileId = !row.archived && !row.isDraft;
@@ -325,6 +378,14 @@ export async function attachInvestorConnectBankToProfile(params: {
       message: "That bank account is not linked to any of your profiles.",
     };
   }
+  if (await isInvestorConnectBankArchived(userId, accountId)) {
+    return {
+      ok: false,
+      status: 409,
+      message:
+        "That bank account was deleted. Add a new bank account instead.",
+    };
+  }
 
   try {
     const account = await retrieveConnectRecipientAccount(accountId);
@@ -431,7 +492,14 @@ export async function createInvestorConnectOnboardingLink(params: {
     let accountId = params.forceNew
       ? ""
       : row.stripeConnectAccountId?.trim() || "";
+    if (
+      accountId &&
+      (await isInvestorConnectBankArchived(userId, accountId))
+    ) {
+      accountId = "";
+    }
     let account: ConnectRecipientAccount;
+    let createdAccount = false;
     if (!accountId) {
       const idempotencyKey = params.forceNew
         ? `investor_connect_v2m_${profileId}_${randomUUID()}`
@@ -469,6 +537,7 @@ export async function createInvestorConnectOnboardingLink(params: {
         .update(userInvestorProfiles)
         .set(connectFieldsFromAccount(account))
         .where(eq(userInvestorProfiles.id, profileId));
+      createdAccount = true;
     } else {
       account = await retrieveConnectRecipientAccount(accountId);
       if (!hasMerchantCardPayments(account)) {
@@ -502,6 +571,24 @@ export async function createInvestorConnectOnboardingLink(params: {
         userId,
         account,
       });
+    }
+    if (createdAccount) {
+      try {
+        await recordInvestorBankAccountAudit({
+          actorUserId: userId,
+          ownerUserId: userId,
+          action: "created",
+          bankAccountRecordId: accountId,
+          profileIds: [profileId],
+          changes: {
+            source: "connect_onboarding",
+            status: payoutStatusForAccount(account),
+            detailsSubmitted: detailsSubmittedForAccount(account),
+          },
+        });
+      } catch (auditErr) {
+        console.error("createInvestorConnectOnboardingLink audit:", auditErr);
+      }
     }
 
     return {
@@ -558,7 +645,10 @@ export async function getInvestorConnectStatus(params: {
     return { ok: false, status: 404, message: "Investor profile not found" };
   }
 
-  const accountId = profile.stripeConnectAccountId?.trim() || null;
+  let accountId = profile.stripeConnectAccountId?.trim() || null;
+  if (accountId && (await isInvestorConnectBankArchived(userId, accountId))) {
+    accountId = null;
+  }
   if (!accountId) {
     return {
       ok: true,
@@ -758,7 +848,14 @@ export async function executeDistributionPayouts(params: {
 
     const profileId = uuid(investment?.userInvestorProfileId);
     const investorUserId = uuid(investment?.profileUserId);
-    const accountId = String(investment?.connectAccountId ?? "").trim();
+    let accountId = String(investment?.connectAccountId ?? "").trim();
+    if (
+      accountId &&
+      investorUserId &&
+      (await isInvestorConnectBankArchived(investorUserId, accountId))
+    ) {
+      accountId = "";
+    }
     let payoutsEnabled = Boolean(investment?.payoutsEnabled);
     // DB flags can lag Stripe (webhooks/local return). Refresh before skipping.
     if (accountId && !payoutsEnabled) {

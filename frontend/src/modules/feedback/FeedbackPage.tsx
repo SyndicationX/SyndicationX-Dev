@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  CircleCheck,
   ClipboardList,
   Download,
   Eye,
@@ -418,6 +419,7 @@ export default function FeedbackPage() {
             className="um_btn_primary feedback_review_btn"
             onClick={() => openReview(row)}
           >
+            <Eye size={16} strokeWidth={2} aria-hidden />
             Review
           </button>
         ),
@@ -463,6 +465,7 @@ export default function FeedbackPage() {
             className="um_btn_primary feedback_review_btn"
             onClick={() => openReview(row)}
           >
+            <CircleCheck size={16} strokeWidth={2} aria-hidden />
             Resolve
           </button>
         ),

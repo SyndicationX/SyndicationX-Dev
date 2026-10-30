@@ -1,3 +1,4 @@
+import { LayoutDashboard, Users } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import "../usermanagement/user_management.css"
 import "./contacts.css"
@@ -27,6 +28,7 @@ export default function CrmSectionPlaceholderPage({
             className="um_btn_secondary"
             onClick={() => navigate("/contacts")}
           >
+            <Users size={16} strokeWidth={2} aria-hidden />
             All contacts
           </button>
           <button
@@ -34,6 +36,7 @@ export default function CrmSectionPlaceholderPage({
             className="um_btn_primary"
             onClick={() => navigate("/contacts/overview")}
           >
+            <LayoutDashboard size={16} strokeWidth={2} aria-hidden />
             Overview
           </button>
         </div>

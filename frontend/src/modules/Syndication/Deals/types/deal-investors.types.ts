@@ -67,6 +67,10 @@ export interface DealInvestorRow {
   /** Display name resolved for `fundApprovedByUserId`. */
   fundApprovedByDisplayName?: string
   committed: string
+  /** `deal_investment.funded_amount`. Empty when not recorded. */
+  amountReceived?: string
+  /** `deal_investment.accrued_preferred_return`. Empty when not recorded. */
+  accruedAmount?: string
   signedDate: string
   /**
    * eSign workflow timestamps after Send E-sign (sent → viewed → signed → completed).
@@ -94,11 +98,29 @@ export interface DealInvestorRow {
   docSignedDateIso?: string
   /** Timestamp when this investment row was first created (invested). */
   investedAtIso?: string
+  /** Set when the investor archived this commitment in Investing. */
+  investorArchived?: boolean
+  /**
+   * A sponsor or platform admin removed this investment. It stays in the
+   * investor's archive and cannot be restored.
+   */
+  sponsorRemoved?: boolean
+  /** Set when Invest Now Finish records the commitment. */
+  commitmentCompletedAtIso?: string
+  /** W-9 name and address are stored, so the questionnaire step is already done. */
+  investorW9Saved?: boolean
+  /** Questionnaire answers are stored on this investment. */
+  investorQuestionnaireSaved?: boolean
   /** Portal user who added this investor (`deal_lp_investor` / `deal_member.added_by`). */
   /** Sponsor / Co-sponsor display name for this investor on the deal (Sponsor name column). */
   addedByDisplayName?: string
   /** Company the sponsor belongs to (`users.organization_id`). */
   addedByCompanyName?: string
+  /**
+   * First-created company admin for `addedByCompanyName`.
+   * Multiple companies use the same `||` order as the company field.
+   */
+  companyAdminName?: string
   /** Email for the Sponsor/Co-sponsor associated with this investor. */
   addedByEmail?: string
   /** Portal `users.id` of the Sponsor/Co-sponsor associated with this investor. */
@@ -155,6 +177,9 @@ export interface DealInvestorEsignSendStatus {
   signedAt: string | null
   completedAt: string | null
   signatureRequestId?: string | null
+  fullSignedRelativePath?: string
+  sponsorSignedRelativePath?: string
+  sponsorSignedByName?: string
   documents: DealInvestorEsignDocumentRef[]
 }
 

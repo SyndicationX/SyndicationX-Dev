@@ -27,6 +27,7 @@ import {
 import {
   listMyEsignDocumentsForInvestor,
   maybeSyncDealInvestorEsignByTarget,
+  withdrawInvestorEsignBeforeSponsorSign,
   syncDealInvestorEsignAfterEmbeddedSign,
   syncDealInvestorEsignByTarget,
   syncDealInvestorEsignSignProgress,
@@ -36,13 +37,20 @@ import {
   investorEsignTargetHasPositiveCommitment,
   markDealInvestorEsignViewed,
   readInvestorEsignStatusJson,
+  rememberSponsorSignerOnEsignSend,
   resolveInvestorEsignTargetForSignedInInvestor,
   type InvestNowEsignTargetOpts,
 } from "../../services/deal/dealMemberEsignStatus.service.js";
 import { getDealMyEsignSignSession } from "../../services/deal/dealMemberEsignSignSession.service.js";
 import { readOfferingInvestorPreviewJsonAfterEsignSync } from "../../services/deal/dealEsignDocumentsWorkspaceSync.service.js";
+import {
+  listDealSponsorSignerOptions,
+  stampCompletedOpenSponsorSigner,
+} from "../../services/deal/dealEsignSigningWorkflow.service.js";
+import { getAddDealFormById } from "../../services/deal/dealForm.service.js";
 import { getDealSponsorEsignSignSession } from "../../services/deal/dealSponsorEsignSignSession.service.js";
-import { isPortalUserSponsorOnDeal } from "../../services/deal/dealMemberScope.service.js";
+import { isPortalUserSponsorOnDeal, resolveViewerDealMemberRoleOnDeal } from "../../services/deal/dealMemberScope.service.js";
+import { leadSponsorDeleteSignedEsignAndRequestResign } from "../../services/deal/dealLeadSponsorDeleteSignedEsign.service.js";
 import { scopeOfferingInvestorPreviewJsonForViewer } from "../../services/deal/dealDocumentCoSponsorVisibility.service.js";
 
 function queryString(v: unknown): string {
@@ -470,6 +478,97 @@ async function resolveMyEsignTargetForUser(
 }
 
 /**
+ * POST /deals/:dealId/my-esign-withdraw-signature
+ * Investor clears a completed signature before the sponsor signs, then can sign again.
+ */
+export async function postDealMyEsignWithdrawSignature(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+
+  const dealId =
+    typeof req.params.dealId === "string"
+      ? req.params.dealId
+      : req.params.dealId?.[0];
+  if (!dealId?.trim()) {
+    res.status(400).json({ message: "Missing deal id" });
+    return;
+  }
+
+  const email = String(user.email ?? "").trim().toLowerCase();
+  if (!email.includes("@")) {
+    res.status(400).json({ message: "Your account has no email on file" });
+    return;
+  }
+
+  const body = req.body as Record<string, unknown> | undefined;
+  const signatureRequestId = String(
+    body?.signatureRequestId ?? body?.signature_request_id ?? "",
+  ).trim();
+  if (!signatureRequestId) {
+    res.status(400).json({ message: "Missing signature request" });
+    return;
+  }
+
+  try {
+    const viewerScope = await resolveDealViewerScope(
+      user.id,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!(await assertDealIdReadableOrAssignedParticipant(dealId, viewerScope))) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+
+    const esignScope = investNowEsignScopeFromRequest(req, email, user.id);
+    const bodyScope = investNowEsignScopeFromBody(body);
+    const target = await resolveMyEsignTargetForUser(dealId, user.id, email, {
+      userInvestorProfileId:
+        bodyScope.userInvestorProfileId || esignScope.userInvestorProfileId,
+      investmentId: bodyScope.investmentId || esignScope.investmentId,
+      profileId: bodyScope.profileId || esignScope.profileId,
+    });
+    if (!target) {
+      res.status(404).json({ message: "Investment was not found" });
+      return;
+    }
+    if (!(await investorEsignTargetHasPositiveCommitment(dealId, target))) {
+      res.status(403).json({
+        message: "A commitment is required before changing this signature",
+      });
+      return;
+    }
+
+    const result = await withdrawInvestorEsignBeforeSponsorSign({
+      dealId,
+      target,
+      signatureRequestId,
+      investorEmail: email,
+      preserveFieldValues: body?.preserveFieldValues === true,
+    });
+    if (!result.ok) {
+      const status = result.code === "sponsor_signed" ? 409 : 400;
+      res.status(status).json({
+        message: result.message,
+        ...(result.code ? { code: result.code } : {}),
+      });
+      return;
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error("postDealMyEsignWithdrawSignature:", err);
+    res.status(500).json({ message: "Could not update this signature" });
+  }
+}
+
+/**
  * POST /deals/:dealId/my-esign-mark-viewed
  * Invest Now: investor opened preview or signing UI (Dropbox Document History → Viewed).
  */
@@ -543,6 +642,101 @@ export async function postDealMyEsignMarkViewed(
   } catch (err) {
     console.error("postDealMyEsignMarkViewed:", err);
     res.status(500).json({ message: "Could not record viewed status" });
+  }
+}
+
+/**
+ * POST /deals/:dealId/documents/esign-signed/delete
+ * Lead sponsor removes a signed copy and emails the investor to sign that profile again.
+ */
+export async function postLeadSponsorDeleteSignedEsign(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+
+  const dealId =
+    typeof req.params.dealId === "string"
+      ? req.params.dealId
+      : req.params.dealId?.[0];
+  if (!dealId?.trim()) {
+    res.status(400).json({ message: "Missing deal id" });
+    return;
+  }
+
+  const body = req.body as Record<string, unknown> | undefined;
+  const signatureRequestId = String(
+    body?.signatureRequestId ?? body?.signature_request_id ?? "",
+  ).trim();
+  const templateFileId = String(
+    body?.templateFileId ?? body?.template_file_id ?? "",
+  ).trim();
+  if (!signatureRequestId) {
+    res.status(400).json({ message: "Missing signature request" });
+    return;
+  }
+
+  try {
+    const viewerScope = await resolveDealViewerScope(
+      user.id,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!(await assertDealIdReadableOrAssignedParticipant(dealId, viewerScope))) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    const role = await resolveViewerDealMemberRoleOnDeal(dealId, user.id);
+    if (role !== "lead_sponsor") {
+      res.status(403).json({
+        message: "Only the lead sponsor can delete a signed document and request a new signature",
+      });
+      return;
+    }
+
+    const result = await leadSponsorDeleteSignedEsignAndRequestResign({
+      dealId,
+      signatureRequestId,
+      templateFileId,
+    });
+    if (!result.ok) {
+      const status = result.code === "not_found" ? 404 : 400;
+      res.status(status).json({ message: result.message, ...(result.code ? { code: result.code } : {}) });
+      return;
+    }
+
+    let previewJson: string | null = null;
+    try {
+      previewJson = await readOfferingInvestorPreviewJsonAfterEsignSync(dealId);
+    } catch (err) {
+      console.error("readOfferingInvestorPreviewJsonAfterEsignSync:", err);
+      const deal = await getAddDealFormById(dealId);
+      previewJson = deal?.offeringInvestorPreviewJson ?? null;
+    }
+    const offeringInvestorPreviewJson =
+      await scopeOfferingInvestorPreviewJsonForViewer({
+        dealId,
+        viewerUserId: user.id,
+        viewerRole: user.userRole,
+        json: previewJson,
+      });
+    res.status(200).json({
+      ok: true,
+      emailSent: result.emailSent,
+      message: result.message,
+      offeringInvestorPreviewJson,
+    });
+  } catch (err) {
+    console.error("postLeadSponsorDeleteSignedEsign:", err);
+    const message =
+      err instanceof Error && err.message.trim()
+        ? err.message.trim()
+        : "Could not delete this signed document";
+    res.status(500).json({ message });
   }
 }
 
@@ -746,6 +940,26 @@ export async function postDealSponsorEsignSync(
         await findInvestorEsignContextBySignatureRequestId(signatureRequestId);
       if (context?.dealId === dealId) {
         await syncDealInvestorEsignByTarget(dealId, context.target);
+      }
+      const recordSigner = body?.recordSigner === true;
+      const email = String(user.email ?? "").trim().toLowerCase();
+      if (recordSigner && email.includes("@")) {
+        const sponsors = await listDealSponsorSignerOptions(dealId).catch(
+          () => [],
+        );
+        const self = sponsors.find((sponsor) => sponsor.email === email);
+        const signerName = self?.name?.trim() || email;
+        await rememberSponsorSignerOnEsignSend({
+          dealId,
+          signatureRequestId,
+          name: signerName,
+          email,
+          overwrite: true,
+        }).catch((err) => console.warn("remember sponsor signer:", err));
+        await stampCompletedOpenSponsorSigner(signatureRequestId, {
+          email,
+          name: signerName,
+        }).catch((err) => console.warn("stamp open sponsor signer:", err));
       }
     }
 

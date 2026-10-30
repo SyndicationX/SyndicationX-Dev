@@ -1767,7 +1767,7 @@ label.deal_inv_ic_dist_label_flex {
   border-radius: 6px;
   background: transparent;
   color: #64748b;
-  cursor: help;
+  cursor: pointer;
   flex-shrink: 0;
 }
 

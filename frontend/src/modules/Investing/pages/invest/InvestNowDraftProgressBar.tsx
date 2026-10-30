@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react"
 import type { InvestNowDraftProgress } from "./investNowDraftProgress"
 import { investNowDraftPhaseActionLabel } from "./investNowDraftProgress"
 import {
@@ -45,6 +46,7 @@ export function InvestNowDraftProgressBar({
         }}
       >
         {investNowDraftPhaseActionLabel(phaseId)}
+        <ChevronRight size={16} strokeWidth={2} aria-hidden />
       </button>
     </div>
   ) : null

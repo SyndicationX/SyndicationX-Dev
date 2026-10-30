@@ -10,6 +10,7 @@ import {
 } from "../../schema/schema.js";
 import { getStripeClient } from "../billing/companyBilling.service.js";
 import { sendDealFundApprovedNotification } from "../deal/dealFundApprovedEmail.service.js";
+import { recordFundApprovedAtHistory } from "../deal/dealInvestment.service.js";
 import { readMyInvestNowCommitment } from "../deal/dealLpInvestorMyInvestNowCommitment.read.service.js";
 
 const UUID_RE =
@@ -317,12 +318,26 @@ async function markInvestorPayment(params: {
       .where(eq(investorCheckoutPayments.id, payment.id));
 
     if (nextStatus === "succeeded") {
+      const [current] = await tx
+        .select({
+          fundApprovedAt: dealInvestment.fundApprovedAt,
+          fundApprovedAtHistory: dealInvestment.fundApprovedAtHistory,
+        })
+        .from(dealInvestment)
+        .where(eq(dealInvestment.id, payment.investmentId))
+        .limit(1);
       await tx
         .update(dealInvestment)
         .set({
           fundApproved: true,
           fundApprovedBy: null,
           fundApprovedAt: now,
+          fundApprovedAtHistory: recordFundApprovedAtHistory({
+            history: current?.fundApprovedAtHistory ?? [],
+            previousDate: current?.fundApprovedAt ?? null,
+            nextDate: now,
+            source: current?.fundApprovedAt ? "edited" : "approved",
+          }),
           fundApprovedCommitmentSnapshot: String(payment.amountCents / 100),
           fundingMethod: "stripe_checkout",
         })

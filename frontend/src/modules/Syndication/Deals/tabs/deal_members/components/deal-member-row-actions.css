@@ -31,6 +31,104 @@
   color: #fecaca;
 }
 
+.investor_removal_modal.um_modal {
+  width: min(40rem, calc(100vw - 2rem));
+  max-width: 40rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+.investor_removal_modal .um_modal_head {
+  align-items: center;
+  margin: 0;
+  padding: 1.05rem 1.25rem 0.9rem;
+}
+
+.investor_removal_body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 1.25rem 1.15rem;
+}
+
+.investor_removal_lead {
+  margin: 0;
+  color: var(--portal-text-muted, #64748b);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.investor_removal_lead strong {
+  color: var(--portal-text, #0f172a);
+  font-weight: 600;
+}
+
+.investor_removal_reason {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--portal-text, #0f172a);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.investor_removal_reason textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 5.25rem;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--portal-border, #e2e8f0);
+  border-radius: 0.5rem;
+  background: var(--portal-surface, #fff);
+  color: var(--portal-text, #0f172a);
+  font: inherit;
+  font-weight: 400;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.investor_removal_reason textarea:focus {
+  outline: 2px solid var(--portal-gold-accent, #d4af37);
+  outline-offset: 1px;
+}
+
+.investor_removal_actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0;
+  padding-top: 0.15rem;
+}
+
+.investor_removal_actions_group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.investor_removal_actions .um_btn_secondary,
+.investor_removal_actions .um_btn_danger {
+  height: 2.25rem;
+  min-height: 2.25rem;
+}
+
+@media (max-width: 640px) {
+  .investor_removal_actions,
+  .investor_removal_actions_group {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .investor_removal_actions .um_btn_secondary,
+  .investor_removal_actions .um_btn_danger {
+    width: 100%;
+  }
+}
+
 /* Kebab-only cell; menu lists Edit / Copy link / Send mail / Delete (portal). */
 .deal_member_row_actions {
   display: flex;

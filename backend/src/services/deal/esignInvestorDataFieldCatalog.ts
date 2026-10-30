@@ -8,7 +8,7 @@ export type EsignInvestorDataField = {
   label: string;
   section: string;
   esignLabel: string;
-  signFlowType: "text" | "date";
+  signFlowType: "text" | "date" | "signature";
   /** Optional questionnaire question id used for answer matching. */
   questionId?: string;
 };
@@ -126,6 +126,22 @@ export const ESIGN_INVESTOR_DATA_FIELDS: EsignInvestorDataField[] = [
     questionId: "mailing_address",
   },
   {
+    key: "investmentAmount",
+    label: "Investment amount",
+    section: "Investment",
+    esignLabel: "Investment Amount",
+    signFlowType: "text",
+    questionId: "investment_amount",
+  },
+  {
+    key: "unitCount",
+    label: "Units",
+    section: "Investment",
+    esignLabel: "Units",
+    signFlowType: "text",
+    questionId: "unit_count",
+  },
+  {
     key: "achRoutingNumber",
     label: "ACH routing number",
     section: "Distributions",
@@ -159,6 +175,13 @@ export const ESIGN_INVESTOR_DATA_FIELDS: EsignInvestorDataField[] = [
     section: "Beneficiary",
     esignLabel: "Beneficiary Name",
     signFlowType: "text",
+  },
+  {
+    key: "spouseSignature",
+    label: "Spouse signature",
+    section: "Signatures",
+    esignLabel: "Spouse Signature",
+    signFlowType: "signature",
   },
 ];
 

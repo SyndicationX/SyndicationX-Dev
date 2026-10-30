@@ -18,6 +18,9 @@ import {
 } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
+import { coSponsorMayOpenDeal } from "@/common/auth/coSponsorCompanyGate"
+import { toast } from "@/common/components/Toast"
+import { MemberRemoveConfirmModal } from "@/modules/Syndication/usermanagement/MemberRemoveConfirmModal"
 import "../tabs/deal_members/components/deal-member-row-actions.css"
 
 interface DealRowActionsProps {
@@ -51,10 +54,19 @@ interface DealRowActionsProps {
   onInvestNow?: () => void
   /** Pending list: resume saved Invest Now progress for a draft profile. */
   onResumeInvesting?: () => void
-  onArchived?: () => void
+  onArchived?: (reason?: string) => void
   onRestored?: () => void
   /** Called after the user confirms with a non-empty reason (delete flow). */
   onDeleted?: (reason: string) => void
+  /**
+   * Investing list: archive any deal, delete only a soft commitment.
+   * Does not edit or delete the sponsor's deal.
+   */
+  investorManage?: boolean
+  allowInvestorDelete?: boolean
+  onInvestorArchived?: (reason: string) => void
+  onInvestorRestored?: () => void
+  onInvestorDeleted?: () => void | Promise<void>
   /** When true, kebab stays visible but cannot open (no actions for this row). */
   actionsDisabled?: boolean
   /** Unpaid / expired SaaS — view, preview, and edit open the paywall instead. */
@@ -79,6 +91,11 @@ export function DealRowActions({
   onArchived,
   onRestored,
   onDeleted,
+  investorManage = false,
+  allowInvestorDelete = false,
+  onInvestorArchived,
+  onInvestorRestored,
+  onInvestorDeleted,
   actionsDisabled = false,
   saasAccessLocked = false,
   onSaasLocked,
@@ -92,6 +109,8 @@ export function DealRowActions({
   >(null)
   const [reason, setReason] = useState("")
   const [reasonError, setReasonError] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   const wrapRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
 
@@ -100,16 +119,18 @@ export function DealRowActions({
     setConfirmKind(null)
     setReason("")
     setReasonError(null)
+    setDeleteError("")
+    setDeleteBusy(false)
   }, [])
 
   useEffect(() => {
     if (!confirmKind) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeConfirm()
+      if (e.key === "Escape" && !deleteBusy) closeConfirm()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [confirmKind, closeConfirm])
+  }, [confirmKind, closeConfirm, deleteBusy])
 
   useLayoutEffect(() => {
     if (!open || actionsDisabled) return
@@ -202,7 +223,10 @@ export function DealRowActions({
       onPreviewDeal()
       return
     }
-    navigate(`/deals/${encodeURIComponent(dealId)}`)
+    void coSponsorMayOpenDeal().then((allowed) => {
+      if (!allowed) return
+      navigate(`/deals/${encodeURIComponent(dealId)}`)
+    })
   }
 
   function handleInvestNow() {
@@ -248,7 +272,8 @@ export function DealRowActions({
   function handleConfirmDangerAction() {
     if (confirmKind === "restore") {
       closeConfirm()
-      onRestored?.()
+      if (investorManage) onInvestorRestored?.()
+      else onRestored?.()
       return
     }
     if (!reason.trim()) {
@@ -259,10 +284,28 @@ export function DealRowActions({
     const trimmedReason = reason.trim()
     closeConfirm()
     if (kind === "archive") {
-      onArchived?.()
+      if (investorManage) onInvestorArchived?.(trimmedReason)
+      else onArchived?.(trimmedReason)
       return
     }
     onDeleted?.(trimmedReason)
+  }
+
+  async function handleInvestorDeleteConfirm() {
+    if (!onInvestorDeleted || deleteBusy) return
+    setDeleteBusy(true)
+    setDeleteError("")
+    try {
+      await onInvestorDeleted()
+      closeConfirm()
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not remove this soft commitment."
+      setDeleteError(message)
+      toast.error("Could not remove", message)
+    } finally {
+      setDeleteBusy(false)
+    }
   }
 
   const isLifecycleDraftDeal =
@@ -357,6 +400,48 @@ export function DealRowActions({
                   </button>
                 </li>
               ) : null}
+              {investorManage ? (
+                <>
+                  {archived && !onInvestorRestored ? null : (
+                  <li role="none">
+                    {archived && onInvestorRestored ? (
+                      <button
+                        type="button"
+                        className="um_kebab_menuitem"
+                        role="menuitem"
+                        onClick={handleRestoreDeal}
+                      >
+                        <ArchiveRestore className="um_kebab_menuitem_icon" size={16} strokeWidth={2} aria-hidden />
+                        Restore deal
+                      </button>
+                    ) : archived ? null : (
+                      <button
+                        type="button"
+                        className="um_kebab_menuitem"
+                        role="menuitem"
+                        onClick={handleArchiveDeal}
+                      >
+                        <Archive className="um_kebab_menuitem_icon" size={16} strokeWidth={2} aria-hidden />
+                        Archive deal
+                      </button>
+                    )}
+                  </li>
+                  )}
+                  {allowInvestorDelete ? (
+                    <li role="none">
+                      <button
+                        type="button"
+                        className="um_kebab_menuitem deals_kebab_menuitem_danger"
+                        role="menuitem"
+                        onClick={handleDeleteDeal}
+                      >
+                        <Trash2 className="um_kebab_menuitem_icon" size={16} strokeWidth={2} aria-hidden />
+                        Remove
+                      </button>
+                    </li>
+                  ) : null}
+                </>
+              ) : null}
               {!readOnlyActions && !viewOnlySyndication ? (
                 <>
                   {canEditDeal || draftRow ? (
@@ -426,7 +511,29 @@ export function DealRowActions({
             document.body,
           )
         : null}
-      {confirmKind && typeof document !== "undefined"
+      {confirmKind === "delete" && investorManage && typeof document !== "undefined" ? (
+        <MemberRemoveConfirmModal
+          memberName={dealName.trim() || "this deal"}
+          busy={deleteBusy}
+          error={deleteError}
+          submitLabel="Remove"
+          busyLabel="Removing…"
+          message={
+            <>
+              This will remove your soft commitment on{" "}
+              <strong>{dealName.trim() || "this deal"}</strong>. It is removed
+              from the deal and the sponsor is notified.
+            </>
+          }
+          onClose={() => {
+            if (!deleteBusy) closeConfirm()
+          }}
+          onConfirm={() => void handleInvestorDeleteConfirm()}
+        />
+      ) : null}
+      {confirmKind &&
+      !(confirmKind === "delete" && investorManage) &&
+      typeof document !== "undefined"
         ? createPortal(
             <div
               className="um_modal_overlay deals_add_inv_modal_overlay portal_modal_z_boost"
@@ -447,6 +554,8 @@ export function DealRowActions({
                       ? "Archive this deal?"
                       : confirmKind === "restore"
                         ? "Restore this deal?"
+                        : investorManage
+                          ? "Delete this soft commitment?"
                         : draftRow
                           ? "Discard unsaved draft?"
                           : isLifecycleDraftDeal
@@ -465,9 +574,15 @@ export function DealRowActions({
                 <div className="deals_add_inv_modal_scroll">
                   <p className="deals_suspend_all_modal_message">
                     {confirmKind === "archive"
-                      ? `Archive “${dealName.trim() || "this deal"}”? It will move to Archives and can be restored later.`
+                      ? investorManage
+                        ? `Archive “${dealName.trim() || "this deal"}” in your investing list? It moves to Archives and can be restored. The sponsor is notified. The sponsor’s deal is not changed.`
+                        : `Archive “${dealName.trim() || "this deal"}”? It will move to Archives and can be restored later.`
                       : confirmKind === "restore"
-                        ? `Restore “${dealName.trim() || "this deal"}” to active deals?`
+                        ? investorManage
+                          ? `Restore “${dealName.trim() || "this deal"}” to your active investments?`
+                          : `Restore “${dealName.trim() || "this deal"}” to active deals?`
+                        : investorManage
+                          ? `Delete your soft commitment on “${dealName.trim() || "this deal"}”? It is removed from the deal and cannot be undone. The sponsor is notified.`
                         : draftRow
                           ? `Discard the in-progress “${dealName.trim() || "Untitled deal"}” wizard? Unsaved work on this device will be cleared. This cannot be undone.`
                           : `Delete “${dealName.trim() || "this deal"}”? This action cannot be undone.`}

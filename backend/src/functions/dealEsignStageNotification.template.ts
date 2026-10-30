@@ -15,7 +15,11 @@ export interface DealEsignStageNotificationTemplateVars {
   investorDisplayName?: string;
   senderBrand: string;
   portalDealUrl?: string;
-  stage: "investor_signed" | "sponsor_signed" | "investor_turn_to_sign";
+  stage:
+    | "investor_signed"
+    | "sponsor_signed"
+    | "investor_turn_to_sign"
+    | "sponsor_turn_to_sign";
 }
 
 function escHtml(s: string): string {
@@ -39,13 +43,24 @@ function documentListText(names: string[]): string {
   return names.map((n) => `• ${n}`).join("\n");
 }
 
+function documentTitleFrom(v: DealEsignStageNotificationTemplateVars): string {
+  const names = v.documentNames.map((name) => name.trim()).filter(Boolean);
+  if (names.length === 1) return names[0]!;
+  if (names.length > 1) return names.join(", ");
+  return v.dealName.trim() || "Document";
+}
+
 function stageSubject(v: DealEsignStageNotificationTemplateVars): string {
   const deal = v.dealName.trim() || "Deal";
   if (v.stage === "investor_signed") {
-    return `Investor signed eSign documents — ${deal}`;
+    const investor = v.investorDisplayName?.trim() || "Investor";
+    return `${investor} signed — please counter-sign: ${documentTitleFrom(v)}`;
   }
   if (v.stage === "investor_turn_to_sign") {
     return `Your documents are ready to sign — ${deal}`;
+  }
+  if (v.stage === "sponsor_turn_to_sign") {
+    return `Documents are ready for your signature — ${deal}`;
   }
   return `Your signed documents are ready — ${deal}`;
 }
@@ -53,6 +68,7 @@ function stageSubject(v: DealEsignStageNotificationTemplateVars): string {
 function stageHeadline(v: DealEsignStageNotificationTemplateVars): string {
   if (v.stage === "investor_signed") return "Investor signature completed";
   if (v.stage === "investor_turn_to_sign") return "Your documents are ready to sign";
+  if (v.stage === "sponsor_turn_to_sign") return "Documents are ready for your signature";
   return "Your signed documents are ready";
 }
 
@@ -60,10 +76,13 @@ function stageLeadHtml(v: DealEsignStageNotificationTemplateVars): string {
   const deal = escHtml(v.dealName.trim() || "this deal");
   const investor = escHtml(v.investorDisplayName?.trim() || "An investor");
   if (v.stage === "investor_signed") {
-    return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;"><strong>${investor}</strong> completed their investor signature on <strong>${deal}</strong>. Review and counter-sign in the deal Documents tab when all investors have signed (sequential workflow).</p>`;
+    return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;"><strong>${investor}</strong> completed their investor signature on <strong>${deal}</strong>. Review and counter-sign their document in the deal Documents tab.</p>`;
   }
   if (v.stage === "investor_turn_to_sign") {
     return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;">Your e-sign documents for <strong>${deal}</strong> are ready for your signature. Sign in to the investor portal to complete your subscription documents.</p>`;
+  }
+  if (v.stage === "sponsor_turn_to_sign") {
+    return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;">eSign documents for <strong>${deal}</strong> are ready for your signature. Open the deal in SyndicationX and sign from the Documents tab.</p>`;
   }
   return `<p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#111827;">Your sponsor counter-signed your eSign documents for <strong>${deal}</strong>. The fully executed documents are now available in your offering documents.</p>`;
 }
@@ -72,10 +91,13 @@ function stageLeadText(v: DealEsignStageNotificationTemplateVars): string {
   const deal = v.dealName.trim() || "this deal";
   const investor = v.investorDisplayName?.trim() || "An investor";
   if (v.stage === "investor_signed") {
-    return `${investor} completed their investor signature on ${deal}. Review and counter-sign in the deal Documents tab when all investors have signed (sequential workflow).`;
+    return `${investor} completed their investor signature on ${deal}. Review and counter-sign their document in the deal Documents tab.`;
   }
   if (v.stage === "investor_turn_to_sign") {
     return `Your e-sign documents for ${deal} are ready for your signature. Sign in to the investor portal to complete your subscription documents.`;
+  }
+  if (v.stage === "sponsor_turn_to_sign") {
+    return `eSign documents for ${deal} are ready for your signature. Open the deal in SyndicationX and sign from the Documents tab.`;
   }
   return `Your sponsor counter-signed your eSign documents for ${deal}. The fully executed documents are now available in your offering documents.`;
 }

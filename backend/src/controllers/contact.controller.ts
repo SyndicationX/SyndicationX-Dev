@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { getValidJwtUser } from "../middleware/jwtUser.js";
 import { isPlatformAdminRole } from "../constants/roles.js";
 import { db } from "../database/db.js";
@@ -10,6 +10,8 @@ import {
   ContactInvalidPhoneError,
   ContactScopeConflictError,
   countDealInvestmentsByContactIdForViewer,
+  listContactOrganizationsByContactIdForViewer,
+  type ContactOrganizationSummary,
   getContactForViewer,
   listDealsForContactForViewer,
   getUserDisplayNameById,
@@ -38,6 +40,7 @@ import {
   type ContactOfferingVisibility,
 } from "../services/contact/contact.service.js";
 import { normalizeContactOfferingVisibility } from "../services/contact/contactOfferingVisibility.service.js";
+import { resolveDealViewerScope } from "../services/deal/dealAccess.service.js";
 import {
   deleteContactEmailTemplateForViewer,
   insertContactEmailTemplate,
@@ -444,13 +447,64 @@ async function loadAddedByCompanyNameByUserId(
   return out;
 }
 
+/**
+ * `null` means the viewer is a platform admin and may see every company.
+ * A string limits the home company to that organization.
+ */
+async function organizationColumnLimitForViewer(
+  userId: string,
+  jwtUserRole: string | undefined,
+  requestedOrganizationId?: string | null,
+): Promise<string | null> {
+  const scope = await resolveDealViewerScope(
+    userId,
+    jwtUserRole,
+    requestedOrganizationId,
+  );
+  if (scope.isPlatformAdmin) return null;
+  return String(scope.organizationId ?? "").trim().toLowerCase();
+}
+
+function withHomeOrganization(
+  companies: ContactOrganizationSummary[],
+  organizationId: string | null | undefined,
+  organizationName: string | undefined,
+  limitToOrganizationId?: string | null,
+): ContactOrganizationSummary[] {
+  const name = String(organizationName ?? "").trim();
+  const id = String(organizationId ?? "").trim();
+  if (limitToOrganizationId != null) {
+    const homeId = id.toLowerCase();
+    if (!homeId || homeId !== limitToOrganizationId) return companies;
+  }
+  if (!name && !id) return companies;
+  const exists = companies.some(
+    (company) =>
+      (id && company.companyId.toLowerCase() === id.toLowerCase()) ||
+      (name && company.companyName.toLowerCase() === name.toLowerCase()),
+  );
+  if (exists) return companies;
+  return [
+    { companyId: id, companyName: name || "Organization", deals: [] },
+    ...companies,
+  ];
+}
+
 async function mapContactsToJsonWithNames(
   rows: ContactRow[],
   dealCounts?: Map<string, number>,
   dealAdderNames?: Map<string, string>,
   organizationId?: string | null,
   _viewerUserId?: string | null,
+  organizationsByContactId?: Map<string, ContactOrganizationSummary[]>,
 ) {
+  const organizationColumnLimit = _viewerUserId
+    ? await organizationColumnLimitForViewer(
+        _viewerUserId,
+        undefined,
+        organizationId,
+      )
+    : null;
   const orgNameByIdPromise = loadOrganizationNamesById(
     rows.map((row) => row.organizationId),
   );
@@ -506,6 +560,12 @@ async function mapContactsToJsonWithNames(
       dealAdderNames?.get(idKey),
     );
     const dealCount = dealCounts?.get(idKey) ?? 0;
+    const organizations = withHomeOrganization(
+      organizationsByContactId?.get(idKey) ?? [],
+      row.organizationId,
+      organizationName,
+      organizationColumnLimit,
+    );
     const invitedBy = orgId
       ? orgInviterByContactId?.get(idKey)
       : invitedByNameByContactId.get(idKey);
@@ -525,6 +585,7 @@ async function mapContactsToJsonWithNames(
       invitedByDisplayName: invitedBy?.displayName?.trim() || undefined,
       invited_by_display_name: invitedBy?.displayName?.trim() || undefined,
       dealCount,
+      organizations,
     };
   });
   return mapped;
@@ -857,6 +918,47 @@ export async function getContactMatchingIds(
   }
 }
 
+const SIGNUP_ROLE_LABELS: Record<string, string> = {
+  investor: "Investor",
+  syndicator: "Syndicator",
+  both: "Both",
+};
+
+/** Portal “Are you an” answer, matched by the contact’s email. */
+async function signupRoleLabelByEmail(
+  emails: string[],
+): Promise<Map<string, string>> {
+  const norms = [
+    ...new Set(
+      emails
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => email.includes("@")),
+    ),
+  ];
+  const out = new Map<string, string>();
+  if (norms.length === 0) return out;
+  const rows = await db
+    .select({
+      email: users.email,
+      signupAs: users.signupAs,
+    })
+    .from(users)
+    .where(
+      sql`lower(trim(${users.email})) in (${sql.join(
+        norms.map((email) => sql`${email}`),
+        sql`, `,
+      )})`,
+    );
+  for (const row of rows) {
+    const email = String(row.email ?? "").trim().toLowerCase();
+    if (!email) continue;
+    const stored = String(row.signupAs ?? "").trim().toLowerCase();
+    const label = SIGNUP_ROLE_LABELS[stored] ?? "";
+    if (label) out.set(email, label);
+  }
+  return out;
+}
+
 /**
  * GET /contacts/platform-contacts — Platform Contacts section: self-registered
  * investors. Opted-in only for company users; all self-signups for platform admins.
@@ -897,11 +999,24 @@ export async function getPlatformContacts(
       organizationId,
       user.id,
     );
+    const signupRoleByEmail = await signupRoleLabelByEmail(
+      contacts.map((row) => String(row.email ?? "")),
+    );
+    const withSignupRole = contacts.map((row, index) => {
+      const storedOnContact = String(rows[index]?.signupAs ?? "")
+        .trim()
+        .toLowerCase();
+      const signupRole =
+        SIGNUP_ROLE_LABELS[storedOnContact] ||
+        signupRoleByEmail.get(String(row.email ?? "").trim().toLowerCase()) ||
+        "";
+      return { ...row, signupRole, signup_role: signupRole };
+    });
     logSocContactDirectoryView({
       actorUserId: user.id,
-      resultCount: contacts.length,
+      resultCount: withSignupRole.length,
     });
-    res.status(200).json({ contacts });
+    res.status(200).json({ contacts: withSignupRole });
   } catch (err) {
     console.error("getPlatformContacts:", err);
     res.status(500).json({ message: "Could not load platform contacts" });
@@ -932,27 +1047,41 @@ export async function getContactDealStats(
       contactIds: ids,
     });
     const contactIds = matched.map((r) => String(r.id));
-    const [dealCounts, dealAdderNames] = await Promise.all([
-      countDealInvestmentsByContactIdForViewer({
-        viewerUserId: user.id,
-        jwtUserRole: user.userRole,
-        contactIds,
-        requestedOrganizationId: requestedOrg,
-      }),
-      resolveDealAdderNamesByContactIdForViewer({
-        viewerUserId: user.id,
-        jwtUserRole: user.userRole,
-        contactIds,
-        requestedOrganizationId: requestedOrg,
-      }),
-    ]);
-    const contacts = await mapContactsToJsonWithNames(
-      matched,
-      dealCounts,
-      dealAdderNames,
-      organizationIdFromRequestQuery(req),
-      user.id,
-    );
+    const viewerParams = {
+      viewerUserId: user.id,
+      jwtUserRole: user.userRole,
+      contactIds,
+      requestedOrganizationId: requestedOrg,
+    };
+    const [dealCounts, organizationsByContactId, orgNameById, organizationColumnLimit] =
+      await Promise.all([
+        countDealInvestmentsByContactIdForViewer(viewerParams),
+        listContactOrganizationsByContactIdForViewer(viewerParams),
+        loadOrganizationNamesById(matched.map((row) => row.organizationId)),
+        organizationColumnLimitForViewer(
+          user.id,
+          user.userRole,
+          requestedOrg,
+        ),
+      ]);
+    const contacts = matched.map((row) => {
+      const idKey = String(row.id).trim().toLowerCase();
+      const organizationName =
+        orgNameById.get(String(row.organizationId ?? "").trim().toLowerCase()) ||
+        undefined;
+      return {
+        id: row.id,
+        dealCount: dealCounts.get(idKey) ?? 0,
+        organizationName,
+        organization_name: organizationName,
+        organizations: withHomeOrganization(
+          organizationsByContactId.get(idKey) ?? [],
+          row.organizationId,
+          organizationName,
+          organizationColumnLimit,
+        ),
+      };
+    });
     res.status(200).json({ contacts });
   } catch (err) {
     console.error("getContactDealStats:", err);

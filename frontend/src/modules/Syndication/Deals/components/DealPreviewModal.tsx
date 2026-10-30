@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import "../../usermanagement/user_management.css"
+import { coSponsorMayOpenDeal } from "@/common/auth/coSponsorCompanyGate"
 import { getSessionUserEmail } from "../../../../common/auth/sessionUserEmail"
 import {
   fetchDealById,
@@ -58,6 +59,11 @@ export function DealPreviewModal({
     setDetail(null)
     void (async () => {
       try {
+        const allowed = await coSponsorMayOpenDeal()
+        if (!allowed) {
+          if (!cancelled) onClose()
+          return
+        }
         const d = await fetchDealById(dealId)
         if (!cancelled) {
           setDetail(d)
@@ -116,8 +122,11 @@ export function DealPreviewModal({
 
   function handleOpenDeal() {
     if (!dealId) return
-    onClose()
-    navigate(`/deals/${encodeURIComponent(dealId)}`)
+    void coSponsorMayOpenDeal().then((allowed) => {
+      if (!allowed) return
+      onClose()
+      navigate(`/deals/${encodeURIComponent(dealId)}`)
+    })
   }
 
   if (dealId == null) return null

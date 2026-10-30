@@ -68,6 +68,12 @@ export const dealLpInvestor = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    /** Soft-removed investor association. A later explicit save clears this. */
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    removedByUserId: uuid("removed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    removalReason: text("removal_reason").notNull().default(""),
   },
   (t) => [
     unique("deal_lp_investor_deal_id_contact_member_id_uidx").on(

@@ -1,5 +1,5 @@
-import { ArrowLeft, Building2, CircleDollarSign, Percent } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { ArrowLeft, Building2, CircleCheck, CircleDollarSign, Layers, Loader2, Percent, Save } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   useLocation,
   useNavigate,
@@ -142,7 +142,6 @@ export function DistributionSetupPage() {
   const [addKind, setAddKind] = useState<DistributionWfKind>("LP_PREF")
   const [simCash, setSimCash] = useState(() => blurFormatMoneyInput("25000"))
   const [simPeriod, setSimPeriod] = useState("0.25")
-  const [stageMet, setStageMet] = useState<Record<number, boolean>>({})
   const [dueOverrides, setDueOverrides] = useState<Record<string, number>>({})
   const [investmentDate, setInvestmentDate] = useState("")
   const [investmentDateSource, setInvestmentDateSource] = useState<
@@ -358,7 +357,6 @@ export function DistributionSetupPage() {
       setDistributionRunName("")
       setEditingDistributionId("")
       setDueOverrides({})
-      setStageMet({})
       setDayCountMode(nextDayCountMode)
       if (
         next.defaultAccrualStartIso &&
@@ -763,7 +761,6 @@ export function DistributionSetupPage() {
       rows,
       classes: bundle.classes,
       promote: bundle.promote,
-      stageMetOverrides: stageMet,
       dueOverrides,
       cashFlows,
       cumulativeDistributions,
@@ -787,7 +784,6 @@ export function DistributionSetupPage() {
     simCash,
     simPeriod,
     rows,
-    stageMet,
     dueOverrides,
     investmentDate,
     investmentLines,
@@ -1209,7 +1205,7 @@ export function DistributionSetupPage() {
       }
       toast.success(
         "Acquisition fee completed",
-        "It appears on the Distributions tab with Source “GP Payment” and Type set to the selected type.",
+        "It appears on the Distributions tab with Source “GP Payment”.",
       )
     } catch (err) {
       toast.error(
@@ -1220,6 +1216,41 @@ export function DistributionSetupPage() {
       setCompleting(false)
     }
   }
+
+  const feeCashAmount = parseMoneyDigits(distributionFee.cashAvailable)
+  const feeCanComplete =
+    bundle != null &&
+    validateDistributionFee({
+      fee: distributionFee,
+      requireComplete: true,
+      classes: bundle.classes,
+      investors: dealInvestors,
+    }).ok &&
+    Number.isFinite(feeCashAmount) &&
+    feeCashAmount > 0
+  const distCashAmount = parseMoneyDigits(simCash)
+  const distCanComplete =
+    Number.isFinite(distCashAmount) && distCashAmount > 0
+  const commitIsFee = mainTab === "fee"
+  const commitReady = commitIsFee ? feeCanComplete : distCanComplete
+  const pageBodyRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const reset = () => {
+      let node: HTMLElement | null = pageBodyRef.current
+      while (node) {
+        if (node.scrollTop !== 0) node.scrollTop = 0
+        node = node.parentElement
+      }
+    }
+    reset()
+    const raf = requestAnimationFrame(reset)
+    const timer = window.setTimeout(reset, 60)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.clearTimeout(timer)
+    }
+  }, [mainTab])
 
   if (!dealId) {
     return (
@@ -1264,6 +1295,7 @@ export function DistributionSetupPage() {
             className="um_toolbar_export_btn"
             onClick={handleClassSetupClick}
           >
+            <Layers size={16} strokeWidth={2} aria-hidden />
             Class Setup
           </button>
           <button
@@ -1272,15 +1304,22 @@ export function DistributionSetupPage() {
             disabled={loading || !bundle || saving}
             onClick={() => void handleSave()}
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? (
+              <>
+                <Loader2 size={16} strokeWidth={2} aria-hidden />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save size={16} strokeWidth={2} aria-hidden />
+                Save
+              </>
+            )}
           </button>
         </div>
       </header>
 
-      {loading || !bundle ? (
-        <DistributionSetupSkeleton />
-      ) : (
-        <div className="ds_page_body">
+      {!loading && bundle ? (
           <div className="um_members_tabs_outer deals_tabs_outer um_segmented_tabs_outer ds_wf_tabs_outer">
             <TabsScrollStrip scrollClassName="deals_tabs_scroll um_segmented_tabs_scroll">
               <div
@@ -1321,7 +1360,6 @@ export function DistributionSetupPage() {
                   onClick={() => {
                     setMainTab("operating")
                     setDueOverrides({})
-                    setStageMet({})
                   }}
                 >
                   <CircleDollarSign
@@ -1346,7 +1384,6 @@ export function DistributionSetupPage() {
                   onClick={() => {
                     setMainTab("capital")
                     setDueOverrides({})
-                    setStageMet({})
                   }}
                 >
                   <Building2
@@ -1362,20 +1399,23 @@ export function DistributionSetupPage() {
               </div>
             </TabsScrollStrip>
           </div>
+      ) : null}
 
-          {mainTab === "fee" ? (
+      <div className="ds_page_body" ref={pageBodyRef}>
+      {loading || !bundle ? (
+        <DistributionSetupSkeleton />
+      ) : mainTab === "fee" ? (
             <div
+              key={mainTab}
               id="ds-fee-panel"
               role="tabpanel"
               aria-labelledby="ds-wf-tab-fee"
-              className="ds_workbench"
+              className="ds_workbench ds_tab_enter"
             >
               <DistributionFeePanel
                 fee={distributionFee}
                 classes={bundle.classes}
                 investors={dealInvestors}
-                completing={completing}
-                onComplete={() => void handleCompleteFee()}
                 onChange={(next) =>
                   setDistributionFee({
                     ...next,
@@ -1388,7 +1428,12 @@ export function DistributionSetupPage() {
               />
             </div>
           ) : (
-          <div id="ds-wf-panel" role="tabpanel" className="ds_workbench">
+          <div
+            key={mainTab}
+            id="ds-wf-panel"
+            role="tabpanel"
+            className="ds_workbench ds_tab_enter"
+          >
             <DistributionSimPanel
               section="test"
               cash={simCash}
@@ -1397,10 +1442,6 @@ export function DistributionSetupPage() {
               onPeriodChange={handlePeriodChange}
               sim={sim}
               classes={bundle.classes}
-              stageMet={sim.stageMet}
-              onToggleStageMet={(stage, met) =>
-                setStageMet((prev) => ({ ...prev, [stage]: met }))
-              }
               onDueOverride={(rowId, value) => {
                 const n = parseMoneyDigits(value)
                 setDueOverrides((prev) => ({
@@ -1432,11 +1473,6 @@ export function DistributionSetupPage() {
               otherAdjustment={otherAdjustment}
               onOtherAdjustmentChange={setOtherAdjustment}
               classDisplayTotals={classDisplayTotals}
-              completing={completing}
-              completeLabel={
-                isEditingRun ? "Update distribution" : "Complete distribution"
-              }
-              onComplete={() => void handleComplete()}
             />
 
             <div className="ds_layout">
@@ -1475,10 +1511,6 @@ export function DistributionSetupPage() {
                 onPeriodChange={handlePeriodChange}
                 sim={sim}
                 classes={bundle.classes}
-                stageMet={sim.stageMet}
-                onToggleStageMet={(stage, met) =>
-                  setStageMet((prev) => ({ ...prev, [stage]: met }))
-                }
                 onDueOverride={(rowId, value) => {
                   const n = parseMoneyDigits(value)
                   setDueOverrides((prev) => ({
@@ -1513,9 +1545,59 @@ export function DistributionSetupPage() {
               />
             </div>
           </div>
-          )}
-        </div>
       )}
+      </div>
+
+      {!loading && bundle ? (
+        <div className="ds_commit_bar">
+          <p className="ds_commit_hint">
+            {commitIsFee
+              ? "Records this fee as a GP payment. Save only keeps the setup."
+              : isEditingRun
+                ? "Updates this recorded distribution. Save only keeps the setup."
+                : "Records this distribution. Save only keeps the setup."}
+          </p>
+          <button
+            type="button"
+            className="ds_primary_btn ds_complete_btn"
+            disabled={completing || !commitReady}
+            onClick={() =>
+              void (commitIsFee ? handleCompleteFee() : handleComplete())
+            }
+            title={
+              commitReady
+                ? commitIsFee
+                  ? "Record this fee distribution"
+                  : isEditingRun
+                    ? "Update this distribution with the current details"
+                    : "Record this cash as a completed distribution"
+                : commitIsFee
+                  ? "Enter a fee name, cash greater than $0, and a class split totaling 100%"
+                  : "Enter cash available greater than $0 to complete"
+            }
+          >
+            {completing ? (
+              <>
+                <Loader2 size={16} strokeWidth={2} aria-hidden />
+                {commitIsFee
+                  ? "Completing…"
+                  : isEditingRun
+                    ? "Updating…"
+                    : "Completing…"}
+              </>
+            ) : (
+              <>
+                <CircleCheck size={16} strokeWidth={2} aria-hidden />
+                {commitIsFee
+                  ? "Complete acquisition fee"
+                  : isEditingRun
+                    ? "Update distribution"
+                    : "Complete distribution"}
+              </>
+            )}
+          </button>
+        </div>
+      ) : null}
 
       <UnsavedChangesModal
         open={leaveConfirmOpen}

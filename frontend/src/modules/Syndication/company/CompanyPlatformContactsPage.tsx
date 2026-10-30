@@ -100,6 +100,7 @@ export default function CompanyPlatformContactsPage() {
         displayEmail(row.email).toLowerCase().includes(q) ||
         formatUsPhoneStoredForUi(row.phone).toLowerCase().includes(q) ||
         owners.toLowerCase().includes(q) ||
+        (row.signupRole ?? "").toLowerCase().includes(q) ||
         (row.invitedByDisplayName ?? "").toLowerCase().includes(q) ||
         (row.visibleToUsers === true ? "yes" : "no").includes(q) ||
         contactStatusLabel(row).toLowerCase().includes(q)
@@ -155,6 +156,14 @@ export default function CompanyPlatformContactsPage() {
         colWidth: "9rem",
         sortValue: (row) => formatUsPhoneStoredForUi(row.phone),
         cell: (row) => formatUsPhoneStoredForUi(row.phone) || "—",
+      },
+      {
+        id: "signupRole",
+        header: "Signup Role",
+        colWidth: "9rem",
+        align: "center",
+        sortValue: (row) => (row.signupRole ?? "").toLowerCase(),
+        cell: (row) => row.signupRole?.trim() || "—",
       },
       {
         id: "owner",

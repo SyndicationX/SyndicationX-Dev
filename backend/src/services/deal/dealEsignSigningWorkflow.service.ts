@@ -9,7 +9,11 @@ import {
 } from "../../constants/esignSigningWorkflow.js";
 import {
   getSignFlowDocument,
+  isSignFlowOpenSponsorRecipient,
   patchSignFlowDocument,
+  SIGNFLOW_OPEN_SPONSOR_NAME,
+  signFlowOpenSponsorSignerName,
+  signFlowRecipientHasSigned,
 } from "../esign/signflow.service.js";
 import type { EsignTemplateFileRecord } from "./dealEsignTemplates.service.js";
 
@@ -192,9 +196,18 @@ export async function syncSignflowTemplateSigningWorkflow(
     return r;
   });
 
+  const workflowUnchanged =
+    String(doc.workflowType ?? "").trim().toLowerCase() === workflowType;
+  const ordersUnchanged = recipients.every(
+    (recipient, index) =>
+      Number(recipient.order) === Number(existing[index]?.order),
+  );
+  if (workflowUnchanged && ordersUnchanged) return;
+
   await patchSignFlowDocument(documentId, {
     workflowType,
     recipients,
+    fields: doc.fields ?? [],
   });
 }
 
@@ -415,40 +428,202 @@ export async function resolveDealMemberSignerByRowId(
   };
 }
 
+export type AssignSponsorSignerResult =
+  | "ok"
+  | "already_signed"
+  | "assigned_to_other"
+  | "missing";
+
+/**
+ * Claims unsigned "Anyone can sign" sponsor slots for this sponsor.
+ * The slot stays open until that sponsor actually signs, so another sponsor
+ * can still take it. A slot assigned to a named sponsor stays with that person.
+ */
 export async function assignSignFlowDocumentSponsorSigner(
   documentId: string,
   signer: DealSponsorSigner,
-): Promise<boolean> {
+): Promise<AssignSponsorSignerResult> {
   const sigId = documentId.trim();
-  if (!sigId) return false;
+  if (!sigId) return "missing";
   const doc = await getSignFlowDocument(sigId);
   const recipients = [...(doc.recipients ?? [])];
-  if (recipients.length === 0) return false;
-
-  const sponsorRecipient = findTemplateRecipientByRole(recipients, [
-    "seller",
-    "sponsor",
-    "rec_sponsor",
-    "rec_2",
-    "recipient_b",
-  ]);
-  if (!sponsorRecipient) return false;
+  if (recipients.length === 0) return "missing";
 
   const email = signer.email.trim().toLowerCase();
   const name = signer.name.trim() || email;
-  const currentEmail = String(sponsorRecipient.email ?? "").trim().toLowerCase();
-  const currentName = String(sponsorRecipient.name ?? "").trim();
-  if (currentEmail === email && currentName === name) {
-    return true;
+  const sellers = recipients.filter((recipient) => {
+    const role = String(recipient.role ?? "").trim().toLowerCase();
+    return role === "seller" || role.includes("sponsor");
+  });
+  if (sellers.length === 0) return "missing";
+
+  const unsignedOpen = sellers.filter(
+    (recipient) =>
+      isSignFlowOpenSponsorRecipient(recipient) &&
+      !signFlowRecipientHasSigned(recipient),
+  );
+  const unsignedNamedMine = sellers.filter((recipient) => {
+    if (isSignFlowOpenSponsorRecipient(recipient)) return false;
+    if (signFlowRecipientHasSigned(recipient)) return false;
+    return String(recipient.email ?? "").trim().toLowerCase() === email;
+  });
+  if (unsignedOpen.length === 0 && unsignedNamedMine.length === 0) {
+    const unsignedNamedOther = sellers.some((recipient) => {
+      if (isSignFlowOpenSponsorRecipient(recipient)) return false;
+      if (signFlowRecipientHasSigned(recipient)) return false;
+      const recipientEmail = String(recipient.email ?? "").trim().toLowerCase();
+      return recipientEmail.includes("@") && recipientEmail !== email;
+    });
+    return unsignedNamedOther ? "assigned_to_other" : "already_signed";
   }
 
-  const nextRecipients = recipients.map((r) => {
-    if (r === sponsorRecipient) {
-      return { ...r, email, name };
+  let changed = false;
+  const nextRecipients = recipients.map((recipient) => {
+    if (!unsignedOpen.includes(recipient)) return recipient;
+    const currentEmail = String(recipient.email ?? "").trim().toLowerCase();
+    const currentName = String(recipient.name ?? "").trim();
+    const markedName = signFlowOpenSponsorSignerName(name);
+    if (currentEmail === email && currentName === markedName) {
+      return recipient;
     }
-    return r;
+    changed = true;
+    return {
+      ...recipient,
+      email,
+      name: markedName,
+    };
   });
+  if (!changed) return "ok";
 
   await patchSignFlowDocument(sigId, { recipients: nextRecipients });
-  return true;
+  return "ok";
+}
+
+function openSponsorSlotFinished(recipient: {
+  signed?: boolean;
+  signingStatus?: string;
+  status?: string;
+  signedAt?: string | null;
+}): boolean {
+  if (signFlowRecipientHasSigned(recipient)) return true;
+  const status = String(recipient.signingStatus ?? recipient.status ?? "")
+    .trim()
+    .toLowerCase();
+  return status === "awaiting_countersign" && Boolean(recipient.signedAt?.trim());
+}
+
+/**
+ * After an open sponsor slot is signed, store the sponsor who signed it.
+ * SignFlow otherwise keeps the recipient as “Anyone can sign”.
+ */
+export async function stampCompletedOpenSponsorSigner(
+  documentId: string,
+  signer: DealSponsorSigner,
+): Promise<void> {
+  const sigId = documentId.trim();
+  const email = signer.email.trim().toLowerCase();
+  const name = signer.name.replace(/\u2060/g, "").trim();
+  if (!sigId || !email.includes("@") || !name) return;
+  const doc = await getSignFlowDocument(sigId);
+  let changed = false;
+  const nextRecipients = (doc.recipients ?? []).map((recipient) => {
+    if (!isSignFlowOpenSponsorRecipient(recipient)) return recipient;
+    if (!openSponsorSlotFinished(recipient)) return recipient;
+    const currentName = String(recipient.name ?? "")
+      .replace(/\u2060/g, "")
+      .trim();
+    const currentEmail = String(recipient.email ?? "").trim().toLowerCase();
+    if (currentName === name && currentEmail === email) return recipient;
+    const lower = currentName.toLowerCase();
+    const stillPlaceholder =
+      !currentName ||
+      lower.includes("anyone can sign") ||
+      lower === "any sponsor" ||
+      lower === "sponsor" ||
+      currentEmail.endsWith("@embed.local") ||
+      !currentEmail.includes("@");
+    if (!stillPlaceholder && currentName.toLowerCase() !== name.toLowerCase()) {
+      return recipient;
+    }
+    changed = true;
+    return { ...recipient, email, name };
+  });
+  if (!changed) return;
+  await patchSignFlowDocument(sigId, { recipients: nextRecipients });
+}
+
+const SPONSOR_RECIPIENT_COLORS = ["#2563eb", "#7c3aed", "#0f766e", "#b45309", "#be123c"];
+
+function isPlaceholderSponsorEmail(email: string | null | undefined): boolean {
+  const value = String(email ?? "").trim().toLowerCase();
+  return !value.includes("@") || value.endsWith("@embed.local");
+}
+
+function sponsorRoleLabel(role: string): string {
+  return role
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/**
+ * Adds each deal sponsor as their own sponsor signer on the template.
+ * Fields placed for a sponsor stay on that sponsor instead of one shared signer.
+ */
+export async function syncDealSponsorsOntoSignFlowTemplate(
+  documentId: string,
+  dealId: string,
+): Promise<void> {
+  const sigId = documentId.trim();
+  if (!sigId) return;
+  const sponsors = await listDealSponsorSignerOptions(dealId);
+  if (sponsors.length === 0) return;
+
+  const doc = await getSignFlowDocument(sigId);
+  let renamedOpenSponsor = false;
+  const existing = [...(doc.recipients ?? [])].map((recipient) => {
+    if (!isSignFlowOpenSponsorRecipient(recipient)) return recipient;
+    const label = String(recipient.name ?? "").trim().toLowerCase();
+    if (label === "sponsor" || !label) {
+      renamedOpenSponsor = true;
+      return { ...recipient, name: SIGNFLOW_OPEN_SPONSOR_NAME };
+    }
+    return recipient;
+  });
+  const knownEmails = new Set(
+    existing
+      .map((recipient) => String(recipient.email ?? "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  let order = existing.reduce(
+    (max, recipient) => Math.max(max, Number(recipient.order) || 0),
+    2,
+  );
+  const next = [...existing];
+  let added = false;
+
+  sponsors.forEach((sponsor, index) => {
+    const email = sponsor.email.trim().toLowerCase();
+    if (!email.includes("@") || knownEmails.has(email)) return;
+    knownEmails.add(email);
+    order += 1;
+    const roleLabel = sponsorRoleLabel(sponsor.role || "Sponsor");
+    next.push({
+      name: `${sponsor.name} (${roleLabel})`,
+      email,
+      role: "seller",
+      color: SPONSOR_RECIPIENT_COLORS[(index + 1) % SPONSOR_RECIPIENT_COLORS.length],
+      order,
+    });
+    added = true;
+  });
+
+  if (!added && !renamedOpenSponsor) return;
+  await patchSignFlowDocument(sigId, { recipients: next });
+}
+
+export function isNamedSponsorRecipientEmail(email: string | null | undefined): boolean {
+  return !isPlaceholderSponsorEmail(email);
 }

@@ -124,6 +124,18 @@ export function dealInvestorProfileDisplayName(row: {
   return "—"
 }
 
+/** Profile type column: Individual, Joint tenancy, LLC, or custodian IRA. */
+export function dealInvestorProfileTypeDisplay(row: {
+  profileId?: string | null
+  entitySubtitle?: string | null
+}): string {
+  const fromId = investorProfileLabel(String(row.profileId ?? ""))
+  if (fromId !== "—" && fromId.toLowerCase() !== "select") return fromId
+  const sub = String(row.entitySubtitle ?? "").trim()
+  if (sub && sub !== "—" && investorProfileIdFromLabel(sub)) return sub
+  return "—"
+}
+
 /** Resolve profile select `value` from a display label (e.g. when API only sent `entitySubtitle`). */
 export function investorProfileIdFromLabel(label: string): string {
   if (!label?.trim()) return ""
@@ -239,6 +251,14 @@ export function leadSponsorContactIdExcludingRow(
   }
   return null
 }
+
+/** Lead Sponsor, Admin sponsor, or Co-sponsor. */
+export function isSponsorRosterRole(stored: string | undefined): boolean {
+  return isLeadSponsorRole(stored) || isAdminSponsorOrCoSponsorRole(stored)
+}
+
+export const COMPANY_MEMBER_SPONSOR_ROLES_ONLY_MESSAGE =
+  "A person who belongs to a company can only be Lead Sponsor, Admin sponsor, or Co-sponsor."
 
 /** Admin sponsor or Co-sponsor — same deal cannot assign both Lead Sponsor and these roles to one person. */
 export function isAdminSponsorOrCoSponsorRole(stored: string | undefined): boolean {

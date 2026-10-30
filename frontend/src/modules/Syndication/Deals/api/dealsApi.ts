@@ -1349,6 +1349,58 @@ export async function patchDealFundingInstructions(
   }
 }
 
+export async function deleteSignedEsignDocumentForResign(
+  dealId: string,
+  signatureRequestId: string,
+  templateFileId?: string,
+): Promise<
+  | {
+      ok: true
+      emailSent: boolean
+      message: string
+      offeringInvestorPreviewJson: string | null
+    }
+  | { ok: false; message: string }
+> {
+  const base = getApiV1Base()
+  if (!base)
+    return { ok: false, message: "VITE_BASE_URL is not configured." }
+  const res = await fetch(
+    `${base}/deals/${encodeURIComponent(dealId)}/documents/esign-signed/delete`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        signatureRequestId,
+        ...(templateFileId?.trim()
+          ? { templateFileId: templateFileId.trim() }
+          : {}),
+      }),
+    },
+  )
+  const data = (await res.json().catch(() => ({}))) as {
+    message?: string
+    emailSent?: boolean
+    offeringInvestorPreviewJson?: string | null
+  }
+  if (res.status === 200) {
+    return {
+      ok: true,
+      emailSent: data.emailSent !== false,
+      message: data.message || "The investor was emailed to sign again.",
+      offeringInvestorPreviewJson: data.offeringInvestorPreviewJson ?? null,
+    }
+  }
+  return {
+    ok: false,
+    message: data.message || `Could not delete this signed document (${res.status})`,
+  }
+}
+
 export async function syncCompletedEsignDocumentsToDocumentsTab(
   dealId: string,
 ): Promise<
@@ -1490,6 +1542,7 @@ export async function fetchDealSponsorEsignSignSession(
 export async function postDealSponsorEsignSync(
   dealId: string,
   signatureRequestId: string,
+  options?: { recordSigner?: boolean },
 ): Promise<
   | { ok: true; offeringInvestorPreviewJson: string | null }
   | { ok: false; message: string }
@@ -1507,7 +1560,10 @@ export async function postDealSponsorEsignSync(
         "Content-Type": "application/json",
       },
       credentials: "include",
-      body: JSON.stringify({ signatureRequestId }),
+      body: JSON.stringify({
+        signatureRequestId,
+        ...(options?.recordSigner ? { recordSigner: true } : {}),
+      }),
     },
   )
   const data = (await res.json().catch(() => ({}))) as {
@@ -2837,6 +2893,9 @@ function normalizeInvestorRowApi(
         "added_by_company_name",
       ]),
     ),
+    companyAdminName: str(
+      firstDefined(raw, ["companyAdminName", "company_admin_name"]),
+    ),
     ...(() => {
       const email = firstDefined(raw, ["addedByEmail", "added_by_email"])
       if (email == null || !String(email).trim()) return {}
@@ -2949,6 +3008,57 @@ function normalizeInvestorRowApi(
     ),
     investedAtIso: str(
       firstDefined(raw, ["investedAtIso", "invested_at_iso", "createdAt", "created_at"]),
+    ),
+    commitmentCompletedAtIso: str(
+      firstDefined(raw, [
+        "commitmentCompletedAtIso",
+        "commitment_completed_at_iso",
+        "commitmentCompletedAt",
+        "commitment_completed_at",
+      ]),
+    ),
+    investorW9Saved: (() => {
+      const v = firstDefined(raw, ["investorW9Saved", "investor_w9_saved"])
+      return v === true || v === "true" || v === 1 || v === "1"
+    })(),
+    investorQuestionnaireSaved: (() => {
+      const v = firstDefined(raw, [
+        "investorQuestionnaireSaved",
+        "investor_questionnaire_saved",
+      ])
+      return v === true || v === "true" || v === 1 || v === "1"
+    })(),
+    ...(() => {
+      const v = firstDefined(raw, ["investorArchived", "investor_archived"])
+      if (v === true || v === "true" || v === 1 || v === "1") {
+        return { investorArchived: true as const }
+      }
+      if (v === false || v === "false" || v === 0 || v === "0") {
+        return { investorArchived: false as const }
+      }
+      return {}
+    })(),
+    ...(() => {
+      const v = firstDefined(raw, ["sponsorRemoved", "sponsor_removed"])
+      if (v === true || v === "true" || v === 1 || v === "1") {
+        return { sponsorRemoved: true as const }
+      }
+      const status = str(firstDefined(raw, ["status"])).trim().toLowerCase()
+      if (status === "removed") return { sponsorRemoved: true as const }
+      return {}
+    })(),
+    amountReceived: str(
+      firstDefined(raw, ["amountReceived", "amount_received", "fundedAmount", "funded_amount"]),
+      "",
+    ),
+    accruedAmount: str(
+      firstDefined(raw, [
+        "accruedAmount",
+        "accrued_amount",
+        "accruedPreferredReturn",
+        "accrued_preferred_return",
+      ]),
+      "",
     ),
     percentOfClassOwnership: str(
       firstDefined(raw, [
@@ -3248,6 +3358,34 @@ export async function fetchDealCommitmentAmount(
  * GET /deals/:dealId/members — roster from `deal_member` merged with investments
  * (commitment = sum of all `deal_investment` rows per contact on this deal).
  */
+/**
+ * True when this user or contact has their own company.
+ * Null when the check could not be completed.
+ */
+export async function fetchRosterPersonHasCompany(
+  dealId: string,
+  personId: string,
+): Promise<boolean | null> {
+  const base = getApiV1Base()
+  const id = personId.trim()
+  if (!base || !dealId.trim() || !id) return null
+  try {
+    const params = new URLSearchParams({ personId: id })
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(dealId)}/roster-person-company?${params}`,
+      {
+        headers: { ...authHeaders({ omitActiveOrganization: true }) },
+        credentials: "include",
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { hasCompany?: unknown }
+    if (!res.ok) return null
+    return data.hasCompany === true
+  } catch {
+    return null
+  }
+}
+
 export async function fetchDealMembers(
   dealId: string,
   options?: { referringSponsorRef?: string | null },
@@ -3630,7 +3768,7 @@ export async function postDealEsignEmbeddedDraft(
         message:
           data.message != null
             ? String(data.message)
-            : "The server did not return a template editor session. Check Dropbox Sign configuration and try again.",
+            : "The server did not return a template editor session. Check SignFlow configuration and try again.",
       }
     }
     const editUrl = typeof data.editUrl === "string" ? data.editUrl : ""
@@ -3693,6 +3831,7 @@ export async function postDealEsignAddInvestorDataField(
   fieldKey: string,
   profileIds?: string[],
   page?: number,
+  required = true,
 ): Promise<PostDealEsignAddInvestorDataFieldResult> {
   const base = getApiV1Base()
   if (!base) {
@@ -3711,6 +3850,7 @@ export async function postDealEsignAddInvestorDataField(
         body: JSON.stringify({
           fieldKey,
           profileIds: profileIds ?? [],
+          required,
           ...(Number.isFinite(page) && page && page >= 1
             ? { page: Math.floor(page) }
             : {}),
@@ -3737,6 +3877,46 @@ export async function postDealEsignAddInvestorDataField(
       esignLabel:
         typeof data.esignLabel === "string" ? data.esignLabel : fieldKey,
       label: typeof data.label === "string" ? data.label : fieldKey,
+      fieldCount: typeof data.fieldCount === "number" ? data.fieldCount : 0,
+    }
+  } catch {
+    return { ok: false, message: "Network error" }
+  }
+}
+
+/** Store the current SignFlow field layout without marking the template ready. */
+export async function postDealEsignSyncEmbeddedTemplateFields(
+  dealId: string,
+  fileId: string,
+): Promise<{ ok: true; fieldCount: number } | { ok: false; message: string }> {
+  const base = getApiV1Base()
+  if (!base) {
+    return { ok: false, message: "API base URL is not configured" }
+  }
+  try {
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(dealId)}/esign-templates/${encodeURIComponent(fileId)}/sync-embedded-template-fields`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as {
+      fieldCount?: unknown
+      message?: unknown
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        message:
+          data.message != null
+            ? String(data.message)
+            : "Could not store eSign fields",
+      }
+    }
+    return {
+      ok: true,
       fieldCount: typeof data.fieldCount === "number" ? data.fieldCount : 0,
     }
   } catch {
@@ -4337,6 +4517,10 @@ export type DealMyEsignDocument = {
   status: "pending" | "signed"
   categoryId?: string
   signatureRequestId?: string
+  /** Sponsor has signed. Edit and remove are closed. */
+  sponsorSigned?: boolean
+  /** Investor signed and the sponsor has not. Edit and remove are allowed. */
+  canRevise?: boolean
 }
 
 export type DealMyEsignDocumentsResult = {
@@ -4589,6 +4773,59 @@ export async function postDealMyEsignMarkViewed(
   }
 }
 
+/** POST `/deals/:dealId/my-esign-withdraw-signature` — clear a completed signature before the sponsor signs. */
+export async function postDealMyEsignWithdrawSignature(
+  dealId: string,
+  signatureRequestId: string,
+  scope?: DealMyEsignScopeQuery,
+  options?: { preserveFieldValues?: boolean },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const base = getApiV1Base()
+  if (!base) {
+    return { ok: false, message: "API base URL is not configured" }
+  }
+  const sig = signatureRequestId.trim()
+  if (!sig) {
+    return { ok: false, message: "Missing signature request" }
+  }
+  try {
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(dealId)}/my-esign-withdraw-signature`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          signatureRequestId: sig,
+          ...(options?.preserveFieldValues ? { preserveFieldValues: true } : {}),
+          ...(scope?.userInvestorProfileId?.trim()
+            ? {
+                user_investor_profile_id: scope.userInvestorProfileId.trim(),
+              }
+            : {}),
+          ...(scope?.investmentId?.trim()
+            ? { investment_id: scope.investmentId.trim() }
+            : {}),
+          ...(scope?.profileId?.trim()
+            ? { profile_id: scope.profileId.trim() }
+            : {}),
+        }),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { message?: unknown }
+    if (!res.ok) {
+      const msg = data.message != null ? String(data.message) : res.statusText
+      return { ok: false, message: msg || "Could not update this signature" }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false, message: "Network error" }
+  }
+}
+
 /** GET `/deals/:dealId/my-esign-documents` — signed PDFs after investor completes eSign. */
 export async function fetchDealMyEsignDocuments(
   dealId: string,
@@ -4622,6 +4859,8 @@ export async function fetchDealMyEsignDocuments(
         status?: string
         categoryId?: string
         signatureRequestId?: string
+        sponsorSigned?: boolean
+        canRevise?: boolean
       }>
       esignCompleted?: boolean
       esignPending?: boolean
@@ -4661,6 +4900,8 @@ export async function fetchDealMyEsignDocuments(
               status,
               ...(categoryId ? { categoryId } : {}),
               ...(signatureRequestId ? { signatureRequestId } : {}),
+              sponsorSigned: Boolean(d.sponsorSigned),
+              canRevise: Boolean(d.canRevise),
             }
           })
           .filter((d) => d.fileId && d.name)
@@ -4873,14 +5114,16 @@ export async function postDealDocumentSharedNotification(
 export async function deleteDealMemberRoster(
   dealId: string,
   rowId: string,
+  scope?: "team_member",
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const base = getApiV1Base()
   if (!base) {
     return { ok: false, message: "API base URL is not configured" }
   }
   try {
+    const scopeQuery = scope === "team_member" ? "?scope=team_member" : ""
     const res = await fetch(
-      `${base}/deals/${encodeURIComponent(dealId)}/members/${encodeURIComponent(rowId)}`,
+      `${base}/deals/${encodeURIComponent(dealId)}/members/${encodeURIComponent(rowId)}${scopeQuery}`,
       {
         method: "DELETE",
         headers: { ...authHeaders() },
@@ -4892,6 +5135,52 @@ export async function deleteDealMemberRoster(
       const msg =
         data.message != null ? String(data.message) : res.statusText
       return { ok: false, message: msg || "Could not remove member" }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false, message: "Network error" }
+  }
+}
+
+/**
+ * POST `/deals/:dealId/members/:rowId/removal` — remove one investment, or unlink
+ * the investor from it. Does not delete the user account.
+ */
+export async function postDealInvestorRemoval(
+  dealId: string,
+  rowId: string,
+  body: {
+    action: "remove_investment" | "remove_investor"
+    reason: string
+    confirmed: true
+  },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const base = getApiV1Base()
+  if (!base) {
+    return { ok: false, message: "API base URL is not configured" }
+  }
+  try {
+    const res = await fetch(
+      `${base}/deals/${encodeURIComponent(dealId)}/members/${encodeURIComponent(rowId)}/removal`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          action: body.action,
+          reason: body.reason,
+          confirmed: body.confirmed,
+        }),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { message?: unknown }
+    if (!res.ok) {
+      const msg =
+        data.message != null ? String(data.message) : res.statusText
+      return { ok: false, message: msg || "Could not remove this record." }
     }
     return { ok: true }
   } catch {
@@ -5218,6 +5507,8 @@ function appendDealInvestmentMultipartFields(
     "fund_approved",
     values.fundApproved === true ? "true" : "false",
   )
+  const fundApprovedAt = values.fundApprovedAt?.trim()
+  if (fundApprovedAt) fd.append("fund_approved_at", fundApprovedAt)
   const replacementLeadSponsorContactId =
     values.replacementLeadSponsorContactId?.trim()
   if (replacementLeadSponsorContactId) {

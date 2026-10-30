@@ -9,6 +9,7 @@ import {
   getDealDistributionFundingOnboardingStatus,
   getDistributionPayouts,
   getInvestorConnectOnboardingStatus,
+  deleteInvestorSharedConnectBank,
   getInvestorSharedConnectBanks,
   postDealDistributionFundingOnboarding,
   postDistributionPayouts,
@@ -32,6 +33,10 @@ router.use("/deals/:dealId", blockCrossOrgColleagueDealMutations);
 router.get(
   "/investing/stripe-connect/banks",
   getInvestorSharedConnectBanks,
+);
+router.delete(
+  "/investing/stripe-connect/banks/:accountId",
+  deleteInvestorSharedConnectBank,
 );
 router.post(
   "/investing/profiles/:profileId/stripe-connect/onboarding",

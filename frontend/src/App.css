@@ -37,19 +37,24 @@ body {
  * Logged-in shell: lock the document to the viewport.
  * Only `.app_main_section` (or `.app_main_content`) should scroll — never html/body.
  * Must come AFTER `#root { min-height: 100dvh }` so shell wins on height.
+ * `overflow: clip` (not `hidden`) so Chrome/Edge cannot scrollIntoView the
+ * window when a dialog opens and leave a white band above the app.
  */
 html:has(.app_shell) {
   height: 100%;
   height: 100dvh;
   max-height: 100dvh;
-  overflow: hidden;
+  overflow: clip;
+  scroll-behavior: auto;
+  overscroll-behavior: none;
 }
 
 html:has(.app_shell) body {
   height: 100%;
   height: 100dvh;
   max-height: 100dvh;
-  overflow: hidden;
+  overflow: clip;
+  overscroll-behavior: none;
 }
 
 html:has(.app_shell) #root {
@@ -57,7 +62,12 @@ html:has(.app_shell) #root {
   height: 100dvh;
   max-height: 100dvh;
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
+}
+
+html.app_modal_open,
+html.app_modal_open body {
+  overflow: clip !important;
 }
 
 /* Author `display` rules must not resurrect `[hidden]` panels (extra page height). */

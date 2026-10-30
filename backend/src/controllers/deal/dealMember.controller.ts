@@ -9,6 +9,8 @@ import {
   assertDealIdReadableOrAssignedParticipant,
   resolveDealViewerScope,
 } from "../../services/deal/dealAccess.service.js";
+import { removeInvestorOrInvestment } from "../../services/deal/investorInvestmentRemoval.service.js";
+import { parseRemovalRequest } from "../../services/deal/investorInvestmentRemoval.plan.js";
 import {
   deleteDealMemberRosterEntry,
   DealLeadSponsorValidationError,
@@ -23,7 +25,10 @@ import {
   sendDealMemberInviteForInvestmentIfRequested,
   sendNewLeadSponsorInvitationIfAssigned,
 } from "../../services/deal/dealMemberInvitationEmail.service.js";
-import { isPortalUserSponsorOnDeal } from "../../services/deal/dealMemberScope.service.js";
+import {
+  isPortalUserSponsorOnDeal,
+  personIsAssociatedWithCompany,
+} from "../../services/deal/dealMemberScope.service.js";
 import { isPlatformAdminRole } from "../../constants/roles.js";
 import {
   dealHasEsignTemplateDocuments,
@@ -64,6 +69,7 @@ import { requestedOrganizationIdFromRequest } from "../../services/org/orgResolu
 import {
   decodeOfferingPreviewSponsorRefParam,
   resolveOfferingPreviewSponsorAttribution,
+  resolvePortalUserIdForContactMemberId,
   resolveReferringSponsorDisplayNameOnDeal,
 } from "../../services/deal/offeringPreviewSponsorRef.service.js";
 import { resolveInvestNowAddedByUserId } from "../../services/deal/crossOrgColleagueDeal.service.js";
@@ -72,6 +78,43 @@ import {
   resolveUserCompanyNamesByIds,
 } from "../../services/deal/dealInvestment.service.js";
 import { loadInvestorInviteCompanyDisplayName } from "../../services/contact/investorInviteLink.service.js";
+
+/** Whether a general partner / contact belongs to their own company. */
+export async function getRosterPersonCompany(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const dealId =
+    typeof req.params.dealId === "string"
+      ? req.params.dealId
+      : req.params.dealId?.[0];
+  const personId = String(req.query.personId ?? req.query.person_id ?? "").trim();
+  if (!dealId || !personId) {
+    res.status(400).json({ message: "Deal id and person id are required" });
+    return;
+  }
+  try {
+    const scope = await resolveDealViewerScope(
+      user.id,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!(await assertDealIdReadableOrAssignedParticipant(dealId, scope))) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    const hasCompany = await personIsAssociatedWithCompany(personId);
+    res.status(200).json({ hasCompany });
+  } catch (err) {
+    console.error("getRosterPersonCompany:", err);
+    res.status(500).json({ message: "Could not check company" });
+  }
+}
 
 /**
  * GET /deals/:dealId/members — roster from `deal_member`, merged with investment
@@ -152,28 +195,55 @@ export async function getDealMembers(
           )
         : "";
     const leadSponsor = await resolveDealLeadSponsorFallback(dealId);
-    const companyNameByUserId = await resolveUserCompanyNamesByIds([
-      onboardingSponsorUserId,
-      referringSponsor?.sponsorUserId,
-      leadSponsor.userId,
-    ]);
-    const companyLabelForUser = (userId: string | null | undefined): string => {
-      const key = String(userId ?? "").trim().toLowerCase();
-      if (!key) return "";
-      return String(companyNameByUserId.get(key) ?? "")
-        .split("||")
-        .map((part) => part.trim())
-        .filter((part) => part && part !== "—")
-        .join(", ");
+    const sponsorPortalId = async (
+      rawId: string | null | undefined,
+    ): Promise<string> => {
+      const raw = String(rawId ?? "").trim();
+      if (!raw) return "";
+      return (await resolvePortalUserIdForContactMemberId(raw)) || raw;
     };
-    const onboardingSponsorCompanyName =
+    const onboardingPortalUserId =
       onboardingSponsorUserId.toLowerCase() !== user.id.toLowerCase()
-        ? companyLabelForUser(onboardingSponsorUserId)
+        ? await sponsorPortalId(onboardingSponsorUserId)
         : "";
-    const referringSponsorCompanyName = companyLabelForUser(
+    const referringPortalUserId = await sponsorPortalId(
       referringSponsor?.sponsorUserId,
     );
-    const leadSponsorCompanyName = companyLabelForUser(leadSponsor.userId);
+    const leadPortalUserId = await sponsorPortalId(leadSponsor.userId);
+    const companyNameByUserId = await resolveUserCompanyNamesByIds([
+      onboardingSponsorUserId,
+      onboardingPortalUserId,
+      referringSponsor?.sponsorUserId,
+      referringPortalUserId,
+      leadSponsor.userId,
+      leadPortalUserId,
+    ]);
+    const companyLabelForIds = (
+      ...ids: Array<string | null | undefined>
+    ): string => {
+      for (const raw of ids) {
+        const key = String(raw ?? "").trim().toLowerCase();
+        if (!key) continue;
+        const label = String(companyNameByUserId.get(key) ?? "")
+          .split("||")
+          .map((part) => part.trim())
+          .filter((part) => part && part !== "—")
+          .join(", ");
+        if (label) return label;
+      }
+      return "";
+    };
+    const onboardingSponsorCompanyName = onboardingPortalUserId
+      ? companyLabelForIds(onboardingPortalUserId, onboardingSponsorUserId)
+      : "";
+    const referringSponsorCompanyName = companyLabelForIds(
+      referringPortalUserId,
+      referringSponsor?.sponsorUserId,
+    );
+    const leadSponsorCompanyName = companyLabelForIds(
+      leadPortalUserId,
+      leadSponsor.userId,
+    );
     if (process.env.DEAL_MEMBERS_COMMIT_DEBUG === "1") {
       console.log(
         `[deal members commit debug] dealId=${dealId} rows=${members.length}`,
@@ -690,6 +760,15 @@ export async function getDealMemberEsignStatus(
         completedAt: send.completedAt,
         signatureRequestId: send.signatureRequestId,
         signatureId: send.signatureId,
+        ...(send.fullSignedRelativePath?.trim()
+          ? { fullSignedRelativePath: send.fullSignedRelativePath.trim() }
+          : {}),
+        ...(send.sponsorSignedRelativePath?.trim()
+          ? { sponsorSignedRelativePath: send.sponsorSignedRelativePath.trim() }
+          : {}),
+        ...(send.sponsorSignedByName?.trim()
+          ? { sponsorSignedByName: send.sponsorSignedByName.trim() }
+          : {}),
         documents: send.documents,
       })),
       dropbox: result.dropbox,
@@ -822,6 +901,81 @@ export async function putDealMember(
 }
 
 /**
+ * POST /deals/:dealId/members/:rowId/removal
+ * Removes one investment, or the investor's association with it.
+ * Writes the audit row in the same transaction. Does not delete the user account.
+ */
+export async function postDealInvestorRemoval(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const dealId =
+    typeof req.params.dealId === "string"
+      ? req.params.dealId
+      : req.params.dealId?.[0];
+  const rowId =
+    typeof req.params.rowId === "string"
+      ? req.params.rowId
+      : req.params.rowId?.[0];
+  if (!dealId?.trim() || !rowId?.trim()) {
+    res.status(400).json({ message: "Missing deal id or row id" });
+    return;
+  }
+  const parsed = parseRemovalRequest(req.body);
+  if (!parsed.ok) {
+    res.status(parsed.status).json({ message: parsed.message });
+    return;
+  }
+  try {
+    const scope = await resolveDealViewerScope(
+      user.id,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!(await assertDealIdInViewerScope(dealId, scope))) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    const result = await removeInvestorOrInvestment({
+      dealId,
+      rowId,
+      actorUserId: user.id,
+      action: parsed.action,
+      reason: parsed.reason,
+      confirmed: parsed.confirmed,
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ message: result.message });
+      return;
+    }
+    logSocDestructiveDealAction({
+      action:
+        parsed.action === "remove_investment"
+          ? "deal.investor_investment_remove"
+          : "deal.investor_association_remove",
+      actorUserId: user.id,
+      dealId: dealId.trim(),
+      resourceId: rowId.trim(),
+    });
+    res.status(200).json({
+      message:
+        parsed.action === "remove_investment"
+          ? "Investment removed"
+          : "Investor removed",
+      action: parsed.action,
+    });
+  } catch (err) {
+    console.error("postDealInvestorRemoval:", err);
+    res.status(500).json({ message: "Could not remove this record." });
+  }
+}
+
+/**
  * DELETE /deals/:dealId/members/:rowId — remove member from roster (investment id or deal_member id).
  */
 export async function deleteDealMember(
@@ -855,7 +1009,14 @@ export async function deleteDealMember(
       res.status(404).json({ message: "Deal not found" });
       return;
     }
-    const result = await deleteDealMemberRosterEntry(dealId, rowId, user.id);
+    const scopeRaw = req.query.scope;
+    const scopeValue = Array.isArray(scopeRaw) ? scopeRaw[0] : scopeRaw;
+    const result = await deleteDealMemberRosterEntry(
+      dealId,
+      rowId,
+      user.id,
+      scopeValue === "team_member" ? "team_member" : "member",
+    );
     if (!result.ok) {
       res.status(404).json({ message: result.message });
       return;

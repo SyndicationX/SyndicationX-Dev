@@ -7,6 +7,7 @@ import {
 } from "@/common/components/entity-avatar/EntityAvatarNameCell"
 import { ActiveArchivedTabs } from "@/common/components/active-archived-tabs/ActiveArchivedTabs"
 import { TabsScrollStrip } from "@/common/components/tabs-scroll-strip/TabsScrollStrip"
+import { ConfirmDeleteModal } from "@/common/components/ConfirmDeleteModal"
 import { toast } from "@/common/components/Toast"
 import {
   DataTable,
@@ -68,18 +69,18 @@ import {
   mergeInvestorProfileRowsWithLinkedCounts,
 } from "./profileInvestmentCounts"
 import {
-  buildBankAccountTableRows,
+  bankAccountDetailRows,
   InvestingBankAccountsTab,
+  savedProfileBankTableRows,
+  type BankAccountTableRow,
 } from "./InvestingBankAccountsTab"
-import { ProfileBankSelect } from "./ProfileBankSelect"
+import { BankAccountFormModal } from "./BankAccountFormModal"
 import { InvestingProfilesRowActions } from "./InvestingProfilesRowActions"
 import { InvestingProfilesTableToolbar } from "./InvestingProfilesTableToolbar"
 import {
-  attachStripeConnectBankToProfile,
-  fetchInvestorSharedConnectBanks,
+  deleteInvestorSharedConnectBank,
   fetchStripeConnectRecipientStatus,
   startStripeConnectRecipientOnboarding,
-  type InvestorSharedConnectBank,
   type StripeConnectRecipientStatus,
 } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
 import "@/modules/Syndication/usermanagement/user_management.css"
@@ -111,20 +112,46 @@ function formatProfileListDate(iso: string): string {
 
 /** Column widths for fixed-layout profile tables (keep name column readable). */
 const PROFILES_TABLE_COL_WIDTH = {
-  profileName: "16rem",
-  profileType: "17rem",
-  addedBy: "9rem",
+  sno: "3.25rem",
+  profileName: "14rem",
+  profileType: "9.5rem",
+  addedBy: "8rem",
   investments: "6.5rem",
-  bankAccount: "12rem",
-  dateCreated: "8.5rem",
+  bankAccount: "11rem",
+  dateCreated: "8rem",
   beneficiaryName: "12rem",
   relationship: "8rem",
-  email: "11rem",
-  phone: "8rem",
-  address: "14rem",
-  addressName: "11rem",
-  actions: "5rem",
+  email: "12rem",
+  phone: "8.5rem",
+  address: "16rem",
+  addressName: "12rem",
+  actions: "4.75rem",
 } as const
+
+function profileHasSavedBank(row: InvestorProfileListRow): boolean {
+  const bank = row.distributionBank
+  if (!bank) return false
+  const routing = bank.achRoutingNumber.replace(/\D/g, "")
+  const account = bank.achAccountNumber.replace(/\D/g, "")
+  const name = bank.achBankName.trim()
+  return Boolean((name && (routing || account)) || (routing && account))
+}
+
+function SavedProfileBankCell({ row }: { row: InvestorProfileListRow }) {
+  const bank = row.distributionBank
+  if (!bank || !profileHasSavedBank(row)) {
+    return <span className="investing_table_muted">Not added</span>
+  }
+  const last4 = bank.achAccountNumber.replace(/\D/g, "").slice(-4)
+  return (
+    <span className="investing_bank_inline">
+      <span className="investing_bank_inline_name">
+        {bank.achBankName.trim() || "Bank account"}
+      </span>
+      {last4 ? <span className="investing_bank_inline_meta">···· {last4}</span> : null}
+    </span>
+  )
+}
 
 function formatProfileBankCell(
   status: StripeConnectRecipientStatus | undefined,
@@ -203,9 +230,6 @@ export default function InvestingProfilesPage() {
   const location = useLocation()
   const hideAddProfileDraftRow = location.pathname === "/investing/profiles/add"
   const [activeTab, setActiveTab] = useState<ProfilesTab>("my-profiles")
-  const [bankSetupBusy, setBankSetupBusy] = useState(false)
-  const [banksLoading, setBanksLoading] = useState(false)
-  const [assignBusyId, setAssignBusyId] = useState<string | null>(null)
   const stripeReturnKeyRef = useRef<string | null>(null)
   const [addBenOpen, setAddBenOpen] = useState(false)
   const [addAddressOpen, setAddAddressOpen] = useState(false)
@@ -238,63 +262,14 @@ export default function InvestingProfilesPage() {
   const [editBeneficiary, setEditBeneficiary] = useState<BeneficiaryListRow | null>(null)
   const [editingAddress, setEditingAddress] = useState<SavedAddress | null>(null)
   const [addProfileDraftTick, setAddProfileDraftTick] = useState(0)
-  const [connectByProfileId, setConnectByProfileId] = useState<
-    Record<string, StripeConnectRecipientStatus>
-  >({})
-  const [sharedBanks, setSharedBanks] = useState<InvestorSharedConnectBank[]>(
-    [],
+  const [bankViewRow, setBankViewRow] = useState<BankAccountTableRow | null>(
+    null,
   )
-
-  const loadSharedBanks = useCallback(async () => {
-    setBanksLoading(true)
-    try {
-      const banks = await fetchInvestorSharedConnectBanks()
-      setSharedBanks(banks)
-      return banks
-    } catch (err) {
-      console.error("loadSharedBanks:", err)
-      setSharedBanks([])
-      toast.error(
-        "Could not load bank accounts",
-        err instanceof Error ? err.message : "Please refresh and try again.",
-      )
-      return [] as InvestorSharedConnectBank[]
-    } finally {
-      setBanksLoading(false)
-    }
-  }, [])
-
-  const loadConnectStatuses = useCallback(async (rows: InvestorProfileListRow[]) => {
-    const ids = rows
-      .filter(
-        (r) =>
-          r.id !== ADD_PROFILE_DRAFT_ROW_ID &&
-          !isInvestorProfileListRowIncomplete(r) &&
-          !r.archived,
-      )
-      .map((r) => r.id)
-    if (ids.length === 0) {
-      setConnectByProfileId({})
-      await loadSharedBanks()
-      return
-    }
-    const entries = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          const status = await fetchStripeConnectRecipientStatus(id)
-          return [id, status] as const
-        } catch {
-          return null
-        }
-      }),
-    )
-    const next: Record<string, StripeConnectRecipientStatus> = {}
-    for (const entry of entries) {
-      if (entry) next[entry[0]] = entry[1]
-    }
-    setConnectByProfileId(next)
-    await loadSharedBanks()
-  }, [loadSharedBanks])
+  const [bankDeleteRow, setBankDeleteRow] = useState<BankAccountTableRow | null>(
+    null,
+  )
+  const [bankDeleteBusy, setBankDeleteBusy] = useState(false)
+  const [bankFormProfileId, setBankFormProfileId] = useState<string | null>(null)
 
   const reloadProfileBook = useCallback(async () => {
     try {
@@ -302,101 +277,21 @@ export default function InvestingProfilesPage() {
       setProfiles(book.profiles)
       setBeneficiaries(book.beneficiaries)
       setSavedAddresses(book.addresses)
-      await loadConnectStatuses(book.profiles)
     } catch {
       // keep prior rows
     }
-  }, [loadConnectStatuses])
+  }, [])
 
-  const resolveBankHostProfileId = useCallback(
-    (opts?: { preferWithoutBank?: boolean; accountId?: string }) => {
-      const active = profiles.filter(
-        (r) =>
-          r.id !== ADD_PROFILE_DRAFT_ROW_ID &&
-          !isInvestorProfileListRowIncomplete(r) &&
-          !r.archived,
-      )
-      if (active.length === 0) return null
-      if (opts?.accountId) {
-        const linked = active.find((r) =>
-          sharedBanks.some(
-            (b) =>
-              b.accountId === opts.accountId && b.profileIds.includes(r.id),
-          ),
-        )
-        if (linked) return linked.id
-        const fromBank = sharedBanks.find((b) => b.accountId === opts.accountId)
-        if (fromBank?.profileIds[0]) return fromBank.profileIds[0]
-      }
-      if (opts?.preferWithoutBank) {
-        const without = active.find((r) => !connectByProfileId[r.id]?.accountId)
-        if (without) return without.id
-      }
-      return active[0].id
-    },
-    [profiles, sharedBanks, connectByProfileId],
-  )
-
-  const startPayoutOnboarding = useCallback(
-    async (profileId: string, opts?: { forceNew?: boolean }) => {
-      setBankSetupBusy(true)
-      try {
-        const link = await startStripeConnectRecipientOnboarding(profileId, opts)
-        window.location.assign(link.url)
-      } catch (err) {
-        setBankSetupBusy(false)
-        toast.error(
-          "Could not start bank setup",
-          err instanceof Error ? err.message : "Please try again.",
-        )
-      }
+  const editBankAccount = useCallback(
+    (row: BankAccountTableRow, profileId?: string) => {
+      const target =
+        (profileId && row.profileIds.includes(profileId)
+          ? profileId
+          : row.profileIds[0]) || ""
+      if (!target) return
+      setBankFormProfileId(target)
     },
     [],
-  )
-
-  const startBankSetupFromTab = useCallback(
-    async (opts?: { forceNew?: boolean; accountId?: string }) => {
-      const profileId = resolveBankHostProfileId({
-        preferWithoutBank: !opts?.forceNew && !opts?.accountId,
-        accountId: opts?.accountId,
-      })
-      if (!profileId) {
-        toast.error(
-          "Add a profile first",
-          "Create an investor profile before adding a bank account.",
-        )
-        return
-      }
-      await startPayoutOnboarding(profileId, { forceNew: opts?.forceNew })
-    },
-    [resolveBankHostProfileId, startPayoutOnboarding],
-  )
-
-  const assignBankToProfile = useCallback(
-    async (profileId: string, value: string) => {
-      const next = value.trim()
-      if (!next) return
-      const current = connectByProfileId[profileId]?.accountId?.trim() || ""
-      if (current === next) return
-      setAssignBusyId(profileId)
-      try {
-        const status = await attachStripeConnectBankToProfile(profileId, next)
-        setConnectByProfileId((prev) => ({ ...prev, [profileId]: status }))
-        await loadSharedBanks()
-        toast.success(
-          "Bank selected",
-          "This profile will use the selected bank for ACH distributions.",
-        )
-      } catch (err) {
-        toast.error(
-          "Could not select bank",
-          err instanceof Error ? err.message : "Please try again.",
-        )
-      } finally {
-        setAssignBusyId(null)
-      }
-    },
-    [connectByProfileId, loadSharedBanks],
   )
 
   useEffect(() => {
@@ -423,7 +318,6 @@ export default function InvestingProfilesPage() {
       } else {
         try {
           const status = await fetchStripeConnectRecipientStatus(profileId)
-          setConnectByProfileId((prev) => ({ ...prev, [profileId]: status }))
           const bankLabel = formatProfileBankCell(status)
           if (status.payoutsEnabled) {
             const sharedCount = status.sharedToProfileCount ?? 0
@@ -465,11 +359,6 @@ export default function InvestingProfilesPage() {
   }, [location.search, navigate, reloadProfileBook])
 
   useEffect(() => {
-    if (activeTab !== "bank-accounts") return
-    void loadSharedBanks()
-  }, [activeTab, loadSharedBanks])
-
-  useEffect(() => {
     let cancelled = false
     setLoadError(null)
     setBookLoading(true)
@@ -488,7 +377,6 @@ export default function InvestingProfilesPage() {
         setInvestmentCountByProfileId(byProfile)
         setBeneficiaries(book.beneficiaries)
         setSavedAddresses(book.addresses)
-        void loadConnectStatuses(book.profiles)
       } catch (e) {
         if (!cancelled) {
           setLoadError(
@@ -504,7 +392,7 @@ export default function InvestingProfilesPage() {
     return () => {
       cancelled = true
     }
-  }, [loadConnectStatuses])
+  }, [])
 
   useEffect(() => {
     function onDealsListRefetch() {
@@ -637,19 +525,37 @@ export default function InvestingProfilesPage() {
   }, [])
 
   const deleteProfile = useCallback(async (row: InvestorProfileListRow) => {
-    if (row.id === ADD_PROFILE_DRAFT_ROW_ID) {
-      clearAddProfileDraft()
-      return
+    const session = loadAddProfileDraft()
+    const sessionBackendId = session?.backendProfileId?.trim() || ""
+    const isSessionRow = row.id === ADD_PROFILE_DRAFT_ROW_ID
+    const apiId = isSessionRow ? sessionBackendId : row.id.trim()
+    const clearSession =
+      isSessionRow ||
+      (sessionBackendId !== "" && sessionBackendId === row.id)
+    const dropLocal = () => {
+      if (apiId && apiId !== ADD_PROFILE_DRAFT_ROW_ID) {
+        setProfiles((prev) => prev.filter((p) => p.id !== apiId))
+        setViewModal((cur) =>
+          cur?.kind === "profile" && cur.row.id === apiId ? null : cur,
+        )
+      }
+      if (clearSession) clearAddProfileDraft()
     }
     try {
-      await deleteInvestorProfile(row.id)
-      setProfiles((prev) => prev.filter((p) => p.id !== row.id))
-      setViewModal((cur) =>
-        cur?.kind === "profile" && cur.row.id === row.id ? null : cur,
-      )
+      if (apiId && apiId !== ADD_PROFILE_DRAFT_ROW_ID) {
+        try {
+          await deleteInvestorProfile(apiId)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message.toLowerCase() : ""
+          const alreadyGone = msg.includes("profile not found")
+          const staleSessionId = isSessionRow && msg.includes("invalid id")
+          if (!alreadyGone && !staleSessionId) throw e
+        }
+      }
+      dropLocal()
     } catch (e) {
       toast.error(
-        "Could not delete profile",
+        "Could not remove profile",
         e instanceof Error ? e.message : "Please try again.",
       )
       throw e
@@ -916,49 +822,12 @@ export default function InvestingProfilesPage() {
 
   const profileViewSections = useMemo(() => {
     if (!viewModal || viewModal.kind !== "profile") return null
-    const sections = buildInvestorProfileViewSections({
+    return buildInvestorProfileViewSections({
       row: viewModal.row,
       savedAddresses,
       savedBeneficiaries: beneficiaries,
     })
-    const connect = connectByProfileId[viewModal.row.id]
-    const bank = connect?.bankAccount
-    const achRows = [
-      {
-        label: "Status",
-        value: connect
-          ? connect.payoutsEnabled
-            ? "Ready for ACH"
-            : connect.accountId
-              ? "Setup pending"
-              : "Not added"
-          : "—",
-      },
-      {
-        label: "Bank",
-        value: bank?.bankName?.trim() || "—",
-      },
-      {
-        label: "Account",
-        value: bank?.last4 ? `···· ${bank.last4}` : "—",
-      },
-      {
-        label: "Routing",
-        value: bank?.routingNumber?.trim() || "—",
-      },
-      {
-        label: "Name on account",
-        value: bank?.accountHolderName?.trim() || "—",
-      },
-    ]
-    return [
-      ...sections,
-      {
-        heading: "ACH bank account",
-        rows: achRows,
-      },
-    ]
-  }, [viewModal, savedAddresses, beneficiaries, connectByProfileId])
+  }, [viewModal, savedAddresses, beneficiaries])
 
   const viewModalConfig = useMemo(() => {
     if (!viewModal) return null
@@ -1023,6 +892,19 @@ export default function InvestingProfilesPage() {
   const profileColumns: DataTableColumn<InvestorProfileListRow>[] = useMemo(
     () => [
       {
+        id: "sno",
+        header: "S.No",
+        align: "center",
+        colWidth: PROFILES_TABLE_COL_WIDTH.sno,
+        thClassName: "um_th_serial",
+        tdClassName: "um_td_serial",
+        sortValue: (r) => displayProfiles.findIndex((row) => row.id === r.id),
+        cell: (r) => {
+          const index = displayProfiles.findIndex((row) => row.id === r.id)
+          return index >= 0 ? index + 1 : "—"
+        },
+      },
+      {
         id: "profileName",
         header: "Profile name",
         colWidth: PROFILES_TABLE_COL_WIDTH.profileName,
@@ -1044,14 +926,22 @@ export default function InvestingProfilesPage() {
         thClassName: "investing_profiles_col_profile_type",
         tdClassName: "investing_profiles_td_profile_type",
         sortValue: (r) => bookProfileTypeDisplayLabel(r).toLowerCase(),
-        cell: (r) => bookProfileTypeDisplayLabel(r),
+        cell: (r) => (
+          <span className="investing_table_ellipsis" title={bookProfileTypeDisplayLabel(r)}>
+            {bookProfileTypeDisplayLabel(r)}
+          </span>
+        ),
       },
       {
         id: "addedBy",
         header: "Added by",
         colWidth: PROFILES_TABLE_COL_WIDTH.addedBy,
         sortValue: (r) => (r.addedBy ?? "").toLowerCase(),
-        cell: (r) => r.addedBy?.trim() || "—",
+        cell: (r) => (
+          <span className="investing_table_ellipsis" title={r.addedBy?.trim() || undefined}>
+            {r.addedBy?.trim() || "—"}
+          </span>
+        ),
       },
       {
         id: "investments",
@@ -1065,42 +955,20 @@ export default function InvestingProfilesPage() {
       },
       {
         id: "bankAccount",
-        header: "Bank account",
-        colWidth: "14rem",
+        header: "Bank",
+        colWidth: PROFILES_TABLE_COL_WIDTH.bankAccount,
         thClassName: "investing_profiles_col_bank",
         tdClassName: "investing_profiles_td_bank",
-        sortValue: (r) =>
-          formatProfileBankCell(connectByProfileId[r.id]).toLowerCase(),
+        sortValue: (r) => (r.distributionBank?.achBankName ?? "").toLowerCase(),
         cell: (r) => {
           if (
             isInvestorProfileListRowIncomplete(r) ||
             r.id === ADD_PROFILE_DRAFT_ROW_ID ||
             r.archived
           ) {
-            return "—"
+            return <span className="investing_table_muted">—</span>
           }
-          const selected =
-            connectByProfileId[r.id]?.accountId?.trim() || ""
-          const readyBanks = sharedBanks.filter((b) => b.accountId)
-          const busy =
-            bankSetupBusy || assignBusyId === r.id || banksLoading
-          return (
-            <ProfileBankSelect
-              id={`profile-bank-${r.id}`}
-              ariaLabel={`Bank account for ${r.profileName || "profile"}`}
-              value={selected}
-              banks={readyBanks}
-              disabled={busy}
-              onChange={(accountId) => {
-                void assignBankToProfile(r.id, accountId)
-              }}
-              onAddBank={() => {
-                void startPayoutOnboarding(r.id, {
-                  forceNew: readyBanks.length > 0,
-                })
-              }}
-            />
-          )
+          return <SavedProfileBankCell row={r} />
         },
       },
       {
@@ -1156,36 +1024,60 @@ export default function InvestingProfilesPage() {
       },
     ],
     [
+      displayProfiles,
       setProfileArchived,
       deleteProfile,
       navigate,
       openProfileView,
       profileResumeHref,
-      connectByProfileId,
-      sharedBanks,
-      bankSetupBusy,
-      banksLoading,
-      assignBusyId,
-      assignBankToProfile,
-      startPayoutOnboarding,
     ],
   )
 
-  const profileNameById = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const row of profiles) {
-      map.set(row.id, row.profileName?.trim() || "Profile")
-    }
-    return map
-  }, [profiles])
-
   const bankAccountRows = useMemo(
-    () => buildBankAccountTableRows(sharedBanks, profileNameById),
-    [sharedBanks, profileNameById],
+    () => savedProfileBankTableRows(profiles),
+    [profiles],
   )
+
+  const confirmDeleteBank = useCallback(async () => {
+    if (!bankDeleteRow) return
+    setBankDeleteBusy(true)
+    try {
+      await deleteInvestorSharedConnectBank(bankDeleteRow.accountId)
+      toast.success(
+        "Bank account deleted",
+        "It was removed from the active list. The audit history keeps the record without the full account number.",
+      )
+      const removedId = bankDeleteRow.accountId
+      setBankDeleteRow(null)
+      setBankViewRow((current) =>
+        current?.accountId === removedId ? null : current,
+      )
+      await reloadProfileBook()
+    } catch (err) {
+      toast.error(
+        "Could not delete bank account",
+        err instanceof Error ? err.message : "Please try again.",
+      )
+    } finally {
+      setBankDeleteBusy(false)
+    }
+  }, [bankDeleteRow, reloadProfileBook])
 
   const beneficiaryColumns: DataTableColumn<BeneficiaryListRow>[] = useMemo(
     () => [
+      {
+        id: "sno",
+        header: "S.No",
+        align: "center",
+        colWidth: PROFILES_TABLE_COL_WIDTH.sno,
+        thClassName: "um_th_serial",
+        tdClassName: "um_td_serial",
+        sortValue: (r) => filteredBeneficiaries.findIndex((row) => row.id === r.id),
+        cell: (r) => {
+          const index = filteredBeneficiaries.findIndex((row) => row.id === r.id)
+          return index >= 0 ? index + 1 : "—"
+        },
+      },
       {
         id: "fullName",
         header: "Name",
@@ -1227,7 +1119,14 @@ export default function InvestingProfilesPage() {
         header: "Address",
         colWidth: PROFILES_TABLE_COL_WIDTH.address,
         sortValue: (r) => (r.addressQuery ?? "").toLowerCase(),
-        cell: (r) => r.addressQuery?.trim() || "—",
+        cell: (r) => {
+          const value = r.addressQuery?.trim() || "—"
+          return (
+            <span className="investing_table_ellipsis" title={value === "—" ? undefined : value}>
+              {value}
+            </span>
+          )
+        },
       },
       {
         id: "actions",
@@ -1252,11 +1151,24 @@ export default function InvestingProfilesPage() {
         ),
       },
     ],
-    [setBeneficiaryArchived],
+    [filteredBeneficiaries, setBeneficiaryArchived],
   )
 
   const addressColumns: DataTableColumn<SavedAddress>[] = useMemo(
     () => [
+      {
+        id: "sno",
+        header: "S.No",
+        align: "center",
+        colWidth: PROFILES_TABLE_COL_WIDTH.sno,
+        thClassName: "um_th_serial",
+        tdClassName: "um_td_serial",
+        sortValue: (r) => filteredAddresses.findIndex((row) => row.id === r.id),
+        cell: (r) => {
+          const index = filteredAddresses.findIndex((row) => row.id === r.id)
+          return index >= 0 ? index + 1 : "—"
+        },
+      },
       {
         id: "name",
         header: "Name / company",
@@ -1281,15 +1193,16 @@ export default function InvestingProfilesPage() {
             COUNTRY_OPTIONS.find((c) => c.value === r.country)?.label ?? r.country
           const stateLabel =
             US_STATE_OPTIONS.find((s) => s.value === r.state)?.label ?? r.state
+          const line = [
+            [r.street1, r.street2].filter(Boolean).join(", "),
+            [r.city, stateLabel, r.zip].filter(Boolean).join(", "),
+            countryLabel,
+          ]
+            .filter(Boolean)
+            .join(" · ")
           return (
-            <span className="investing_profiles_addr_multiline">
-              {[
-                [r.street1, r.street2].filter(Boolean).join(", "),
-                [r.city, stateLabel, r.zip].filter(Boolean).join(", "),
-                countryLabel,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+            <span className="investing_table_ellipsis" title={line || undefined}>
+              {line || "—"}
             </span>
           )
         },
@@ -1328,7 +1241,7 @@ export default function InvestingProfilesPage() {
         ),
       },
     ],
-    [setAddressArchived],
+    [filteredAddresses, setAddressArchived],
   )
 
   return (
@@ -1390,10 +1303,7 @@ export default function InvestingProfilesPage() {
               aria-selected={activeTab === "bank-accounts"}
               aria-controls="profiles-panel-bank-accounts"
               className={`um_members_tab deals_tabs_tab um_segmented_tab${activeTab === "bank-accounts" ? " um_members_tab_active" : ""}`}
-              onClick={() => {
-                setActiveTab("bank-accounts")
-                void loadSharedBanks()
-              }}
+              onClick={() => setActiveTab("bank-accounts")}
             >
               <Landmark
                 className="deals_tabs_icon um_segmented_tab_icon"
@@ -1513,16 +1423,24 @@ export default function InvestingProfilesPage() {
       {activeTab === "bank-accounts" ? (
         <InvestingBankAccountsTab
           rows={bankAccountRows}
-          loading={bookLoading || banksLoading}
-          setupBusy={bankSetupBusy}
-          onAddBank={() =>
-            void startBankSetupFromTab({
-              forceNew: sharedBanks.length > 0,
-            })
-          }
-          onUpdateBank={(row) =>
-            void startBankSetupFromTab({ accountId: row.accountId })
-          }
+          loading={bookLoading}
+          setupBusy={bankDeleteBusy}
+          onAddBank={() => {
+            const active = profiles.filter((row) => !row.archived && !row.isDraft)
+            const covered = new Set(bankAccountRows.flatMap((row) => row.profileIds))
+            const target = active.find((row) => !covered.has(row.id)) ?? active[0]
+            if (!target) {
+              toast.error(
+                "Add a profile first",
+                "Create an investor profile before adding a bank account.",
+              )
+              return
+            }
+            setBankFormProfileId(target.id)
+          }}
+          onViewBank={setBankViewRow}
+          onEditBank={(row) => editBankAccount(row)}
+          onDeleteBank={setBankDeleteRow}
         />
       ) : null}
 
@@ -1685,6 +1603,42 @@ export default function InvestingProfilesPage() {
           editLabel="Edit profile"
         />
       ) : null}
+      {bankViewRow ? (
+        <InvestingEntityViewModal
+          open
+          onClose={() => setBankViewRow(null)}
+          title="Bank account details"
+          description="Bank account details on file. This does not mean the account has been verified or that ACH processing is enabled."
+          rows={bankAccountDetailRows(bankViewRow)}
+          onEdit={() => {
+            const row = bankViewRow
+            setBankViewRow(null)
+            editBankAccount(row)
+          }}
+          editLabel="Edit"
+        />
+      ) : null}
+      <BankAccountFormModal
+        open={bankFormProfileId != null}
+        profile={profiles.find((row) => row.id === bankFormProfileId) ?? null}
+        onClose={() => setBankFormProfileId(null)}
+        onSaved={reloadProfileBook}
+      />
+      <ConfirmDeleteModal
+        open={bankDeleteRow != null}
+        title="Delete bank account"
+        message={
+          bankDeleteRow
+            ? "Delete this bank account? It will leave the active list. The audit history keeps the record without the full account number."
+            : ""
+        }
+        itemLabel={bankDeleteRow?.bankLabel}
+        busy={bankDeleteBusy}
+        onCancel={() => {
+          if (!bankDeleteBusy) setBankDeleteRow(null)
+        }}
+        onConfirm={() => void confirmDeleteBank()}
+      />
       <ExportInvestorProfilesModal
         open={exportModalOpen}
         onClose={() => setExportModalOpen(false)}

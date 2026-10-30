@@ -35,7 +35,7 @@ function mergeDealRecord(
     viewerEmailNorm,
   )
   if (progress) record.investNowDraftProgress = progress
-  if (dealHasInvestNowDraftForViewer(payload.investors, viewerEmailNorm)) {
+  if (progress && progress.percent < 100 && dealHasInvestNowDraftForViewer(payload.investors, viewerEmailNorm)) {
     const draftRow = firstInvestNowDraftRowForViewer(
       payload.investors,
       viewerEmailNorm,

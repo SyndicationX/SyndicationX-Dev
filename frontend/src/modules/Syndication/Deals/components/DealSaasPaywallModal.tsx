@@ -92,11 +92,11 @@ export function DealSaasPaywallModal({
     ? `This deal is not available right now. Contact your sponsor for access to ${dealLabel}.`
     : !canPayForDeal
     ? isPlanUpgrade
-      ? `The lead sponsor must upgrade ${dealLabel} to ${suggestedLabel} after the deal size increased.`
+      ? `The lead sponsor must pay the upgrade difference for ${dealLabel}. This deal stays closed until that payment is made.`
       : `The lead sponsor must pay monthly SaaS for ${dealLabel} before this deal can be opened.`
     : lockedDeal.message?.trim() ||
       (isPlanUpgrade
-        ? `The raise for ${dealLabel} is now above the ${currentLabel} plan. SyndicationX selected ${suggestedLabel}. Upgrade so billing matches this deal’s size.`
+        ? `Pay the upgrade difference for ${dealLabel}. ${currentLabel} was already paid. ${suggestedLabel} is the package this deal needs now. The deal stays closed until that difference is paid.`
         : reason === "expired"
         ? `The billing period for ${dealLabel} has ended. Pay monthly SaaS (MRR) to continue.`
         : reason === "past_due"
@@ -108,11 +108,27 @@ export function DealSaasPaywallModal({
   const payLabel = "Pay"
 
   function goToFirstPayment() {
-    navigate(dealSaasBillingSettingsPath(lockedDeal.id, lockedDeal.dealName))
+    navigate(
+      dealSaasBillingSettingsPath(lockedDeal.id, lockedDeal.dealName, {
+        billing: isPlanUpgrade ? "upgrade" : "pay",
+      }),
+    )
+  }
+
+  function payDifferenceFromDeal() {
+    navigate(
+      dealSaasBillingSettingsPath(lockedDeal.id, lockedDeal.dealName, {
+        billing: "difference",
+      }),
+    )
   }
 
   async function handlePay() {
     setError("")
+    if (isPlanUpgrade) {
+      payDifferenceFromDeal()
+      return
+    }
     if (!needsExistingInvoicePay) {
       goToFirstPayment()
       return
@@ -215,10 +231,19 @@ export function DealSaasPaywallModal({
                 type="button"
                 className="deal_stage_modal_btn deal_stage_modal_btn--confirm"
                 disabled={busy}
-                onClick={goToFirstPayment}
+                onClick={payDifferenceFromDeal}
               >
-                <BadgeDollarSign size={16} strokeWidth={2} aria-hidden />
-                Upgrade plan
+                {busy ? (
+                  <Loader2
+                    size={16}
+                    strokeWidth={2}
+                    className="deals_create_btn_spin"
+                    aria-hidden
+                  />
+                ) : (
+                  <BadgeDollarSign size={16} strokeWidth={2} aria-hidden />
+                )}
+                Pay difference
               </button>
             ) : (
               <>

@@ -516,7 +516,9 @@ export function DealOfferingPreviewInner({
             <div
               className={[
                 "deal_offer_pf_titlebar",
-                investNowDraftProgress && onInvestNowPhaseClick
+                investNowDraftProgress &&
+                investNowDraftProgress.percent < 100 &&
+                onInvestNowPhaseClick
                   ? " deal_offer_pf_titlebar--with_onboarding"
                   : "",
               ]
@@ -529,7 +531,9 @@ export function DealOfferingPreviewInner({
                   <p className="deal_offer_pf_property_line">{dealLocationLine}</p>
                 ) : null}
               </div>
-              {investNowDraftProgress && onInvestNowPhaseClick ? (
+              {investNowDraftProgress &&
+              investNowDraftProgress.percent < 100 &&
+              onInvestNowPhaseClick ? (
                 <div
                   className="deal_offer_pf_titlebar_onboarding"
                   aria-label="Onboarding progress"

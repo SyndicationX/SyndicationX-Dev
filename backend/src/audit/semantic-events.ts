@@ -186,6 +186,8 @@ export function deriveSemanticAuditEvent(pathOnly: string, method: string): stri
     if (rest[0] === "members" && rest.length === 1 && m === "GET") return "deal.members_list";
     if (rest[0] === "members" && rest[1] === "export-notify" && m === "POST")
       return "deal.members_export_notify";
+    if (rest[0] === "members" && rest[2] === "removal" && m === "POST")
+      return "deal.investor_removal";
     if (rest[0] === "members" && rest.length === 2 && m === "DELETE")
       return "deal.member_remove";
     if (rest[0] === "members" && rest[1] === "send-invitation-email" && m === "POST")

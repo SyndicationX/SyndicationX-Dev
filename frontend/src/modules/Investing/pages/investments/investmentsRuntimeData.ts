@@ -82,6 +82,10 @@ function mergeRowsSameDeal(group: InvestmentListRow[]): InvestmentListRow {
     distributedAmount: distSum,
     currentValuation: val,
     latestInvestedAtIso: latestInvestmentIso(group),
+    investorArchived: group.some((row) => Boolean(row.investorArchived)),
+    investorCanDeleteDeal:
+      group.some((row) => row.investorCanDeleteDeal === true) &&
+      group.every((row) => row.investorCanDeleteDeal !== false),
   }
 }
 
@@ -115,28 +119,20 @@ function mergeInvestmentLists(
       /** Do not surface orphan local rows — only merge when the server already lists this deal. */
       continue
     }
-    // Local / LP flow row wins for display fields; amounts stay on the local row
-    const investedAmount = l.investedAmount
+    // Server commitment is the source of truth after archive or delete.
     byKey.set(k, {
       ...existing,
       id: l.id,
       dealId:
         (l.dealId ?? existing.dealId ?? "").trim() ||
         (l.id ?? existing.id ?? "").trim(),
-      investedAmount,
-      onboardingBucket:
-        l.onboardingBucket ??
-        (investedAmount > 0
-          ? "in_progress"
-          : existing.onboardingBucket),
+      onboardingBucket: existing.onboardingBucket ?? l.onboardingBucket,
       investmentName: l.investmentName,
       offeringName: l.offeringName,
-      investmentProfile: l.investmentProfile,
-      commitmentProfileId: l.commitmentProfileId ?? existing.commitmentProfileId,
-      userInvestorProfileId:
-        l.userInvestorProfileId ?? existing.userInvestorProfileId,
-      userInvestorProfileName:
-        l.userInvestorProfileName ?? existing.userInvestorProfileName,
+      investmentProfile: existing.investmentProfile,
+      commitmentProfileId: existing.commitmentProfileId,
+      userInvestorProfileId: existing.userInvestorProfileId,
+      userInvestorProfileName: existing.userInvestorProfileName,
       dealCloseDate: l.dealCloseDate,
       status: l.status,
       distributedAmount: Math.max(
@@ -236,16 +232,16 @@ export function mergeServerInvestmentDetailWithLocal(
       ...a,
       id: li.id,
       dealId: (li.dealId ?? a.dealId ?? "").trim() || a.dealId,
-      investedAmount: li.investedAmount,
+      investedAmount: a.investedAmount,
       distributedAmount: Math.max(
         Number(a.distributedAmount) || 0,
         Number(li.distributedAmount) || 0,
       ),
       investmentName: (li.investmentName ?? "").trim() || a.investmentName,
       offeringName: (li.offeringName ?? "").trim() || a.offeringName,
-      investmentProfile: (li.investmentProfile ?? "").trim() || a.investmentProfile,
-      commitmentProfileId: li.commitmentProfileId ?? a.commitmentProfileId,
-      userInvestorProfileId: li.userInvestorProfileId ?? a.userInvestorProfileId,
+      investmentProfile: (a.investmentProfile ?? "").trim() || (li.investmentProfile ?? "").trim(),
+      commitmentProfileId: a.commitmentProfileId ?? li.commitmentProfileId,
+      userInvestorProfileId: a.userInvestorProfileId ?? li.userInvestorProfileId,
       userInvestorProfileName:
         a.userInvestorProfileName ?? li.userInvestorProfileName,
       dealCloseDate: li.dealCloseDate,

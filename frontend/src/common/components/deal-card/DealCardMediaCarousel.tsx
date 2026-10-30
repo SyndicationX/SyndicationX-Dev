@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, CameraOff } from "lucide-react"
+import { ChevronLeft, ChevronRight, CameraOff, Upload } from "lucide-react"
 import { useCallback, useEffect, useState, type MouseEvent } from "react"
 import { CloudinaryDeliveryImage } from "@/common/components/CloudinaryDeliveryImage"
 
@@ -50,6 +50,7 @@ export function DealCardMediaCarousel({
                 onUploadCoverClick()
               }}
             >
+              <Upload size={14} strokeWidth={2} aria-hidden />
               Upload photo
             </button>
           ) : (

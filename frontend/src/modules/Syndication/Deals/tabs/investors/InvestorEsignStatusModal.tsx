@@ -23,8 +23,11 @@ import {
 import {
   esignSignedPdfDownloadFilename,
   esignStatusForProfileTab,
+  esignStoredPdfUrl,
+  formatEsignStepTimestamp,
   esignWorkflowSteps,
   findEsignSendForCategory,
+  findEsignSendsForCategory,
   fallbackEsignStatusForRow,
   isProfileTabEsignCompleted,
   mergeEsignStatusWithDropbox,
@@ -72,6 +75,58 @@ function EsignHorizontalProgress({ steps }: { steps: EsignWorkflowStep[] }) {
   )
 }
 
+type SignedPartyDoc = {
+  key: string
+  title: string
+  investorName: string
+  sponsorName: string
+  url: string | null
+}
+
+function isGenericSignerName(name: string): boolean {
+  const lower = name.replace(/\u2060/g, "").trim().toLowerCase()
+  return (
+    !lower ||
+    lower.includes("anyone can sign") ||
+    lower === "any sponsor" ||
+    lower === "sponsor" ||
+    lower === "investor"
+  )
+}
+
+function signedPartyDocsForSends(
+  sends: DealInvestorEsignSendStatus[],
+  investorName: string,
+): SignedPartyDoc[] {
+  const rows: SignedPartyDoc[] = []
+  sends.forEach((send, index) => {
+    const completed = Boolean(send.completedAt?.trim())
+    const investorSigned = Boolean(send.signedAt?.trim() || completed)
+    const fullPath = send.fullSignedRelativePath?.trim() || ""
+    const investorPath =
+      send.documents.find((doc) => doc.signedRelativePath?.trim())
+        ?.signedRelativePath?.trim() || ""
+    if (!investorSigned && !completed && !fullPath) return
+    const baseName = send.documents[0]?.name?.trim() || "Signed document"
+    const copyLabel =
+      sends.length > 1 && send.sentAt?.trim()
+        ? formatEsignStepTimestamp(send.sentAt)
+        : ""
+    const title = copyLabel ? `${baseName} · ${copyLabel}` : baseName
+    const sig = send.signatureRequestId?.trim() || `send-${index}`
+    const sponsorName = send.sponsorSignedByName?.replace(/\u2060/g, "").trim() ?? ""
+    const sponsorLabel = isGenericSignerName(sponsorName) ? "" : sponsorName
+    rows.push({
+      key: sig,
+      title,
+      investorName: completed ? "" : investorSigned ? investorName : "",
+      sponsorName: completed ? sponsorLabel : "",
+      url: esignStoredPdfUrl(completed ? fullPath : investorPath),
+    })
+  })
+  return rows
+}
+
 function ProfileTabPanel({
   tab,
   steps,
@@ -79,6 +134,7 @@ function ProfileTabPanel({
   status,
   completed,
   downloadName,
+  signedPartyDocs,
 }: {
   tab: EsignProfileStatusTab
   steps: EsignWorkflowStep[]
@@ -86,7 +142,19 @@ function ProfileTabPanel({
   status: DealInvestorEsignStatus
   completed: boolean
   downloadName: string
+  signedPartyDocs: SignedPartyDoc[]
 }) {
+  const coveredRequestIds = new Set(signedPartyDocs.map((doc) => doc.key))
+  const pendingDocuments =
+    signedPartyDocs.length === 0
+      ? tab.documents
+      : tab.documents.filter((doc) => {
+          const fileId = doc.fileId.trim()
+          const split = fileId.indexOf("::")
+          const signatureId = split > 0 ? fileId.slice(0, split) : ""
+          return Boolean(signatureId) && !coveredRequestIds.has(signatureId)
+        })
+
   return (
     <div
       role="tabpanel"
@@ -119,7 +187,67 @@ function ProfileTabPanel({
       <div className="deal_esign_panel">
         <p className="deal_esign_panel_title">{tab.label}</p>
         <ul className="deal_esign_status_doc_list">
-          {tab.documents.map((d) => {
+          {signedPartyDocs.map((doc) => (
+                <li key={doc.key} className="deal_esign_status_doc_row">
+                  <div className="deal_esign_status_doc_main">
+                    <FileText
+                      size={16}
+                      className="deal_esign_doc_item_icon"
+                      aria-hidden
+                    />
+                    <span className="deal_esign_status_doc_copy">
+                      <span className="deal_esign_status_doc_name">{doc.title}</span>
+                      {doc.investorName || doc.sponsorName ? (
+                        <span className="deal_esign_status_doc_signers">
+                          {doc.sponsorName ? (
+                            <span className="deal_esign_status_doc_role deal_esign_status_doc_role--sponsor">
+                              Sponsor
+                              <span className="deal_esign_status_doc_signer">
+                                {doc.sponsorName}
+                              </span>
+                            </span>
+                          ) : doc.investorName ? (
+                            <span className="deal_esign_status_doc_role">
+                              Investor
+                              <span className="deal_esign_status_doc_signer">
+                                {doc.investorName}
+                              </span>
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="deal_esign_status_doc_badge">Signed</span>
+                  </div>
+                  {doc.url ? (
+                    <div
+                      className="deal_esign_actions deal_esign_status_doc_actions"
+                      role="group"
+                      aria-label={`Signed ${doc.title}`}
+                    >
+                      <a
+                        href={doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="deal_esign_btn_link"
+                      >
+                        <Eye size={15} strokeWidth={2} aria-hidden />
+                        View
+                      </a>
+                      <a
+                        href={doc.url}
+                        download={downloadName}
+                        rel="noopener noreferrer"
+                        className="deal_esign_btn_link deal_esign_btn_link--primary"
+                      >
+                        <Download size={15} strokeWidth={2} aria-hidden />
+                        Download
+                      </a>
+                    </div>
+                  ) : null}
+                </li>
+          ))}
+          {pendingDocuments.map((d) => {
             const signedUrl = resolveEsignSignedPdfUrlForDocument(status, d)
             const pendingViewUrl = resolveEsignPendingDocumentViewUrl(d)
             const viewUrl = signedUrl ?? pendingViewUrl
@@ -179,7 +307,10 @@ function ProfileTabPanel({
             )
           })}
         </ul>
-        {completed && !tab.documents.some((d) =>
+        {completed &&
+        signedPartyDocs.length > 0 &&
+        signedPartyDocs.every((doc) => !doc.url) &&
+        !tab.documents.some((d) =>
           resolveEsignSignedPdfUrlForDocument(status, d),
         ) ? (
           <p className="deal_esign_notice" role="status">
@@ -300,10 +431,19 @@ export function InvestorEsignStatusModal({
 
   const profileTabs = useMemo(() => {
     const documents = resolvedSends.flatMap((send) =>
-      send.documents.map((d) => ({
-        ...d,
-        categoryId: d.categoryId?.trim() || send.categoryId,
-      })),
+      send.documents.map((d) => {
+        const sig = send.signatureRequestId?.trim() ?? ""
+        const fileId = d.fileId.trim()
+        const id =
+          sig && fileId && !fileId.startsWith(`${sig}::`)
+            ? `${sig}::${fileId}`
+            : fileId
+        return {
+          ...d,
+          fileId: id,
+          categoryId: d.categoryId?.trim() || send.categoryId,
+        }
+      }),
     )
     if (documents.length === 0) {
       const fallback =
@@ -369,6 +509,19 @@ export function InvestorEsignStatusModal({
     () => isProfileTabEsignCompleted(activeTabSend),
     [activeTabSend],
   )
+
+  const signedPartyDocs = useMemo(() => {
+    if (!activeTab) return []
+    const matching = findEsignSendsForCategory(
+      resolvedSends,
+      activeTab.categoryId,
+      investorCategoryId,
+    )
+    return signedPartyDocsForSends(
+      matching,
+      row ? rowRecipientLabel(row) : "Investor",
+    )
+  }, [activeTab, resolvedSends, investorCategoryId, row])
 
   if (!open || !row) return null
 
@@ -519,6 +672,7 @@ export function InvestorEsignStatusModal({
                   status={activeTabStatus}
                   completed={activeTabCompleted}
                   downloadName={downloadName}
+                  signedPartyDocs={signedPartyDocs}
                 />
               ) : null}
             </>

@@ -9,6 +9,7 @@ import {
   Link2,
   ListChecks,
   Loader2,
+  OctagonAlert,
   Pencil,
   Plus,
   Save,
@@ -37,6 +38,7 @@ import { getSessionUserEmail } from "@/common/auth/sessionUserEmail"
 import { getSessionUserId } from "@/common/auth/sessionUserId"
 import { isPlatformAdmin } from "@/common/auth/roleUtils"
 import { ConfirmDeleteModal } from "@/common/components/ConfirmDeleteModal"
+import { MemberRemoveConfirmModal } from "../../../usermanagement/MemberRemoveConfirmModal"
 import { toast } from "@/common/components/Toast"
 import { FormHeadingWithInfo } from "@/common/components/form-heading/FormHeadingWithInfo"
 import {
@@ -61,6 +63,7 @@ import {
   MAX_DEAL_OFFERING_DOCUMENT_FILE_BYTES,
   MAX_DEAL_OFFERING_DOCUMENT_FILES,
   postDealOfferingDocumentUploads,
+  deleteSignedEsignDocumentForResign,
   syncCompletedEsignDocumentsToDocumentsTab,
   type DealDetailApi,
 } from "../../api/dealsApi"
@@ -82,6 +85,7 @@ import {
   sharedAudienceSearchBlob,
   toggleIdInList,
 } from "./DocumentSharedWithPicker"
+import { DocumentVisibilityPicker } from "./DocumentVisibilityPicker"
 import { DocumentsTableScroll } from "./DocumentsTableScroll"
 import { SponsorEsignSignModal } from "./SponsorEsignSignModal"
 import {
@@ -96,6 +100,8 @@ import {
 } from "../../utils/documentDownloadFilename"
 import {
   DEFAULT_DOCUMENT_SECTION_ID,
+  documentVisibilityChangeCopy,
+  documentVisibilitySummary,
   effectiveDocumentSharedWithScope,
   ensureDefaultDocumentSectionInList,
   isBuiltInDocumentSection,
@@ -112,9 +118,9 @@ import {
   readDealDocumentSectionsForWorkspace,
   sectionDisplayLabel,
   sectionSharedWithDisplay,
+  uncheckLpPortalWhenInvestorsSelected,
   writeOfferingPreviewSections,
   parseOfferingPreviewSectionsJson,
-  nestedDocumentHasSharedAudience,
   type NestedPreviewDocument,
   type OfferingPreviewSection,
   type SectionSharedWithScope,
@@ -125,18 +131,6 @@ import {
   scheduleOfferingInvestorPreviewServerSync,
 } from "../../utils/offeringPreviewServerState"
 import { isOfferingPreviewHydrated } from "../../utils/offeringPreviewRuntimeStore"
-
-/** After Shared With changes: first audience on a Hidden file → LP portal. */
-function patchDocAfterAudienceChange(
-  doc: NestedPreviewDocument,
-): NestedPreviewDocument {
-  const hasAudience = nestedDocumentHasSharedAudience(doc)
-  if (!hasAudience) return doc
-  if (doc.sharedWithScope === "not_visible" || doc.sharedWithScope == null) {
-    return { ...doc, sharedWithScope: "lp_investor" }
-  }
-  return doc
-}
 
 interface DocumentsSectionProps {
   dealId?: string
@@ -153,10 +147,174 @@ type DocumentMoveItem = {
   docId: string
 }
 
-function nestedDocumentNeedsSponsorSign(doc: NestedPreviewDocument): boolean {
+function nestedDocumentNeedsSponsorSign(
+  doc: NestedPreviewDocument,
+  viewerEmail: string,
+): boolean {
   if (!doc.esignSignatureRequestId?.trim()) return false
   if (doc.esignSponsorSigned) return false
-  return doc.esignAwaitingSponsorSignature === true || !doc.esignSponsorSigned
+  if (doc.esignAwaitingSponsorSignature !== true) return false
+  if (doc.esignOpenSponsorSign) return true
+  const allowed = (doc.esignSponsorSignerEmails ?? [])
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean)
+  if (allowed.length === 0) return true
+  const me = viewerEmail.trim().toLowerCase()
+  return Boolean(me) && allowed.includes(me)
+}
+
+function usableInvestorLabel(value: string | null | undefined): string {
+  const text = String(value ?? "").trim()
+  if (!text || text === "—" || text === "Investor") return ""
+  return text
+}
+
+function investorNameInitials(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean)
+  if (parts.length >= 2) {
+    return `${parts[0]![0]!}${parts[parts.length - 1]![0]!}`.toUpperCase()
+  }
+  if (name.length >= 2 && name !== "—") return name.slice(0, 2).toUpperCase()
+  return "?"
+}
+
+/** Name column for Investor e signatures: investor, then profile. */
+function esignDocumentInvestorIdentity(
+  doc: NestedPreviewDocument,
+  investors: DealInvestorRow[],
+): { name: string; profile: string } {
+  const wanted = [doc.esignInvestorRowId, ...(doc.esignInvestorMatchIds ?? [])]
+    .map((id) => id?.trim().toLowerCase())
+    .filter((id): id is string => Boolean(id))
+  const row = investors.find((investor) => {
+    const keys = [
+      investor.id,
+      investor.contactId,
+      investor.userInvestorProfileId,
+      investor.offeringId,
+    ]
+      .map((id) => id?.trim().toLowerCase())
+      .filter((id): id is string => Boolean(id))
+    return wanted.some((id) => keys.includes(id))
+  })
+  const name =
+    usableInvestorLabel(row?.displayName) ||
+    usableInvestorLabel(row?.userDisplayName) ||
+    usableInvestorLabel(doc.esignInvestorName) ||
+    "—"
+  const profile =
+    usableInvestorLabel(row?.userInvestorProfileName) ||
+    usableInvestorLabel(row?.entitySubtitle) ||
+    usableInvestorLabel(doc.esignInvestorProfile)
+  return { name, profile }
+}
+
+function isGenericSignedByLabel(name: string): boolean {
+  const lower = name.replace(/\u2060/g, "").trim().toLowerCase()
+  return (
+    !lower ||
+    lower.includes("anyone can sign") ||
+    lower === "any sponsor" ||
+    lower === "sponsor" ||
+    lower === "investor" ||
+    lower === "buyer" ||
+    lower === "seller" ||
+    lower.endsWith("@embed.local")
+  )
+}
+
+function esignSignedByNames(doc: NestedPreviewDocument): string[] {
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const raw of [
+    doc.esignSignedByInvestor,
+    doc.esignSignedBySponsor,
+    ...(doc.esignSignedBy ?? []),
+  ]) {
+    const name = String(raw ?? "").replace(/\u2060/g, "").trim()
+    const key = name.toLowerCase()
+    if (!name || isGenericSignedByLabel(name) || seen.has(key)) continue
+    seen.add(key)
+    names.push(name)
+  }
+  return names
+}
+
+type EsignSignedByParty = {
+  role: "Investor" | "Sponsor"
+  name: string
+}
+
+function partyName(value: string | null | undefined): string {
+  const name = String(value ?? "").replace(/\u2060/g, "").trim()
+  if (!name || isGenericSignedByLabel(name)) return ""
+  return name
+}
+
+/** Investor and sponsor stay labeled even after that investor is removed from the deal. */
+function esignSignedByParties(
+  doc: NestedPreviewDocument,
+  investorName: string,
+): EsignSignedByParty[] {
+  const storedInvestor = partyName(doc.esignSignedByInvestor)
+  const storedSponsor = partyName(doc.esignSignedBySponsor)
+  const rosterInvestor = partyName(investorName)
+  if (storedInvestor || storedSponsor) {
+    const investor =
+      rosterInvestor ||
+      (storedInvestor &&
+      storedSponsor &&
+      storedInvestor.toLowerCase() === storedSponsor.toLowerCase()
+        ? storedInvestor
+        : storedInvestor)
+    const sponsor =
+      storedSponsor && investor.toLowerCase() !== storedSponsor.toLowerCase()
+        ? storedSponsor
+        : ""
+    return [
+      investor ? { role: "Investor" as const, name: investor } : null,
+      sponsor ? { role: "Sponsor" as const, name: sponsor } : null,
+    ].filter((party): party is EsignSignedByParty => party != null)
+  }
+  const names = esignSignedByNames(doc)
+  const investorKey = investorName.replace(/\u2060/g, "").trim().toLowerCase()
+  const investorKnown =
+    Boolean(investorKey) &&
+    investorKey !== "—" &&
+    !isGenericSignedByLabel(investorKey)
+  const sponsorHasSigned = doc.esignSponsorSigned === true
+  return names.flatMap((name, index): EsignSignedByParty[] => {
+    const matchesInvestor =
+      investorKnown && name.toLowerCase() === investorKey
+    if (matchesInvestor || (names.length > 1 && index === 0)) {
+      return [{ role: "Investor" as const, name }]
+    }
+    if (names.length === 1 && !sponsorHasSigned) {
+      return [{ role: "Investor" as const, name }]
+    }
+    return [{ role: "Sponsor" as const, name }]
+  })
+}
+
+function esignDocumentMatchesQuery(
+  doc: NestedPreviewDocument,
+  queryText: string,
+  investors: DealInvestorRow[],
+): boolean {
+  const q = queryText.trim().toLowerCase()
+  if (!q) return true
+  const identity = esignDocumentInvestorIdentity(doc, investors)
+  return [
+    doc.name,
+    identity.name,
+    identity.profile,
+    doc.esignInvestorName,
+    doc.esignInvestorProfile,
+    ...esignSignedByNames(doc),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(q)
 }
 
 function DocumentsTableDocName({
@@ -699,6 +857,7 @@ export function DocumentsSection({
     Record<string, Record<string, boolean>>
   >({})
   const [query, setQuery] = useState("")
+  const [esignQuery, setEsignQuery] = useState("")
   const [showAddSectionModal, setShowAddSectionModal] = useState(false)
   const [sectionName, setSectionName] = useState("")
   const [sectionFiles, setSectionFiles] = useState<File[]>([])
@@ -717,9 +876,19 @@ export function DocumentsSection({
   } = useNativeFilePickerOpening()
   const [deletePending, setDeletePending] = useState<
     | { kind: "document"; sectionId: string; docId: string; label: string }
+    | {
+        kind: "esign-resign"
+        sectionId: string
+        docId: string
+        label: string
+        signatureRequestId: string
+        templateFileId: string
+      }
     | { kind: "section"; sectionId: string; label: string }
     | null
   >(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   const [visibilityChangePending, setVisibilityChangePending] = useState<{
     sectionId: string
     docId: string
@@ -938,6 +1107,9 @@ export function DocumentsSection({
     sessionUserId,
   ])
 
+  const viewerIsLeadSponsor =
+    viewerDealMemberRole === "lead_sponsor" ||
+    viewerDealMemberRoleProp === "lead_sponsor"
   const viewerCanSponsorSign = viewerIsDealSponsorRole(
     effectiveViewerDealMemberRole,
   )
@@ -1691,7 +1863,50 @@ export function DocumentsSection({
   ])
 
   const onConfirmDeletePending = useCallback(() => {
-    if (!deletePending) return
+    if (!deletePending || deleteBusy) return
+    if (deletePending.kind === "esign-resign") {
+      const idTrim = dealIdTrim
+      const pending = deletePending
+      if (!idTrim) return
+      setDeleteBusy(true)
+      setDeleteError("")
+      void deleteSignedEsignDocumentForResign(
+        idTrim,
+        pending.signatureRequestId,
+        pending.templateFileId,
+      )
+        .then((result) => {
+          if (!result.ok) {
+            setDeleteError(result.message)
+            toast.error("Could not delete document", result.message)
+            return
+          }
+          if (result.offeringInvestorPreviewJson != null) {
+            applyOfferingInvestorPreviewJsonFromServer(
+              idTrim,
+              result.offeringInvestorPreviewJson,
+            )
+            setSectionsIfChanged(readDealDocumentSectionsForWorkspace(idTrim))
+            setPreviewHydrated(isOfferingPreviewHydrated(idTrim))
+          }
+          expandOnlySection(pending.sectionId)
+          if (result.emailSent) {
+            toast.success("Document deleted", result.message)
+          } else {
+            toast.warning("Document deleted", result.message)
+          }
+          setDeletePending(null)
+        })
+        .catch(() => {
+          const message = "Try again in a moment."
+          setDeleteError(message)
+          toast.error("Could not delete document", message)
+        })
+        .finally(() => {
+          setDeleteBusy(false)
+        })
+      return
+    }
     if (deletePending.kind === "document") {
       removeNestedDocument(deletePending.sectionId, deletePending.docId)
       expandOnlySection(deletePending.sectionId)
@@ -1700,6 +1915,8 @@ export function DocumentsSection({
     }
     setDeletePending(null)
   }, [
+    dealIdTrim,
+    deleteBusy,
     deletePending,
     expandOnlySection,
     removeNestedDocument,
@@ -2061,7 +2278,7 @@ export function DocumentsSection({
           return [
             d.name,
             sectionDisplayLabel(ref),
-            sectionSharedWithDisplay(effectiveDocumentSharedWithScope(d, s)),
+            documentVisibilitySummary(effectiveDocumentSharedWithScope(d, s)),
             [
               sharedAudienceSearchBlob(
                 d.sharedDealClassIds,
@@ -2266,11 +2483,23 @@ export function DocumentsSection({
               const isBuiltInSection = isBuiltInDocumentSection(section)
               const isAutoManagedSection = isAutoManagedDocumentsSection(section)
               const isEsignSection = isEsignTemplateDocumentsSection(section)
+              const sponsorSignPendingCount = isEsignSection
+                ? section.nestedDocuments.filter(
+                    (doc) =>
+                      viewerCanSponsorSign &&
+                      nestedDocumentNeedsSponsorSign(doc, sessionEmail),
+                  ).length
+                : 0
               const canRenameSection =
                 viewerCanRenameDocumentSections &&
                 isBuiltInDocumentSectionLabelEditable(section)
               const isEditingSection = editingSectionId === section.id
               const sectionLabel = sectionDisplayLabel(section)
+              const visibleDocuments = isEsignSection
+                ? section.nestedDocuments.filter((doc) =>
+                    esignDocumentMatchesQuery(doc, esignQuery, lpInvestorRows),
+                  )
+                : section.nestedDocuments
               const selectedInSection = section.nestedDocuments.filter((d) =>
                 Boolean(checkedDocsBySection[section.id]?.[d.id]),
               ).length
@@ -2283,7 +2512,11 @@ export function DocumentsSection({
                   <div
                     className="deal_docs_ui_banner"
                     role="region"
-                    aria-label={sectionLabel}
+                    aria-label={
+                      sponsorSignPendingCount > 0
+                        ? `${sectionLabel}, needs attention`
+                        : sectionLabel
+                    }
                   >
                     <button
                       type="button"
@@ -2355,6 +2588,12 @@ export function DocumentsSection({
                             {sectionLabel}
                           </span>
                         )}
+                        {sponsorSignPendingCount > 0 ? (
+                          <span className="deal_docs_ui_needs_attention">
+                            <OctagonAlert size={13} strokeWidth={2.25} aria-hidden />
+                            Needs attention
+                          </span>
+                        ) : null}
                         {n > 0 ? (
                           <span
                             className="deal_docs_ui_banner_inline_actions"
@@ -2424,7 +2663,7 @@ export function DocumentsSection({
                               onClick={() =>
                                 checkAllInSection(
                                   section.id,
-                                  section.nestedDocuments.map((d) => d.id),
+                                  visibleDocuments.map((d) => d.id),
                                 )
                               }
                             >
@@ -2505,8 +2744,33 @@ export function DocumentsSection({
                     className="deal_docs_ui_panel"
                     hidden={!isOpen}
                   >
+                    {isEsignSection && n > 0 ? (
+                      <div className="deal_docs_ui_section_toolbar">
+                        <div className="um_search_wrap">
+                          <Search
+                            className="um_search_icon"
+                            size={18}
+                            strokeWidth={2}
+                            aria-hidden
+                          />
+                          <input
+                            type="search"
+                            className="um_search_input"
+                            placeholder="Search name, signer, profile, or document…"
+                            value={esignQuery}
+                            onChange={(e) => setEsignQuery(e.target.value)}
+                            aria-label="Search investor e signatures"
+                            autoComplete="off"
+                          />
+                        </div>
+                      </div>
+                    ) : null}
                     {n === 0 ? (
                       <p className="deal_docs_ui_panel_empty">No documents yet.</p>
+                    ) : visibleDocuments.length === 0 ? (
+                      <p className="deal_docs_ui_panel_empty">
+                        No signatures match your search.
+                      </p>
                     ) : (
                       <DocumentsTableScroll active={isOpen}>
                         <table className="deal_docs_ui_table">
@@ -2515,12 +2779,28 @@ export function DocumentsSection({
                               <th className="deal_docs_ui_th deal_docs_ui_th_check" scope="col">
                                 <span className="deal_docs_ui_sr">Select</span>
                               </th>
+                              {isEsignSection ? (
+                                <th
+                                  className="deal_docs_ui_th deal_docs_ui_th_investor"
+                                  scope="col"
+                                >
+                                  Name
+                                </th>
+                              ) : null}
                               <th className="deal_docs_ui_th deal_docs_ui_th_doc" scope="col">
                                 Document
                               </th>
                               <th className="deal_docs_ui_th deal_docs_ui_th_date" scope="col">
                                 Date added
                               </th>
+                              {isEsignSection ? (
+                                <th
+                                  className="deal_docs_ui_th deal_docs_ui_th_signed"
+                                  scope="col"
+                                >
+                                  Signed by
+                                </th>
+                              ) : null}
                               {!isEsignSection ? (
                               <th
                                 className="deal_docs_ui_th deal_docs_ui_th_shared_entities"
@@ -2547,6 +2827,7 @@ export function DocumentsSection({
                                 />
                               </th>
                               ) : null}
+                              {!isEsignSection ? (
                               <th className="deal_docs_ui_th deal_docs_ui_th_shared" scope="col">
                                 <DocumentsTableColumnHeader
                                   label="Visibility"
@@ -2554,19 +2835,25 @@ export function DocumentsSection({
                                     <p className="deals_table_header_tooltip_p">
                                       <strong>Hidden by default</strong>: sponsor
                                       workspace only — not on the offering link, preview,
-                                      or LP portal. <strong>Offering
-                                      link</strong>: file appears on Preview offering, the
-                                      no-login shared investor link, and the LP portal for
-                                      signed-in investors. <strong>LP portal only</strong>:
-                                      signed-in investors in the LP portal — not on the
-                                      public offering link or preview.
+                                      or LP portal. Check <strong>Offering
+                                      link</strong>, <strong>LP portal</strong>, or both.
+                                      Offering link shows the file on Preview offering and the
+                                      no-login shared investor link. LP portal shows it to
+                                      signed-in investors. Both together do both. Selecting
+                                      an investor in Shared With turns LP portal off.
+                                      Selecting a sponsor leaves LP portal checked or
+                                      unchecked, whichever it already is.
                                     </p>
                                   }
                                 />
                               </th>
+                              ) : null}
+                              {/* Label (Visible to LPs) is omitted for Investor e signatures. */}
+                              {!isEsignSection ? (
                               <th className="deal_docs_ui_th deal_docs_ui_th_label" scope="col">
                                 Label (Visible to LPs)
                               </th>
+                              ) : null}
                               {!viewOnly ? (
                                 <th
                                   className="deal_docs_ui_th deal_docs_ui_th_actions"
@@ -2578,8 +2865,21 @@ export function DocumentsSection({
                             </tr>
                           </thead>
                           <tbody>
-                            {section.nestedDocuments.map((d) => {
+                            {visibleDocuments.map((d) => {
                               const url = d.url?.trim()
+                              const sponsorSignOnly =
+                                isEsignSection &&
+                                viewerCanSponsorSign &&
+                                nestedDocumentNeedsSponsorSign(d, sessionEmail)
+                              const investorIdentity = isEsignSection
+                                ? esignDocumentInvestorIdentity(d, lpInvestorRows)
+                                : null
+                              const signedByParties = isEsignSection
+                                ? esignSignedByParties(
+                                    d,
+                                    investorIdentity?.name ?? d.esignInvestorName ?? "",
+                                  )
+                                : []
                               const checked = Boolean(
                                 checkedDocsBySection[section.id]?.[d.id],
                               )
@@ -2604,6 +2904,37 @@ export function DocumentsSection({
                                       }}
                                     />
                                   </td>
+                                  {investorIdentity ? (
+                                    <td className="deal_docs_ui_td deal_docs_ui_td_investor">
+                                      <div className="deal_docs_ui_investor_cell">
+                                        <div className="um_user_avatar_ring" aria-hidden>
+                                          <span className="um_user_initials">
+                                            {investorNameInitials(investorIdentity.name)}
+                                          </span>
+                                        </div>
+                                        <div className="deal_docs_ui_investor_text">
+                                          <span
+                                            className="deal_docs_ui_investor_name"
+                                            title={
+                                              investorIdentity.name !== "—"
+                                                ? investorIdentity.name
+                                                : undefined
+                                            }
+                                          >
+                                            {investorIdentity.name}
+                                          </span>
+                                          {investorIdentity.profile ? (
+                                            <span
+                                              className="deal_docs_ui_investor_profile"
+                                              title={investorIdentity.profile}
+                                            >
+                                              {investorIdentity.profile}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </td>
+                                  ) : null}
                                   <td className="deal_docs_ui_td deal_docs_ui_td_doc">
                                     <div className="deal_docs_ui_doc_cell">
                                       <DocumentsTableDocName name={d.name} href={url} />
@@ -2658,8 +2989,7 @@ export function DocumentsSection({
                                             <Download size={16} strokeWidth={2} />
                                           </span>
                                         )}
-                                        {viewerCanSponsorSign &&
-                                        nestedDocumentNeedsSponsorSign(d) ? (
+                                        {sponsorSignOnly ? (
                                           <button
                                             type="button"
                                             className="deal_docs_ui_doc_icon_btn deal_docs_ui_doc_sign_btn"
@@ -2696,6 +3026,35 @@ export function DocumentsSection({
                                               aria-hidden
                                             />
                                           </button>
+                                        ) : isEsignSection &&
+                                          viewerIsLeadSponsor &&
+                                          !viewOnly &&
+                                          d.esignSignatureRequestId ? (
+                                          <button
+                                            type="button"
+                                            className="deal_docs_ui_doc_icon_btn deal_docs_ui_doc_icon_btn_danger"
+                                            title="Delete and ask the investor to sign again"
+                                            aria-label={`Delete ${d.name} and ask the investor to sign again`}
+                                            onClick={() => {
+                                              setDeleteError("")
+                                              setDeletePending({
+                                                kind: "esign-resign",
+                                                sectionId: section.id,
+                                                docId: d.id,
+                                                label: d.name,
+                                                signatureRequestId:
+                                                  d.esignSignatureRequestId!,
+                                                templateFileId:
+                                                  d.esignTemplateFileId ?? "",
+                                              })
+                                            }}
+                                          >
+                                            <Trash2
+                                              size={16}
+                                              strokeWidth={2}
+                                              aria-hidden
+                                            />
+                                          </button>
                                         ) : null}
                                       </div>
                                     </div>
@@ -2703,6 +3062,38 @@ export function DocumentsSection({
                                   <td className="deal_docs_ui_td deal_docs_ui_td_date">
                                     {d.dateAdded}
                                   </td>
+                                  {isEsignSection ? (
+                                    <td className="deal_docs_ui_td deal_docs_ui_td_signed">
+                                      {signedByParties.length > 0 ? (
+                                        <div className="deal_docs_ui_signed_by">
+                                          {signedByParties.map((party) => (
+                                            <div
+                                              key={`${party.role}-${party.name}`}
+                                              className="deal_docs_ui_signed_by_party"
+                                              title={`${party.role}: ${party.name}`}
+                                            >
+                                              <span
+                                                className={
+                                                  party.role === "Sponsor"
+                                                    ? "deal_docs_ui_signed_by_role deal_docs_ui_signed_by_role_sponsor"
+                                                    : "deal_docs_ui_signed_by_role"
+                                                }
+                                              >
+                                                {party.role}
+                                              </span>
+                                              <span className="deal_docs_ui_signed_by_name">
+                                                {party.name}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span className="deal_docs_ui_signed_by_empty">
+                                          —
+                                        </span>
+                                      )}
+                                    </td>
+                                  ) : null}
                                   {!isEsignSection ? (
                                   <td
                                     className="deal_docs_ui_td deal_docs_ui_td_shared_entities"
@@ -2730,14 +3121,14 @@ export function DocumentsSection({
                                                   nestedDocuments: s.nestedDocuments.map(
                                                     (n) => {
                                                       if (n.id !== d.id) return n
-                                                      return patchDocAfterAudienceChange({
+                                                      return {
                                                         ...n,
                                                         sharedDealClassIds: toggleIdInList(
                                                           n.sharedDealClassIds,
                                                           classId,
                                                           checked,
                                                         ),
-                                                      })
+                                                      }
                                                     },
                                                   ),
                                                 },
@@ -2754,15 +3145,18 @@ export function DocumentsSection({
                                                   nestedDocuments: s.nestedDocuments.map(
                                                     (n) => {
                                                       if (n.id !== d.id) return n
-                                                      return patchDocAfterAudienceChange({
-                                                        ...n,
-                                                        sharedWithAllInvestors: false,
-                                                        sharedInvestorIds: toggleIdInList(
-                                                          n.sharedInvestorIds,
-                                                          investorRowId,
-                                                          checked,
-                                                        ),
-                                                      })
+                                                      return uncheckLpPortalWhenInvestorsSelected(
+                                                        {
+                                                          ...n,
+                                                          sharedWithAllInvestors: false,
+                                                          sharedInvestorIds: toggleIdInList(
+                                                            n.sharedInvestorIds,
+                                                            investorRowId,
+                                                            checked,
+                                                          ),
+                                                        },
+                                                        s,
+                                                      )
                                                     },
                                                   ),
                                                 },
@@ -2779,16 +3173,19 @@ export function DocumentsSection({
                                                   nestedDocuments: s.nestedDocuments.map(
                                                     (n) => {
                                                       if (n.id !== d.id) return n
-                                                      return patchDocAfterAudienceChange({
-                                                        ...n,
-                                                        sharedWithAllInvestors: checked,
-                                                        sharedInvestorIds: checked
-                                                          ? []
-                                                          : n.sharedInvestorIds,
-                                                        sharedSponsorUserIds: checked
-                                                          ? []
-                                                          : (n.sharedSponsorUserIds ?? []),
-                                                      })
+                                                      return uncheckLpPortalWhenInvestorsSelected(
+                                                        {
+                                                          ...n,
+                                                          sharedWithAllInvestors: checked,
+                                                          sharedInvestorIds: checked
+                                                            ? []
+                                                            : n.sharedInvestorIds,
+                                                          sharedSponsorUserIds: checked
+                                                            ? []
+                                                            : (n.sharedSponsorUserIds ?? []),
+                                                        },
+                                                        s,
+                                                      )
                                                     },
                                                   ),
                                                 },
@@ -2805,7 +3202,7 @@ export function DocumentsSection({
                                                   nestedDocuments: s.nestedDocuments.map(
                                                     (n) => {
                                                       if (n.id !== d.id) return n
-                                                      return patchDocAfterAudienceChange({
+                                                      return {
                                                         ...n,
                                                         sharedWithAllInvestors: false,
                                                         sharedSponsorUserIds: toggleIdInList(
@@ -2813,7 +3210,7 @@ export function DocumentsSection({
                                                           sponsorUserId,
                                                           checked,
                                                         ),
-                                                      })
+                                                      }
                                                     },
                                                   ),
                                                 },
@@ -2823,41 +3220,31 @@ export function DocumentsSection({
                                     />
                                   </td>
                                   ) : null}
+                                  {!isEsignSection ? (
                                   <td className="deal_docs_ui_td deal_docs_ui_td_shared">
                                     <div className="deal_docs_ui_shared">
                                       <div className="deal_docs_ui_shared_body">
-                                        <select
-                                          className="deal_docs_ui_pill_select deal_docs_ui_shared_select"
-                                          aria-label={`Visibility for ${d.name}`}
-                                          value={effectiveDocumentSharedWithScope(
+                                        <DocumentVisibilityPicker
+                                          docName={d.name}
+                                          scope={effectiveDocumentSharedWithScope(
                                             d,
                                             section,
                                           )}
                                           disabled={isAutoManagedSection}
-                                          onChange={(e) => {
-                                            const v =
-                                              e.target.value as SectionSharedWithScope
+                                          onChange={(nextScope) =>
                                             requestDocumentVisibilityChange(
                                               section.id,
                                               d,
                                               section,
-                                              v,
+                                              nextScope,
                                             )
-                                          }}
-                                        >
-                                          <option value="not_visible">
-                                            Hidden by default
-                                          </option>
-                                          <option value="offering_page">
-                                            Offering link
-                                          </option>
-                                          <option value="lp_investor">
-                                            LP portal only
-                                          </option>
-                                        </select>
+                                          }
+                                        />
                                       </div>
                                     </div>
                                   </td>
+                                  ) : null}
+                                  {!isEsignSection ? (
                                   <td className="deal_docs_ui_td deal_docs_ui_td_label">
                                     <select
                                       className="deal_docs_ui_pill_select"
@@ -2897,17 +3284,16 @@ export function DocumentsSection({
                                       ))}
                                     </select>
                                   </td>
+                                  ) : null}
                                   {!viewOnly ? (
                                   <td className="deal_docs_ui_td deal_docs_ui_td_actions">
                                     <div className="deal_docs_ui_row_actions">
-                                      {isEsignSection &&
-                                      viewerCanSponsorSign &&
-                                      nestedDocumentNeedsSponsorSign(d) ? (
+                                      {sponsorSignOnly ? (
                                         <button
                                           type="button"
                                           className="deal_docs_ui_row_icon_btn deal_docs_ui_doc_sign_btn"
-                                          title="Sponsor counter-sign"
-                                          aria-label={`Sponsor sign ${d.name}`}
+                                          title="Sign document"
+                                          aria-label={`Sign ${d.name}`}
                                           onClick={() =>
                                             setSponsorSignTarget({
                                               documentName: d.name,
@@ -3269,17 +3655,39 @@ export function DocumentsSection({
           )
         : null}
 
-      <ConfirmDeleteModal
-        open={deletePending != null}
-        message="Are you sure you want to delete this file? This action cannot be undone."
-        itemLabel={
-          deletePending?.kind === "section" ?
-            `Section: ${deletePending.label}`
-          : deletePending?.label
-        }
-        onCancel={() => setDeletePending(null)}
-        onConfirm={onConfirmDeletePending}
-      />
+      {deletePending?.kind === "esign-resign" ? (
+        <MemberRemoveConfirmModal
+          memberName={deletePending.label}
+          busy={deleteBusy}
+          error={deleteError}
+          submitLabel="Remove"
+          message={
+            <>
+              This will remove <strong>{deletePending.label}</strong>. The
+              investor will get an email and must sign this profile again.
+            </>
+          }
+          onClose={() => {
+            if (!deleteBusy) setDeletePending(null)
+          }}
+          onConfirm={onConfirmDeletePending}
+        />
+      ) : (
+        <ConfirmDeleteModal
+          open={deletePending != null}
+          busy={deleteBusy}
+          message="Are you sure you want to delete this file? This action cannot be undone."
+          itemLabel={
+            deletePending?.kind === "section" ?
+              `Section: ${deletePending.label}`
+            : deletePending?.label
+          }
+          onCancel={() => {
+            if (!deleteBusy) setDeletePending(null)
+          }}
+          onConfirm={onConfirmDeletePending}
+        />
+      )}
 
       {visibilityChangePending
         ? createPortal(
@@ -3325,19 +3733,17 @@ export function DocumentsSection({
                   </p>
                   <p className="deal_offering_muted">
                     <strong>From:</strong>{" "}
-                    {sectionSharedWithDisplay(
+                    {documentVisibilitySummary(
                       visibilityChangePending.previousScope,
                     )}
                     <br />
                     <strong>To:</strong>{" "}
-                    {sectionSharedWithDisplay(visibilityChangePending.nextScope)}
+                    {documentVisibilitySummary(visibilityChangePending.nextScope)}
                   </p>
                   <p className="deal_offering_muted">
-                    {visibilityChangePending.nextScope === "not_visible" ?
-                      "This file will be Hidden by default — hidden from the public offering link, preview, and LP portal. Only the sponsor workspace will show it."
-                    : visibilityChangePending.nextScope === "lp_investor" ?
-                      "Signed-in investors will see this file on the Offering Documents tab in the LP portal. It will not appear on the public offering link."
-                    : "This file will appear on the public offering link, preview, and the Offering Documents tab for signed-in investors."}
+                    {documentVisibilityChangeCopy(
+                      visibilityChangePending.nextScope,
+                    )}
                   </p>
                 </div>
                 <div className="um_modal_actions add_contact_modal_actions">

@@ -9,7 +9,6 @@ import {
 } from "../../functions/dealEsignStageNotification.template.js";
 import {
   findEsignSendBySignatureRequestId,
-  esignSendInvestorActionPending,
   parseEsignStatusBundle,
   type StoredDealInvestorEsignSend,
 } from "../../constants/deal-investor-esign-status.js";
@@ -18,8 +17,6 @@ import { buildDealMemberInviteLandingUrl } from "./dealMemberInviteToken.service
 import { resolveDealInvestorAssociatedSponsor } from "./dealInvestorAssociatedSponsor.service.js";
 import {
   listDealEsignInvestorQueue,
-  evaluateDealSequentialInvestorSignAccess,
-  dealHasSequentialInvestorFirstEsign,
   resolveInvestorDocumentAudienceIds,
   findQueueEntryForEsignTarget,
 } from "./dealSequentialEsignWorkflow.service.js";
@@ -30,6 +27,11 @@ import {
   type InvestorEsignRowTarget,
 } from "./dealMemberEsignStatus.service.js";
 import { resolveEmailForContactMemberId } from "./dealMemberInvitationEmail.service.js";
+import { listDealSponsorSignerOptions } from "./dealEsignSigningWorkflow.service.js";
+import {
+  getSignFlowDocument,
+  signFlowPendingSponsorSignAudience,
+} from "../esign/signflow.service.js";
 
 const SENDER_DISPLAY_NAME =
   process.env.SENDER_DISPLAY_NAME?.trim() || "SyndicationX";
@@ -41,7 +43,11 @@ async function sendStageEmail(params: {
   documentNames: string[];
   investorDisplayName?: string;
   portalDealUrl?: string;
-  stage: "investor_signed" | "sponsor_signed" | "investor_turn_to_sign";
+  stage:
+    | "investor_signed"
+    | "sponsor_signed"
+    | "investor_turn_to_sign"
+    | "sponsor_turn_to_sign";
 }): Promise<{ ok: true } | { ok: false; error: unknown }> {
   const to = params.toEmail.trim().toLowerCase();
   if (!to.includes("@")) {
@@ -116,6 +122,37 @@ async function resolveInvestorEmailForTarget(
   return null;
 }
 
+function sponsorDealDocumentsUrl(dealId: string): string {
+  const origin = (
+    process.env.FRONTEND_URL?.trim() ||
+    process.env.BASE_URL?.trim() ||
+    ""
+  ).replace(/\/$/, "");
+  if (!origin) return "";
+  return `${origin}/deals/${encodeURIComponent(dealId)}?tab=documents`;
+}
+
+/** Email the lead sponsor from SyndicationX when they can sign now. */
+export async function notifySponsorDocumentsReadyToSign(params: {
+  dealId: string;
+  sponsorEmail: string;
+  sponsorName: string;
+  dealName: string;
+  documentNames: string[];
+}): Promise<void> {
+  const result = await sendStageEmail({
+    toEmail: params.sponsorEmail,
+    recipientDisplayName: params.sponsorName,
+    dealName: params.dealName,
+    documentNames: params.documentNames,
+    portalDealUrl: sponsorDealDocumentsUrl(params.dealId),
+    stage: "sponsor_turn_to_sign",
+  });
+  if (!result.ok) {
+    console.warn("notifySponsorDocumentsReadyToSign:", result.error);
+  }
+}
+
 /** Notify this investor's deal-associated sponsor when the investor signs. */
 export async function notifySponsorsOfInvestorEsignSigned(params: {
   dealId: string;
@@ -149,31 +186,52 @@ export async function notifySponsorsOfInvestorEsignSigned(params: {
     dealId,
     params.target,
   );
-  const sponsor = await resolveDealInvestorAssociatedSponsor({
-    dealId,
-    contactId: audienceIds[0] ?? params.target.id,
-    investmentId: params.target.id,
-    investorEmail: entry?.email,
-  });
-  if (!sponsor) return;
-  const portalUrl =
-    (await buildDealMemberInviteLandingUrl(dealId, sponsor.email)) || "";
-  const result = await sendStageEmail({
-    toEmail: sponsor.email,
-    recipientDisplayName: sponsor.name,
-    dealName,
-    documentNames: docNames,
-    investorDisplayName: investorName,
-    portalDealUrl: portalUrl,
-    stage: "investor_signed",
-  });
-  if (result.ok) {
+  const portalUrl = sponsorDealDocumentsUrl(dealId);
+  const notify = new Map<string, string>();
+  try {
+    const doc = await getSignFlowDocument(sigId);
+    const audience = signFlowPendingSponsorSignAudience(doc);
+    if (audience.openToAnySponsor) {
+      const sponsors = await listDealSponsorSignerOptions(dealId);
+      for (const sponsor of sponsors) {
+        notify.set(sponsor.email, sponsor.name);
+      }
+    }
+    for (const email of audience.namedEmails) {
+      if (!notify.has(email)) notify.set(email, email);
+    }
+  } catch (err) {
+    console.warn("notifySponsorsOfInvestorEsignSigned audience:", err);
+  }
+  if (notify.size === 0) {
+    const sponsor = await resolveDealInvestorAssociatedSponsor({
+      dealId,
+      contactId: audienceIds[0] ?? params.target.id,
+      investmentId: params.target.id,
+      investorEmail: entry?.email,
+    });
+    if (sponsor?.email) notify.set(sponsor.email, sponsor.name);
+  }
+  if (notify.size === 0) return;
+  let notified = false;
+  for (const [toEmail, recipientDisplayName] of notify) {
+    const result = await sendStageEmail({
+      toEmail,
+      recipientDisplayName,
+      dealName,
+      documentNames: docNames,
+      investorDisplayName: investorName,
+      portalDealUrl: portalUrl,
+      stage: "investor_signed",
+    });
+    if (result.ok) notified = true;
+    else console.warn("notifySponsorsOfInvestorEsignSigned:", result.error);
+  }
+  if (notified) {
     await updateDealInvestorEsignSend(dealId, params.target, sigId, (current) => ({
       ...current,
       sponsorNotifiedAtInvestorSigned: new Date().toISOString(),
     }));
-  } else {
-    console.warn("notifySponsorsOfInvestorEsignSigned:", result.error);
   }
 }
 
@@ -223,61 +281,14 @@ export async function notifyInvestorOfSponsorEsignSigned(params: {
   }
 }
 
-/** Notify investors whose sequential signing turn just opened (after prior signers finish). */
+/**
+ * No investor-to-investor queue. Each investor can sign as soon as their
+ * document is sent; the original send email is the invitation to sign.
+ */
 export async function notifySequentialInvestorsSignTurnAvailable(
-  dealId: string,
+  _dealId: string,
 ): Promise<void> {
-  const id = dealId.trim();
-  if (!id) return;
-  if (!(await dealHasSequentialInvestorFirstEsign(id))) return;
-
-  const queue = await listDealEsignInvestorQueue(id);
-  const deal = await getAddDealFormById(id);
-  const dealName = deal?.dealName?.trim() || "Deal";
-
-  for (const entry of queue) {
-    const access = await evaluateDealSequentialInvestorSignAccess(
-      id,
-      entry.target,
-    );
-    if (!access.allowed) continue;
-
-    const raw = await readInvestorEsignStatusJson(id, entry.target);
-    const bundle = parseEsignStatusBundle(raw);
-    if (!bundle?.sends.length) continue;
-
-    const investor = await resolveInvestorEmailForTarget(id, entry.target);
-    if (!investor?.email) continue;
-
-    const portalUrl =
-      (await buildDealMemberInviteLandingUrl(id, investor.email)) || "";
-
-    for (const send of bundle.sends) {
-      const sigId = send.signatureRequestId?.trim();
-      if (!sigId || !send.sentAt?.trim()) continue;
-      if (!esignSendInvestorActionPending(send)) continue;
-      if (send.investorNotifiedAtSignTurnAvailable?.trim()) continue;
-
-      const docNames = documentNamesFromSend(send);
-      const result = await sendStageEmail({
-        toEmail: investor.email,
-        recipientDisplayName: investor.displayName,
-        dealName,
-        documentNames: docNames,
-        portalDealUrl: portalUrl,
-        stage: "investor_turn_to_sign",
-      });
-
-      if (result.ok) {
-        await updateDealInvestorEsignSend(id, entry.target, sigId, (current) => ({
-          ...current,
-          investorNotifiedAtSignTurnAvailable: new Date().toISOString(),
-        }));
-      } else {
-        console.warn("notifySequentialInvestorsSignTurnAvailable:", result.error);
-      }
-    }
-  }
+  return;
 }
 
 /** Run stage notifications after esign sync for one target. */

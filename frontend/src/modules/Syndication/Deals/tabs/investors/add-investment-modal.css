@@ -127,7 +127,7 @@
   align-items: center;
   margin-left: 0.35em;
   color: #64748b;
-  cursor: help;
+  cursor: pointer;
   flex-shrink: 0;
 }
 

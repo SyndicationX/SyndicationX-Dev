@@ -47,6 +47,9 @@ AUTO_PLACED_SUBSCRIPTION_LABELS: frozenset[str] = frozenset(
         "address",
         "ssn",
         "investment amount",
+        "subscription amount",
+        "unit amount",
+        "number of units",
         "entity legal name",
         "entity name",
         "authorized signature",
@@ -75,6 +78,14 @@ FIELD_KEY_TO_QUESTION_ID: dict[str, str] = {
     "investment amount": "investment_amount",
     "commitment amount": "investment_amount",
     "amount": "investment_amount",
+    "subscription amount": "subscription_amount",
+    "aggregate subscription amount": "subscription_amount",
+    "total subscription amount": "subscription_amount",
+    "unit amount": "unit_amount",
+    "price per unit": "unit_amount",
+    "unit price": "unit_amount",
+    "number of units": "unit_count",
+    "units": "unit_count",
 }
 
 COMPUTED_FULL_NAME_KEYS = frozenset(
@@ -91,7 +102,15 @@ COMPUTED_FULL_NAME_KEYS = frozenset(
 )
 
 COMPUTED_DATE_KEYS = frozenset(
-    {"date", "datesigned1", "date signed", "signed date", "sponsor date"}
+    {
+        "date",
+        "datesigned1",
+        "date signed",
+        "signed date",
+        "sponsor date",
+        "investor date",
+        "signature date",
+    }
 )
 
 COMPUTED_TITLE_KEYS = frozenset(

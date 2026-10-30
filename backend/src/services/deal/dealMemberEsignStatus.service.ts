@@ -373,6 +373,115 @@ async function mirrorEsignPatchToLpRosterForInvestment(
     );
 }
 
+/**
+ * Every eSign bundle stored for this investor on the deal.
+ * A second signing of the same profile can live on the commitment row or the LP row.
+ */
+export async function listEsignStatusJsonForSameInvestor(
+  dealId: string,
+  target: InvestorEsignRowTarget,
+): Promise<string[]> {
+  const contactKeys = new Set<string>();
+  const emails = new Set<string>();
+
+  if (target.table === "investment") {
+    const [row] = await db
+      .select({ contactId: dealInvestment.contactId })
+      .from(dealInvestment)
+      .where(
+        and(eq(dealInvestment.id, target.id), eq(dealInvestment.dealId, dealId)),
+      )
+      .limit(1);
+    const contactId = normContactKey(row?.contactId);
+    if (contactId) contactKeys.add(contactId);
+    const resolved = contactId
+      ? await resolveEmailForContactMemberId(contactId)
+      : null;
+    const email = normEmail(resolved ?? "");
+    if (email.includes("@")) emails.add(email);
+  } else {
+    const [row] = await db
+      .select({
+        contactMemberId: dealLpInvestor.contactMemberId,
+        email: dealLpInvestor.email,
+      })
+      .from(dealLpInvestor)
+      .where(
+        and(eq(dealLpInvestor.id, target.id), eq(dealLpInvestor.dealId, dealId)),
+      )
+      .limit(1);
+    const contactId = normContactKey(row?.contactMemberId);
+    if (contactId) contactKeys.add(contactId);
+    const rowEmail = normEmail(String(row?.email ?? ""));
+    if (rowEmail.includes("@")) emails.add(rowEmail);
+    const resolved = contactId
+      ? await resolveEmailForContactMemberId(contactId)
+      : null;
+    const email = normEmail(resolved ?? "");
+    if (email.includes("@")) emails.add(email);
+  }
+
+  const investments = await db
+    .select({
+      id: dealInvestment.id,
+      contactId: dealInvestment.contactId,
+      esignStatusJson: dealInvestment.esignStatusJson,
+    })
+    .from(dealInvestment)
+    .where(eq(dealInvestment.dealId, dealId));
+  const lps = await db
+    .select({
+      id: dealLpInvestor.id,
+      contactMemberId: dealLpInvestor.contactMemberId,
+      email: dealLpInvestor.email,
+      esignStatusJson: dealLpInvestor.esignStatusJson,
+    })
+    .from(dealLpInvestor)
+    .where(eq(dealLpInvestor.dealId, dealId));
+
+  const jsons: string[] = [];
+  const seen = new Set<string>();
+  const push = (key: string, raw: string | null | undefined) => {
+    const json = raw?.trim() ?? "";
+    if (!json || seen.has(key)) return;
+    seen.add(key);
+    jsons.push(json);
+  };
+
+  for (const row of investments) {
+    const contactId = normContactKey(row.contactId);
+    let match = Boolean(contactId && contactKeys.has(contactId));
+    if (!match && contactId && emails.size > 0) {
+      const resolved = normEmail(
+        (await resolveEmailForContactMemberId(contactId)) ?? "",
+      );
+      match = resolved.includes("@") && emails.has(resolved);
+    }
+    if (!match) continue;
+    push(`investment:${row.id}`, row.esignStatusJson);
+  }
+  for (const row of lps) {
+    const contactId = normContactKey(row.contactMemberId);
+    const rowEmail = normEmail(String(row.email ?? ""));
+    const contactMatch = Boolean(contactId && contactKeys.has(contactId));
+    let emailMatch = Boolean(rowEmail.includes("@") && emails.has(rowEmail));
+    if (!contactMatch && !emailMatch && contactId && emails.size > 0) {
+      const resolved = normEmail(
+        (await resolveEmailForContactMemberId(contactId)) ?? "",
+      );
+      emailMatch = resolved.includes("@") && emails.has(resolved);
+    }
+    if (!contactMatch && !emailMatch) continue;
+    push(`lp:${row.id}`, row.esignStatusJson);
+  }
+
+  if (jsons.length === 0) {
+    const own = await readInvestorEsignStatusJson(dealId, target);
+    if (own?.trim()) jsons.push(own);
+  }
+  return jsons;
+}
+
 export async function readInvestorEsignStatusJson(
   dealId: string,
   target: InvestorEsignRowTarget,
@@ -437,6 +546,33 @@ export async function markDealInvestorEsignPending(
   });
 }
 
+/** Drop one signature request so a replacement send can be stored for the same profile. */
+export async function removeDealInvestorEsignSend(
+  dealId: string,
+  target: InvestorEsignRowTarget,
+  signatureRequestId: string,
+): Promise<boolean> {
+  const sigId = signatureRequestId.trim();
+  if (!sigId) return false;
+  const raw = await readInvestorEsignStatusJson(dealId, target);
+  const bundle = parseEsignStatusBundle(raw);
+  if (!bundle?.sends.length) return false;
+  const sends = bundle.sends.filter((s) => s.signatureRequestId?.trim() !== sigId);
+  if (sends.length === bundle.sends.length) return false;
+  const next = { version: 2 as const, sends };
+  const docSignedDate =
+    sends.length === 0
+      ? ""
+      : esignBundleIsAllCompleted(next)
+        ? DOC_SIGNED_ESIGN_COMPLETED
+        : DOC_SIGNED_ESIGN_PENDING;
+  await applyInvestorEsignPatch(dealId, target, {
+    docSignedDate,
+    esignStatusJson: serializeEsignStatusBundle(next),
+  });
+  return true;
+}
+
 export async function updateDealInvestorEsignSend(
   dealId: string,
   target: InvestorEsignRowTarget,
@@ -465,6 +601,52 @@ export async function updateDealInvestorEsignSend(
     docSignedDate,
     esignStatusJson: serializeEsignStatusBundle(bundle),
   });
+}
+
+/** Records the deal sponsor who took an open “Anyone can sign” slot. */
+export async function rememberSponsorSignerOnEsignSend(params: {
+  dealId: string;
+  signatureRequestId: string;
+  name: string;
+  email: string;
+  /** Latest opener replaces a sponsor who has not finished. A finished signer is kept. */
+  overwrite: boolean;
+}): Promise<void> {
+  const name = params.name.replace(/\u2060/g, "").trim();
+  const email = params.email.trim().toLowerCase();
+  const sigId = params.signatureRequestId.trim();
+  if (!name || !sigId) return;
+  const lower = name.toLowerCase();
+  if (
+    lower.includes("anyone can sign") ||
+    lower === "any sponsor" ||
+    lower === "sponsor" ||
+    lower === "investor"
+  ) {
+    return;
+  }
+  const context = await findInvestorEsignContextBySignatureRequestId(sigId);
+  if (!context || context.dealId !== params.dealId.trim()) return;
+  await updateDealInvestorEsignSend(
+    params.dealId,
+    context.target,
+    sigId,
+    (current) => {
+      const existing = current.sponsorSignedByName?.trim() ?? "";
+      if (!params.overwrite && existing) return current;
+      if (
+        existing === name &&
+        (current.sponsorSignedByEmail?.trim().toLowerCase() ?? "") === email
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        sponsorSignedByName: name,
+        ...(email.includes("@") ? { sponsorSignedByEmail: email } : {}),
+      };
+    },
+  );
 }
 
 /** Investor opened embedded signing (Invest Now / portal) — sets Viewed on the active send. */

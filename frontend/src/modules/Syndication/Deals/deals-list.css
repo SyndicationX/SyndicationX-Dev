@@ -908,7 +908,7 @@ a.deals_list_add_link.um_btn_primary {
 .deals_table_th_hint {
   flex-shrink: 0;
   color: var(--portal-text-muted);
-  cursor: help;
+  cursor: pointer;
 }
 
 /* Match Members table name / link treatment */
@@ -1131,7 +1131,9 @@ a.deals_list_add_link.um_btn_primary {
 }
 
 .deals_list_table_panel .deals_td_investor_class_cell {
-  max-width: 14em;
+  width: 1%;
+  max-width: none;
+  white-space: nowrap;
 }
 
 /* Deal details modal — compact; no inner scroll (overlay scrolls if viewport is short) */
@@ -1358,7 +1360,8 @@ a.deals_list_add_link.um_btn_primary {
   min-inline-size: 0;
 }
 
-.deals_cross_org_view_only_notice {
+.deals_cross_org_view_only_notice,
+.deals_company_required_notice {
   display: flex;
   align-items: flex-start;
   gap: 0.7rem;
@@ -1373,13 +1376,15 @@ a.deals_list_add_link.um_btn_primary {
   box-sizing: border-box;
 }
 
-.deals_cross_org_view_only_notice > svg {
+.deals_cross_org_view_only_notice > svg,
+.deals_company_required_notice > svg {
   flex: 0 0 auto;
   margin-top: 0.05rem;
   color: #b87500;
 }
 
-.deals_cross_org_view_only_notice > div {
+.deals_cross_org_view_only_notice > div,
+.deals_company_required_notice > div {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
@@ -1388,9 +1393,21 @@ a.deals_list_add_link.um_btn_primary {
   line-height: 1.4;
 }
 
-.deals_cross_org_view_only_notice strong {
+.deals_cross_org_view_only_notice strong,
+.deals_company_required_notice strong {
   font-size: 0.95rem;
   color: #5d3d00;
+}
+
+.deals_company_required_notice a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.deals_company_required_notice a:hover {
+  color: #3f2800;
 }
 
 /* Cross-company syndicators may inspect every tab, but cannot manage the deal. */

@@ -121,6 +121,11 @@ export {
   type UserSavedAddressRow,
 } from "./investing.schema/userProfileBook.schema.js";
 export {
+  investorBankAccountAuditLogs,
+  userInvestorConnectBankDeletions,
+  type InvestorBankAccountAuditAction,
+} from "./investing.schema/investorBankAccountAudit.schema.js";
+export {
   investorCheckoutPayments,
   investorDistributionPayouts,
   type InvestorCheckoutPaymentRow,

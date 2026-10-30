@@ -16,6 +16,7 @@ import {
   addDealEsignSignflowInvestorDataField,
   completeDealEsignSignflowTemplate,
   startDealEsignSignflowTemplateDraft,
+  syncDealEsignSignflowTemplateFields,
 } from "../../services/deal/dealEsignSignflow.service.js";
 import { ESIGN_INVESTOR_DATA_FIELDS } from "../../services/deal/esignInvestorDataFieldCatalog.js";
 import { getSignFlowPublicConfig } from "../../config/signflow.config.js";
@@ -254,6 +255,68 @@ export async function postDealEsignCompleteEmbeddedTemplate(
 }
 
 /**
+ * POST /deals/:dealId/esign-templates/:fileId/sync-embedded-template-fields
+ * Stores the current SignFlow field layout when the editor closes.
+ */
+export async function postDealEsignSyncEmbeddedTemplateFields(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+
+  const dealId =
+    typeof req.params.dealId === "string"
+      ? req.params.dealId
+      : req.params.dealId?.[0];
+  const fileId =
+    typeof req.params.fileId === "string"
+      ? req.params.fileId
+      : req.params.fileId?.[0];
+
+  if (!dealId || !fileId) {
+    res.status(400).json({ message: "Missing deal id or file id" });
+    return;
+  }
+
+  try {
+    const scope = await resolveDealViewerScope(
+      user.id,
+      user.userRole,
+      requestedOrganizationIdFromRequest(req),
+    );
+    if (!(await assertDealIdInViewerScope(dealId, scope))) {
+      res.status(404).json({ message: "Deal not found" });
+      return;
+    }
+    if (!(await isPortalUserLeadOrAdminSponsorOnDeal(dealId, user.id))) {
+      res.status(403).json({
+        message:
+          "Only the lead or admin sponsor can configure eSign template fields",
+      });
+      return;
+    }
+    if (getActiveEsignProvider() !== "signflow") {
+      res.status(400).json({
+        message: "Field layout sync is available for SignFlow only",
+      });
+      return;
+    }
+
+    const result = await syncDealEsignSignflowTemplateFields({ dealId, fileId });
+    res.status(200).json(result);
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Could not store eSign fields";
+    console.error("postDealEsignSyncEmbeddedTemplateFields:", err);
+    res.status(400).json({ message });
+  }
+}
+
+/**
  * GET /deals/:dealId/esign-templates/investor-data-fields
  * Catalog of investor profile fields sponsors can place for auto-prefill.
  */
@@ -313,6 +376,7 @@ export async function postDealEsignAddInvestorDataField(
   const pageRaw = Number(body.page ?? body.templatePage ?? body.template_page);
   const page =
     Number.isFinite(pageRaw) && pageRaw >= 1 ? Math.floor(pageRaw) : undefined;
+  const required = body.required !== false && body.required !== "false";
 
   try {
     const scope = await resolveDealViewerScope(
@@ -345,6 +409,7 @@ export async function postDealEsignAddInvestorDataField(
       fieldKey,
       profileIds,
       page,
+      required,
     });
     res.status(200).json(result);
   } catch (err) {

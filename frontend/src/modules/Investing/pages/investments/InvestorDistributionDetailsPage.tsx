@@ -50,6 +50,8 @@ export default function InvestorDistributionDetailsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [detail, setDetail] = useState<MyDistributionDetail | null>(null)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const backHref = `/investing/investments/${encodeURIComponent(decodedInvestmentId)}?tab=distributions`
 
@@ -165,6 +167,29 @@ export default function InvestorDistributionDetailsPage() {
     [],
   )
 
+  const paymentRows = detail?.payments ?? []
+  useEffect(() => {
+    setPage(1)
+  }, [decodedDistId])
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(paymentRows.length / pageSize))
+    if (page > totalPages) setPage(totalPages)
+  }, [paymentRows.length, pageSize, page])
+  const pagination = useMemo(
+    () => ({
+      page,
+      pageSize,
+      totalItems: paymentRows.length,
+      onPageChange: setPage,
+      onPageSizeChange: (n: number) => {
+        setPageSize(n)
+        setPage(1)
+      },
+      ariaLabel: "Distribution payments table pagination",
+    }),
+    [page, pageSize, paymentRows.length],
+  )
+
   if (!decodedInvestmentId || !decodedDistId) {
     return (
       <div className="um_page deals_list_page deals_detail_page investment_detail_page">
@@ -228,6 +253,9 @@ export default function InvestorDistributionDetailsPage() {
               rows={detail.payments}
               getRowKey={(row, i) => `${row.classId}:${row.payment}:${i}`}
               emptyLabel="No payment lines for your investment on this distribution."
+              pagination={
+                detail.payments.length > 0 ? pagination : undefined
+              }
             />
 
             <div className="um_toolbar deal_dist_toolbar">
@@ -236,6 +264,7 @@ export default function InvestorDistributionDetailsPage() {
                 className="um_toolbar_export_btn"
                 onClick={() => navigate(backHref)}
               >
+                <ArrowLeft size={16} strokeWidth={2} aria-hidden />
                 Back to list
               </button>
             </div>

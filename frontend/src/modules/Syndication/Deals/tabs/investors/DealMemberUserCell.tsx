@@ -31,9 +31,12 @@ function dealMemberInitials(r: DealInvestorRow): string {
 export function DealMemberUserCell({
   row,
   isDraft,
+  onNameClick,
 }: {
   row: DealInvestorRow
   isDraft?: boolean
+  /** When set, the name opens the member view popup. */
+  onNameClick?: (row: DealInvestorRow) => void
 }) {
   const initials = dealMemberInitials(row)
   const rawEmail = String(row.userEmail ?? "").trim()
@@ -47,6 +50,7 @@ export function DealMemberUserCell({
         : "—"
   const emailText = displayEmail(rawEmail)
   const emailUsable = isDisplayableEmail(rawEmail)
+  const nameClickable = Boolean(onNameClick && nameLine !== "—")
 
   return (
     <div className="um_user_cell">
@@ -55,13 +59,28 @@ export function DealMemberUserCell({
       </div>
       <div className="um_user_meta">
         <div className="deal_member_user_name_row">
-          <span
-            className={`um_user_meta_username${
-              nameLine === "—" ? " um_user_meta_username--placeholder" : ""
-            }`}
-          >
-            {nameLine}
-          </span>
+          {nameClickable ? (
+            <button
+              type="button"
+              className="um_user_meta_username um_user_meta_name_btn"
+              title={`View details for ${nameLine}`}
+              aria-label={`View details for ${nameLine}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onNameClick?.(row)
+              }}
+            >
+              {nameLine}
+            </button>
+          ) : (
+            <span
+              className={`um_user_meta_username${
+                nameLine === "—" ? " um_user_meta_username--placeholder" : ""
+              }`}
+            >
+              {nameLine}
+            </span>
+          )}
           {isDraft ? (
             <span
               className="deals_list_draft_icon deals_list_draft_icon--draft"

@@ -9,19 +9,17 @@ import {
   patchSignFlowDocument,
   resolveSignFlowFieldTemplateAnchor,
   resolveSignFlowInvestorRecipientId,
-  resolveSignFlowSponsorRecipientId,
   type SignFlowField,
 } from "../esign/signflow.service.js";
 import {
   esignDocumentAlignedTextFieldSize,
   expandShrunkChoiceFieldsForEditor,
-  getInvestorQuestionnaireSignatureSignFlowFields,
   isQuestionnaireSignatureFieldLabel,
-  loadInvestorQuestionnaireSignaturePagePdf,
   normalizeSignFlowChoiceFieldOptionNumbers,
 } from "./esignPdfMerge.service.js";
-import { inferSigningWorkflowFromSignFlowDocument, resolveSigningWorkflowFromTemplateFile } from "./dealEsignSigningWorkflow.service.js";
+import { inferSigningWorkflowFromSignFlowDocument, resolveSigningWorkflowFromTemplateFile, syncDealSponsorsOntoSignFlowTemplate } from "./dealEsignSigningWorkflow.service.js";
 import {
+  ESIGN_TEMPLATE_PDF_MISSING_MESSAGE,
   ensureEsignTemplatePdfPrepared,
   findEsignTemplateFile,
   getDealEsignTemplatesState,
@@ -34,12 +32,6 @@ import {
 import { eq } from "drizzle-orm";
 import { db } from "../../database/db.js";
 import { addDealForm } from "../../schema/deal.schema/add-deal-form.schema.js";
-import {
-  fetchAutoPlacedOnboardingFields,
-  replaceAutoPlacedSubscriptionFields,
-} from "../onboarding/onboardingFieldsPython.service.js";
-import { isOnboardingFieldsServiceConfigured } from "../../config/onboardingFields.config.js";
-import { getEsignW9PageCount } from "./investorW9Form.service.js";
 import { computePdfPageFingerprints } from "./esignPdfPageMap.service.js";
 import {
   ALL_SIGNFLOW_PROFILE_TYPES,
@@ -52,27 +44,50 @@ import {
   normalizeEsignFieldLabel,
 } from "./esignInvestorDataFieldCatalog.js";
 
-function hasStoredSignflowTemplateFields(file: EsignTemplateFileRecord): boolean {
-  return (file.signflowTemplateFields?.length ?? 0) > 0;
+function templateFileId(raw: string): string {
+  const id = raw.trim();
+  const parts = id.split("::");
+  return (parts[parts.length - 1] ?? id).trim();
 }
 
-/** Skip auto-placement / preset seeding once the draft was seeded or saved. */
-function shouldSkipTemplateFieldSeeding(file: EsignTemplateFileRecord): boolean {
-  return (
-    file.signflowStatus === "ready" ||
-    hasStoredSignflowTemplateFields(file) ||
-    Boolean(file.signflowFieldsSeededAt?.trim())
-  );
-}
-
-async function markSignFlowFieldsSeeded(
+/** Radio/checkbox fields from the deal template, used to repair a sent copy. */
+export async function choiceFieldSourcesForDealFiles(
   dealId: string,
-  state: EsignTemplatesJson,
-  file: EsignTemplateFileRecord,
-): Promise<void> {
-  if (file.signflowFieldsSeededAt?.trim()) return;
-  file.signflowFieldsSeededAt = new Date().toISOString();
-  await persistEsignTemplatesJson(dealId, state);
+  fileIds: string[],
+): Promise<SignFlowField[]> {
+  const wanted = new Set(fileIds.map(templateFileId).filter(Boolean));
+  const state = await getDealEsignTemplatesState(dealId);
+  const files = state.files.filter(
+    (file) => wanted.size === 0 || wanted.has(file.id),
+  );
+  const snapshot = files.flatMap((file) => file.signflowTemplateFields ?? []);
+  if (
+    snapshot.some((field) => {
+      const type = String(field.type ?? "").trim().toLowerCase();
+      return type === "radio" || type === "checkbox";
+    })
+  ) {
+    return snapshot;
+  }
+
+  const live: SignFlowField[] = [];
+  for (const file of files) {
+    const documentId = file.signflowDocumentId?.trim();
+    if (!documentId) continue;
+    try {
+      const doc = await getSignFlowDocument(documentId);
+      live.push(...((doc.fields ?? []) as SignFlowField[]));
+    } catch (err) {
+      console.warn("choiceFieldSourcesForDealFiles:", err);
+    }
+  }
+  return live;
+}
+
+function isMissingTemplatePdfError(err: unknown): boolean {
+  return (
+    err instanceof Error && err.message === ESIGN_TEMPLATE_PDF_MISSING_MESSAGE
+  );
 }
 
 async function captureSignFlowTemplateFieldsForStorage(
@@ -97,32 +112,6 @@ async function captureSignFlowTemplateFieldsForStorage(
       templatePage,
       pageHash: hashes[templatePage - 1],
     };
-  });
-}
-
-/**
- * Restore sponsor-saved fields onto the SignFlow document only when the live
- * document has no fields (e.g. SignFlow cleared them). Never overwrite a live
- * layout — otherwise deleted fields reappear after the editor reloads.
- */
-async function ensureSignFlowTemplateFieldsFromRecord(
-  documentId: string,
-  file: EsignTemplateFileRecord,
-): Promise<void> {
-  const stored = file.signflowTemplateFields;
-  if (!stored?.length) return;
-
-  const doc = await getSignFlowDocument(documentId);
-  const live = (doc.fields ?? []) as SignFlowField[];
-  if (live.length > 0) return;
-
-  const normalizedStored = normalizeSignFlowFieldRecipientIds(
-    doc,
-    stored,
-  ) as SignFlowField[];
-
-  await patchSignFlowDocument(documentId, {
-    fields: normalizedStored,
   });
 }
 
@@ -152,68 +141,22 @@ async function applyTemplateSigningWorkflowToSignFlowDoc(
   );
 }
 
-function normalizeQuestionnaireSignatureFieldLabel(label: string): string {
-  return String(label ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-}
-
-async function ensureSignFlowQuestionnaireSignatureFields(
+/**
+ * If opening the editor cleared the live document, put the last saved fields back.
+ * An empty saved layout stays empty, so a document the sponsor cleared stays clear.
+ */
+async function restoreStoredFieldsIfLiveEmpty(
   documentId: string,
-  includeQuestionnaire: boolean,
+  file: EsignTemplateFileRecord,
 ): Promise<void> {
-  if (!includeQuestionnaire) return;
-
-  await loadInvestorQuestionnaireSignaturePagePdf();
+  const stored = file.signflowTemplateFields;
+  if (!stored?.length) return;
 
   const doc = await getSignFlowDocument(documentId);
-  const existing = doc.fields ?? [];
-  const investorRecipientId = resolveSignFlowInvestorRecipientId(doc);
-  const preset = getInvestorQuestionnaireSignatureSignFlowFields(
-    investorRecipientId,
-    0,
-  );
-
-  const otherFields = normalizeSignFlowFieldRecipientIds(
-    doc,
-    existing.filter(
-      (field) =>
-        Math.max(1, Math.floor(Number(field.page) || 1)) !== 1 ||
-        !isQuestionnaireSignatureFieldLabel(String(field.label ?? "")),
-    ),
-  );
-
-  const normalizedPreset = normalizeSignFlowFieldRecipientIds(doc, preset);
-  const existingQuestionnaire = existing.filter(
-    (field) =>
-      Math.max(1, Math.floor(Number(field.page) || 1)) === 1 &&
-      isQuestionnaireSignatureFieldLabel(String(field.label ?? "")),
-  );
-
-  const questionnaireFieldsMatch =
-    existingQuestionnaire.length === normalizedPreset.length &&
-    normalizedPreset.every((field) => {
-      const match = existingQuestionnaire.find(
-        (existingField) =>
-          normalizeQuestionnaireSignatureFieldLabel(
-            String(existingField.label ?? ""),
-          ) ===
-          normalizeQuestionnaireSignatureFieldLabel(String(field.label ?? "")),
-      );
-      if (!match) return false;
-      return (
-        Math.abs(Number(match.x) - Number(field.x)) < 0.05 &&
-        Math.abs(Number(match.y) - Number(field.y)) < 0.05 &&
-        Math.abs(Number(match.width) - Number(field.width)) < 0.05 &&
-        Math.abs(Number(match.height) - Number(field.height)) < 0.05
-      );
-    });
-
-  if (questionnaireFieldsMatch) return;
+  if ((doc.fields?.length ?? 0) > 0) return;
 
   await patchSignFlowDocument(documentId, {
-    fields: [...otherFields, ...normalizedPreset],
+    fields: normalizeSignFlowFieldRecipientIds(doc, stored),
   });
 }
 
@@ -265,62 +208,6 @@ function signFlowFieldsPlacementChanged(
   return JSON.stringify(norm(before)) !== JSON.stringify(norm(after));
 }
 
-async function ensureAutoPlacedOnboardingFields(
-  documentId: string,
-  pageCount: number,
-  pdfBuffer: Buffer,
-  includeQuestionnaire: boolean,
-  includesW9Appendix: boolean,
-): Promise<void> {
-  const doc = await getSignFlowDocument(documentId);
-  const w9PageCount = includesW9Appendix ? await getEsignW9PageCount() : 0;
-  const autoPlaced = await fetchAutoPlacedOnboardingFields({
-    pageCount,
-    pdfBuffer,
-    includeQuestionnaire,
-    includesW9Appendix,
-    w9PageCount,
-    investorRecipientId: resolveSignFlowInvestorRecipientId(doc),
-    sponsorRecipientId: resolveSignFlowSponsorRecipientId(doc),
-  });
-
-  const existing = doc.fields ?? [];
-  const w9StartPage =
-    includesW9Appendix && w9PageCount > 0
-      ? Math.max(1, pageCount - w9PageCount + 1)
-      : null;
-
-  const withoutW9OrStale = existing.filter((field) => {
-    const page = Math.max(1, Math.floor(Number(field.page) || 1));
-    if (w9StartPage != null && page >= w9StartPage) return false;
-    return true;
-  });
-
-  const merged = replaceAutoPlacedSubscriptionFields(withoutW9OrStale, autoPlaced);
-  const normalizedMerged = normalizeSignFlowFieldRecipientIds(
-    doc,
-    merged,
-  ) as SignFlowField[];
-  const normalizedExisting = normalizeSignFlowFieldRecipientIds(
-    doc,
-    existing as SignFlowField[],
-  ) as SignFlowField[];
-
-  if (!signFlowFieldsPlacementChanged(normalizedExisting, normalizedMerged)) {
-    return;
-  }
-
-  if (!autoPlaced.length && isOnboardingFieldsServiceConfigured()) {
-    console.warn(
-      "[esign] Python field placement returned no fields — removed stale auto-placed subscription fields",
-    );
-  }
-
-  await patchSignFlowDocument(documentId, {
-    fields: normalizedMerged,
-  });
-}
-
 export async function startDealEsignSignflowTemplateDraft(params: {
   dealId: string;
   fileId: string;
@@ -364,45 +251,21 @@ export async function startDealEsignSignflowTemplateDraft(params: {
     existingDocId &&
     (file.signflowStatus === "draft" || file.signflowStatus === "ready");
 
-  await ensureEsignTemplatePdfPrepared(params.dealId, file, state);
-  const fileBuffer = await readEsignTemplatePdfBuffer(file.relativePath);
-  const pdfPageCount = await countSignFlowPdfPages(fileBuffer);
+  try {
+    await ensureEsignTemplatePdfPrepared(params.dealId, file, state);
+  } catch (err) {
+    if (!canResumeExisting || !isMissingTemplatePdfError(err)) throw err;
+  }
 
   if (canResumeExisting) {
     await ensureSignFlowEmbedRecipients(existingDocId);
+    await syncDealSponsorsOntoSignFlowTemplate(existingDocId, params.dealId);
     await stripQuestionnaireSignatureFieldsIfDisabled(
       existingDocId,
       Boolean(file.includeQuestionnaire),
     );
-    // After the first seed, trust the live SignFlow document. Re-running
-    // auto-place / questionnaire presets would bring deleted fields back.
-    if (shouldSkipTemplateFieldSeeding(file)) {
-      await ensureSignFlowTemplateFieldsFromRecord(existingDocId, file);
-    } else {
-      const resumeDoc = await getSignFlowDocument(existingDocId);
-      if ((resumeDoc.fields?.length ?? 0) > 0) {
-        // Already placed (including legacy drafts before signflowFieldsSeededAt).
-        await markSignFlowFieldsSeeded(params.dealId, state, file);
-      } else {
-        await ensureSignFlowQuestionnaireSignatureFields(
-          existingDocId,
-          Boolean(file.includeQuestionnaire),
-        );
-        const resumePageCount = Math.max(
-          1,
-          Number(resumeDoc.pages) || pdfPageCount,
-        );
-        await ensureAutoPlacedOnboardingFields(
-          existingDocId,
-          resumePageCount,
-          fileBuffer,
-          Boolean(file.includeQuestionnaire),
-          Boolean(file.includesW9Appendix),
-        );
-        await markSignFlowFieldsSeeded(params.dealId, state, file);
-      }
-    }
     await applyTemplateSigningWorkflowToSignFlowDoc(file, existingDocId);
+    await restoreStoredFieldsIfLiveEmpty(existingDocId, file);
     await restorePlacedChoiceFieldSizes(existingDocId);
     return {
       file,
@@ -415,6 +278,9 @@ export async function startDealEsignSignflowTemplateDraft(params: {
       testMode: publicCfg.testMode,
     };
   }
+
+  const fileBuffer = await readEsignTemplatePdfBuffer(file.relativePath);
+  const pdfPageCount = await countSignFlowPdfPages(fileBuffer);
 
   let documentId = existingDocId;
   if (documentId) {
@@ -453,22 +319,11 @@ export async function startDealEsignSignflowTemplateDraft(params: {
   }
 
   await ensureSignFlowEmbedRecipients(documentId);
+  await syncDealSponsorsOntoSignFlowTemplate(documentId, params.dealId);
   await stripQuestionnaireSignatureFieldsIfDisabled(
     documentId,
     Boolean(file.includeQuestionnaire),
   );
-  await ensureSignFlowQuestionnaireSignatureFields(
-    documentId,
-    Boolean(file.includeQuestionnaire),
-  );
-  await ensureAutoPlacedOnboardingFields(
-    documentId,
-    pdfPageCount,
-    fileBuffer,
-    Boolean(file.includeQuestionnaire),
-    Boolean(file.includesW9Appendix),
-  );
-  await markSignFlowFieldsSeeded(params.dealId, state, file);
   await applyTemplateSigningWorkflowToSignFlowDoc(file, documentId);
 
   return {
@@ -564,6 +419,7 @@ export async function completeDealEsignSignflowTemplate(params: {
       page: resolveSignFlowFieldTemplateAnchor(field).templatePage,
       x: Number(field.x) || 0,
       y: Number(field.y) || 0,
+      required: field.required !== false,
     }));
   if (params.title?.trim()) file.signflowTitle = params.title.trim();
 
@@ -577,6 +433,65 @@ export async function completeDealEsignSignflowTemplate(params: {
 
   await persistEsignTemplatesJson(params.dealId, state);
   return file;
+}
+
+/**
+ * Copy the live SignFlow layout into the deal snapshot when the editor closes.
+ * Does not mark the template ready. An empty layout is stored so deleted
+ * fields are not restored the next time the editor opens.
+ */
+export async function syncDealEsignSignflowTemplateFields(params: {
+  dealId: string;
+  fileId: string;
+}): Promise<{ fieldCount: number }> {
+  const state = await getDealEsignTemplatesState(params.dealId);
+  const file = findEsignTemplateFile(state, params.fileId);
+  if (!file) throw new Error("eSign template file not found");
+
+  const documentId = file.signflowDocumentId?.trim() ?? "";
+  if (!documentId) {
+    throw new Error("Open the SignFlow template editor before saving fields");
+  }
+
+  let doc = await getSignFlowDocument(documentId);
+  doc = await normalizeSignFlowChoiceFieldSizes(documentId, doc);
+
+  let captured: SignFlowField[];
+  try {
+    captured = await captureSignFlowTemplateFieldsForStorage(
+      params.dealId,
+      file,
+      doc,
+    );
+  } catch (err) {
+    if (!isMissingTemplatePdfError(err)) throw err;
+    captured = normalizeSignFlowFieldRecipientIds(
+      doc,
+      (doc.fields ?? []) as SignFlowField[],
+    ) as SignFlowField[];
+  }
+
+  const withBindings = applySignflowInvestorDataFieldBindings(
+    captured,
+    file.signflowInvestorDataFieldBindings,
+  );
+  file.signflowTemplateFields = withBindings;
+  file.signflowInvestorDataFieldBindings = withBindings
+    .filter((field) => Boolean(field.dataKey?.trim()))
+    .map((field) => ({
+      dataKey: String(field.dataKey).trim(),
+      esignLabel: String(field.label ?? "").trim() || "Field",
+      profileTypes: (field.profileTypes?.length
+        ? field.profileTypes
+        : ALL_SIGNFLOW_PROFILE_TYPES) as string[],
+      page: resolveSignFlowFieldTemplateAnchor(field).templatePage,
+      x: Number(field.x) || 0,
+      y: Number(field.y) || 0,
+      required: field.required !== false,
+    }));
+
+  await persistEsignTemplatesJson(params.dealId, state);
+  return { fieldCount: withBindings.length };
 }
 
 function resolveRequestedSignFlowProfileTypes(
@@ -652,14 +567,27 @@ export function applySignflowInvestorDataFieldBindings(
           ? (match.profileTypes as SignFlowProfileType[])
           : undefined;
 
+    const required = resolveBoundInvestorDataFieldRequired(field, match, dataKey);
+
     return {
       ...field,
       ...(dataKey ? { dataKey } : {}),
       ...(profileTypes?.length ? { profileTypes } : {}),
-      // Catalog fields must stay required so investors see them in the field count.
-      ...(dataKey ? { required: true } : {}),
+      ...(required === undefined ? {} : { required }),
     };
   });
+}
+
+/** Catalog fields stay required unless the sponsor marked that placement optional. */
+function resolveBoundInvestorDataFieldRequired(
+  field: SignFlowField,
+  match: SignflowInvestorDataFieldBinding | undefined,
+  dataKey: string | undefined,
+): boolean | undefined {
+  if (!dataKey && !match) return undefined;
+  if (match && typeof match.required === "boolean") return match.required;
+  if (field.required === false) return false;
+  return true;
 }
 
 /**
@@ -674,6 +602,8 @@ export async function addDealEsignSignflowInvestorDataField(params: {
   profileIds?: string[];
   /** 1-based SignFlow builder page where the field should be appended. */
   page?: number;
+  /** When false, investors may leave the field blank. Defaults to required. */
+  required?: boolean;
 }): Promise<{
   field: SignFlowField;
   fieldCount: number;
@@ -706,6 +636,7 @@ export async function addDealEsignSignflowInvestorDataField(params: {
     }
   }
   const profileTypes = requestedTypes;
+  const required = params.required !== false;
 
   const doc = await getSignFlowDocument(documentId);
   const existing = (doc.fields ?? []) as SignFlowField[];
@@ -727,6 +658,7 @@ export async function addDealEsignSignflowInvestorDataField(params: {
     maxY = Math.max(maxY, y + h);
   }
 
+  const isSignature = catalog.signFlowType === "signature";
   const textSize = esignDocumentAlignedTextFieldSize(
     catalog.signFlowType === "date" ? "date" : "text",
   );
@@ -735,12 +667,11 @@ export async function addDealEsignSignflowInvestorDataField(params: {
     label: catalog.esignLabel,
     x: 12,
     y: Math.min(88, maxY + 3),
-    width: textSize.width,
-    height: textSize.height,
+    width: isSignature ? 18 : textSize.width,
+    height: isSignature ? 4 : textSize.height,
     page: targetPage,
     recipientId: investorRecipientId,
-    // Required so SignFlow includes the field in the investor's remaining-field count.
-    required: true,
+    required,
     dataKey: catalog.key,
     profileTypes,
   };
@@ -761,6 +692,7 @@ export async function addDealEsignSignflowInvestorDataField(params: {
     page: nextField.page,
     x: nextField.x,
     y: nextField.y,
+    required,
   };
   file.signflowInvestorDataFieldBindings = [
     ...(file.signflowInvestorDataFieldBindings ?? []),

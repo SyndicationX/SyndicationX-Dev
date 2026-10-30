@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { getUploadsPhysicalRoot } from "../../config/uploadPaths.js";
 import { db } from "../../database/db.js";
 import { dealInvestment } from "../../schema/deal.schema/deal-investment.schema.js";
+import { listInvestorClassesByDealId } from "./dealInvestorClass.service.js";
 import { getDropboxSignConfig } from "../../config/dropboxSign.config.js";
 import type { DealInvestorEsignDocumentRef } from "../../constants/deal-investor-esign-status.js";
 import {
@@ -192,7 +193,7 @@ export async function createInvestorSignatureRequestDropbox(params: {
         signerEmail,
         signerName,
         title: `eSign — ${dealLabel}`,
-        subject: `Please sign — ${dealLabel}`,
+        subject: `Please sign: ${dealLabel}`,
         message: `Please review and sign the documents for ${dealLabel}.`,
         metadata: requestMetadata,
         customFields,
@@ -213,7 +214,7 @@ export async function createInvestorSignatureRequestDropbox(params: {
       signerEmail,
       signerName,
       title: `eSign — ${dealLabel}`,
-      subject: `Please sign — ${dealLabel}`,
+      subject: `Please sign: ${dealLabel}`,
       message: `Please review and sign the documents for ${dealLabel}.`,
       metadata: requestMetadata,
       formFieldsPerDocument: formFields,
@@ -239,7 +240,7 @@ export async function createInvestorSignatureRequestDropbox(params: {
     signerEmail,
     signerName,
     title: `eSign — ${dealLabel}`,
-    subject: `Please sign — ${dealLabel}`,
+    subject: `Please sign: ${dealLabel}`,
     message: `Please review and sign the documents for ${dealLabel}.`,
     metadata: requestMetadata,
     customFields,
@@ -264,6 +265,29 @@ async function resolveInvestorW9FormData(params: {
   return readInvestorW9FormForTarget(params.dealId, params.esignTarget);
 }
 
+function parseMoneyNumber(raw: string | null | undefined): number {
+  const n = Number.parseFloat(String(raw ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function formatUsdForEsign(amount: number): string {
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatUnitCountForEsign(units: number): string {
+  if (!Number.isFinite(units) || units <= 0) return "";
+  const rounded = Math.round(units * 10000) / 10000;
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 4,
+  }).format(rounded);
+}
+
 export async function buildEsignPrefillContext(params: {
   dealId: string;
   esignTarget?: InvestorEsignRowTarget | null;
@@ -273,11 +297,16 @@ export async function buildEsignPrefillContext(params: {
   viewerUserId?: string;
 }): Promise<EsignQuestionnairePrefillContext> {
   let investmentAmount = "";
+  let subscriptionAmount = "";
+  let unitAmount = "";
+  let unitCount = "";
   let userInvestorProfileId = "";
   if (params.esignTarget?.table === "investment") {
     const [row] = await db
       .select({
         commitmentAmount: dealInvestment.commitmentAmount,
+        extraContributionAmounts: dealInvestment.extraContributionAmounts,
+        investorClass: dealInvestment.investorClass,
         userInvestorProfileId: dealInvestment.userInvestorProfileId,
       })
       .from(dealInvestment)
@@ -288,8 +317,31 @@ export async function buildEsignPrefillContext(params: {
         ),
       )
       .limit(1);
-    investmentAmount = String(row?.commitmentAmount ?? "").trim();
+    const extras = Array.isArray(row?.extraContributionAmounts)
+      ? row.extraContributionAmounts
+      : [];
+    const committed = [row?.commitmentAmount, ...extras]
+      .map((part) => parseMoneyNumber(String(part ?? "")))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .reduce((sum, n) => sum + n, 0);
+    subscriptionAmount = formatUsdForEsign(committed);
+    investmentAmount = subscriptionAmount;
     userInvestorProfileId = String(row?.userInvestorProfileId ?? "").trim();
+
+    const classKey = String(row?.investorClass ?? "").trim().toLowerCase();
+    if (classKey && committed > 0) {
+      const classes = await listInvestorClassesByDealId(params.dealId);
+      const matched = classes.find((cls) => {
+        const id = String(cls.id ?? "").trim().toLowerCase();
+        const name = String(cls.name ?? "").trim().toLowerCase();
+        return id === classKey || name === classKey;
+      });
+      const price = parseMoneyNumber(matched?.pricePerUnit);
+      if (price > 0) {
+        unitAmount = formatUsdForEsign(price);
+        unitCount = formatUnitCountForEsign(committed / price);
+      }
+    }
   }
 
   const w9FromBody = normalizeInvestorW9FormInput(params.w9Form);
@@ -310,6 +362,9 @@ export async function buildEsignPrefillContext(params: {
     memberDisplayName: params.memberDisplayName?.trim(),
     memberEmail: params.memberEmail?.trim().toLowerCase(),
     investmentAmount,
+    subscriptionAmount,
+    unitAmount,
+    unitCount,
     addressLine: addressParts?.addressLine,
     mailingAddressLine: addressParts?.mailingAddressLine,
     streetLine: addressParts?.streetLine,

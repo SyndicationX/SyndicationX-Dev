@@ -1,4 +1,5 @@
 import { fetchContacts } from "../contacts/api/contactsApi"
+import { fetchMyFeedback } from "@/modules/feedback/api/feedbackApi"
 import {
   fetchDealInvestorClasses,
   fetchDealInvestors,
@@ -21,17 +22,21 @@ export interface SyndicationDashboardSummary {
   totalDistributionsDisplay: string
   totalCommittedDisplay: string
   contactsCount: number
+  /** Feedback items submitted by the signed-in user. */
+  reviewsCount: number
 }
 
 async function loadDashboardSummaryForDealList(
   listOptions: { includeParticipantDeals?: boolean } | undefined,
 ): Promise<SyndicationDashboardSummary> {
-  const [list, contacts] = await Promise.all([
+  const [list, contacts, feedback] = await Promise.all([
     fetchDealsList(listOptions),
     fetchContacts({ lean: true }),
+    fetchMyFeedback(),
   ])
 
   const contactsCount = contacts.length
+  const reviewsCount = feedback.ok ? feedback.items.length : 0
 
   if (list.length === 0) {
     return {
@@ -41,6 +46,7 @@ async function loadDashboardSummaryForDealList(
       totalDistributionsDisplay: formatUsdDashboardAmount(0),
       totalCommittedDisplay: formatUsdDashboardAmount(0),
       contactsCount,
+      reviewsCount,
     }
   }
 
@@ -74,6 +80,7 @@ async function loadDashboardSummaryForDealList(
     totalDistributionsDisplay: formatUsdDashboardAmount(sumDistributed),
     totalCommittedDisplay: formatUsdDashboardAmount(sumAccepted),
     contactsCount,
+    reviewsCount,
   }
 }
 

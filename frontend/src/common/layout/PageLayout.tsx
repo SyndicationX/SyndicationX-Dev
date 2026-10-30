@@ -1,4 +1,5 @@
 import { type ComponentType, useEffect, useId, useState } from "react"
+import { useAppModalScrollLock } from "./useAppModalScrollLock"
 import {
   BarChart3,
   Briefcase,
@@ -9,6 +10,7 @@ import {
   ContactRound,
   Eye,
   Files,
+  Info,
   Inbox,
   LayoutDashboard,
   Layers,
@@ -31,6 +33,7 @@ import {
   isPlatformAdmin,
   resolveSyndicationSettingsNavPath,
 } from "../auth/roleUtils"
+import { refreshLeadSponsorSessionIfNeeded } from "../auth/refreshLeadSponsorSession"
 import { canAccessSyndicationSidebarPath } from "../config/sideNavAccess.config"
 import { TopNavBar } from "../components/TopNavBar/TopNavBar"
 import {
@@ -55,6 +58,12 @@ import {
 } from "@/modules/feedback/api/feedbackApi"
 // import { SX_LOGO_SRC } from "@/assets/branding"
 import { SX_SIDENAV_LOGO } from "@/assets/branding"
+import { CoSponsorCompanyRequiredAlert } from "../auth/CoSponsorCompanyRequiredAlert"
+import {
+  CO_SPONSOR_COMPANY_REQUIRED_EVENT,
+  loadCoSponsorNeedsCompany,
+} from "../auth/coSponsorCompanyGate"
+import { PORTAL_ACTIVE_COMPANY_CHANGED_EVENT } from "../auth/setActiveCompany"
 import "./page_layout.css"
 
 type SidebarIcon = ComponentType<{ size?: number; className?: string }>
@@ -336,13 +345,49 @@ const investingNavItems: NavItemLink[] = [
 function PageLayoutInner() {
   const location = useLocation()
   useUserActivityTracking()
+  useAppModalScrollLock()
   const { mode, setMode, portalSwitchOverlay } = usePortalMode()
   const platformAdmin = isPlatformAdmin()
   const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0)
+  const [coSponsorNeedsCompany, setCoSponsorNeedsCompany] = useState(false)
+  const [dealOpenBlocked, setDealOpenBlocked] = useState(false)
+  const [leadSponsorSessionRev, setLeadSponsorSessionRev] = useState(0)
   const lpInvestor = isLpInvestorSessionUser()
   const { sidebarLogoSrc: workspaceSidebarLogoSrc } = useAppShellBranding()
   const hasTenantSidebarLogo = Boolean(workspaceSidebarLogoSrc)
   const sidebarHeaderLogoSrc = workspaceSidebarLogoSrc ?? SX_SIDENAV_LOGO
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      void loadCoSponsorNeedsCompany(true).then((needsCompany) => {
+        if (cancelled) return
+        setCoSponsorNeedsCompany(needsCompany)
+        if (!needsCompany) setDealOpenBlocked(false)
+      })
+    }
+    load()
+    const onDealBlocked = () => setDealOpenBlocked(true)
+    window.addEventListener("portal-session-user-updated", load)
+    window.addEventListener(PORTAL_ACTIVE_COMPANY_CHANGED_EVENT, load)
+    window.addEventListener(CO_SPONSOR_COMPANY_REQUIRED_EVENT, onDealBlocked)
+    return () => {
+      cancelled = true
+      window.removeEventListener("portal-session-user-updated", load)
+      window.removeEventListener(PORTAL_ACTIVE_COMPANY_CHANGED_EVENT, load)
+      window.removeEventListener(CO_SPONSOR_COMPANY_REQUIRED_EVENT, onDealBlocked)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void refreshLeadSponsorSessionIfNeeded().then((changed) => {
+      if (!cancelled && changed) setLeadSponsorSessionRev((n) => n + 1)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!portalSwitchOverlay) return
@@ -435,6 +480,9 @@ function PageLayoutInner() {
     <div className="app_shell">
       {portalSwitchOverlay ? (
         <PortalSwitchLoader caption={portalSwitchOverlay.caption} />
+      ) : null}
+      {dealOpenBlocked ? (
+        <CoSponsorCompanyRequiredAlert onDismiss={() => setDealOpenBlocked(false)} />
       ) : null}
       <aside className="app_sidebar">
         <div
@@ -558,6 +606,7 @@ function PageLayoutInner() {
                   }
 
                   if (label === "Settings") {
+                    void leadSponsorSessionRev
                     const settingsTo = resolveSyndicationSettingsNavPath()
                     const settingsActive =
                       location.pathname === "/settings" ||
@@ -632,6 +681,18 @@ function PageLayoutInner() {
       <section className="app_main_section">
         <TopNavBar />
         <main className="app_main_content">
+          {coSponsorNeedsCompany ? (
+            <div className="app_cosponsor_company_alert" role="alert">
+              <Info size={20} strokeWidth={2.25} aria-hidden />
+              <div>
+                <strong>Add Company</strong>
+                <span>
+                  Add a company to open your deals.{" "}
+                  <Link to="/account/company">Add Company</Link>
+                </span>
+              </div>
+            </div>
+          ) : null}
           <Outlet />
         </main>
       </section>

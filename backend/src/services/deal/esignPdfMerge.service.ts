@@ -322,6 +322,94 @@ export function esignDocumentChoiceFieldSize(): {
   };
 }
 
+function choiceControlType(type: string): "radio" | "checkbox" | null {
+  const t = type.trim().toLowerCase();
+  if (t === "radio" || t === "checkbox") return t;
+  return null;
+}
+
+function choiceFieldLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Prefill used to rewrite radio/checkbox fields as text. Put the choice control
+ * back when the field still lines up with the original radio or checkbox.
+ */
+export function restoreFlattenedChoiceFields(
+  fields: SignFlowField[],
+  sources: SignFlowField[],
+): { fields: SignFlowField[]; changed: boolean } {
+  const choices = sources.filter((field) =>
+    choiceControlType(String(field.type ?? "")),
+  );
+  let changed = false;
+  const next = fields.map((field) => {
+    const type = String(field.type ?? "").trim().toLowerCase();
+    if (choiceControlType(type)) return field;
+    if (type && type !== "text") return field;
+
+    const groupId = String(field.radioGroupId ?? "").trim();
+    const label = choiceFieldLabel(String(field.label ?? ""));
+    const x = Number(field.x) || 0;
+    const y = Number(field.y) || 0;
+    const source =
+      (groupId
+        ? choices.find(
+            (choice) => String(choice.radioGroupId ?? "").trim() === groupId,
+          )
+        : undefined) ??
+      choices.find((choice) => {
+        if (choiceFieldLabel(String(choice.label ?? "")) !== label) return false;
+        return (
+          Math.abs((Number(choice.x) || 0) - x) < 3 &&
+          Math.abs((Number(choice.y) || 0) - y) < 3
+        );
+      });
+
+    if (!source && groupId) {
+      changed = true;
+      return { ...field, type: "radio" };
+    }
+    if (!source) return field;
+    changed = true;
+    return {
+      ...field,
+      type: source.type,
+      ...(source.radioGroupId ? { radioGroupId: source.radioGroupId } : {}),
+      width: Number(source.width) || field.width,
+      height: Number(source.height) || field.height,
+    };
+  });
+  return { fields: changed ? next : fields, changed };
+}
+
+/**
+ * Keep radio/checkbox fields that prefill rewrote as text, matched by index
+ * against the fields from before prefill.
+ */
+export function keepChoiceFieldsThroughPrefill(
+  fields: SignFlowField[],
+  beforePrefill: SignFlowField[],
+): SignFlowField[] {
+  return fields.map((field, index) => {
+    const prior = beforePrefill[index];
+    const priorType = choiceControlType(String(prior?.type ?? ""));
+    if (!prior || !priorType) return field;
+    if (choiceControlType(String(field.type ?? "")) === priorType) return field;
+    return {
+      ...field,
+      type: prior.type,
+      x: prior.x,
+      y: prior.y,
+      width: prior.width,
+      height: prior.height,
+      ...(prior.radioGroupId ? { radioGroupId: prior.radioGroupId } : {}),
+      value: prior.value,
+    };
+  });
+}
+
 function isSignFlowFieldType(field: SignFlowField, type: string): boolean {
   return String(field.type ?? "").trim().toLowerCase() === type;
 }
@@ -402,7 +490,7 @@ export function normalizeSignFlowChoiceFieldOptionNumbers(
     groupByOriginalIndex.set(
       entry.index,
       entry.explicitGroup
-        ? `${entry.type}|${entry.recipientId}|${entry.page}|explicit-${entry.explicitGroup}`
+        ? `${entry.type}|${entry.recipientId}|explicit-${entry.explicitGroup}`
         : `${entry.type}|${entry.recipientId}|${entry.page}|field-${entry.index}`,
     );
   }

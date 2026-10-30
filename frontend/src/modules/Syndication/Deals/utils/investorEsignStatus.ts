@@ -1,4 +1,5 @@
 import { getSessionUserId } from "../../../../common/auth/sessionUserId"
+import { investorParticipationKind } from "../../../Investing/utils/investorParticipationKind"
 import {
   dealAssetRelativePathToUploadsUrl,
   getUploadsPublicOrigin,
@@ -264,12 +265,26 @@ function parseEsignSendStatusRecord(
         .filter((x): x is DealInvestorEsignDocumentRef => x != null)
     : []
   const completedAt = strOrNull(o.completedAt ?? o.completed_at)
-  const documentsForSend = completedAt
-    ? documents
-    : documents.map((d) => {
-        const { signedRelativePath: _signed, ...rest } = d
-        return rest
-      })
+  const signedAt = strOrNull(o.signedAt ?? o.signed_at)
+  const documentsForSend =
+    completedAt || signedAt
+      ? documents
+      : documents.map((d) => {
+          const { signedRelativePath: _signed, ...rest } = d
+          return rest
+        })
+
+  const fullSignedRelativePath = String(
+    o.fullSignedRelativePath ?? o.full_signed_relative_path ?? "",
+  ).trim()
+  const sponsorSignedRelativePath = String(
+    o.sponsorSignedRelativePath ?? o.sponsor_signed_relative_path ?? "",
+  ).trim()
+  const sponsorSignedByName = String(
+    o.sponsorSignedByName ?? o.sponsor_signed_by_name ?? "",
+  )
+    .replace(/\u2060/g, "")
+    .trim()
 
   return {
     categoryId,
@@ -280,6 +295,9 @@ function parseEsignSendStatusRecord(
     signatureRequestId: strOrNull(
       o.signatureRequestId ?? o.signature_request_id,
     ),
+    ...(fullSignedRelativePath ? { fullSignedRelativePath } : {}),
+    ...(sponsorSignedRelativePath ? { sponsorSignedRelativePath } : {}),
+    ...(sponsorSignedByName ? { sponsorSignedByName } : {}),
     documents: documentsForSend,
   }
 }
@@ -309,6 +327,24 @@ export function parseEsignSendsFromApi(
     return []
   }
   return []
+}
+
+export function findEsignSendsForCategory(
+  sends: DealInvestorEsignSendStatus[],
+  categoryId: string,
+  investorLegacyCategoryId?: string | null,
+): DealInvestorEsignSendStatus[] {
+  const cat = categoryId.trim()
+  if (!cat) return []
+  const invCat = investorLegacyCategoryId?.trim()
+  return sends.filter((s) => {
+    const sendCat = s.categoryId.trim()
+    if (sendCat === cat) return true
+    if (invCat) {
+      return esignSendCategoryMatchesInvestorProfile(sendCat, invCat)
+    }
+    return esignSendCategoryMatchesInvestorProfile(sendCat, cat)
+  })
 }
 
 export function findEsignSendForCategory(
@@ -773,6 +809,15 @@ export function resolveEsignSignedPdfUrl(
   return uploadsUrlFromRelativePath(rel)
 }
 
+/** Browser URL for a stored investor or sponsor signed PDF. */
+export function esignStoredPdfUrl(
+  relativePath: string | null | undefined,
+): string | null {
+  const rel = relativePath?.trim()
+  if (!rel) return null
+  return uploadsUrlFromRelativePath(rel)
+}
+
 /** Signed PDF URL for a document row (same combined PDF when paths match). */
 export function resolveEsignSignedPdfUrlForDocument(
   status: DealInvestorEsignStatus,
@@ -824,13 +869,21 @@ export function investorEsignIsFullyCompletedForRow(
   return String(row.signedDate ?? "").trim().toLowerCase() === "completed"
 }
 
+function investorCommitmentFinishRecorded(row: DealInvestorRow): boolean {
+  const raw = String(row.commitmentCompletedAtIso ?? "").trim()
+  return Boolean(raw && raw !== "—" && raw !== "-")
+}
+
 /**
- * True when Invest Now is done for this profile (e-sign complete, or ETL
- * rows that already have a calendar signed date and a commitment).
+ * True when Invest Now is done for this profile (Finish was recorded,
+ * e-sign is complete, or ETL rows already have a calendar signed date
+ * and a commitment).
  */
 export function investorInvestmentProfileIsComplete(
   row: DealInvestorRow,
 ): boolean {
+  if (investorParticipationKind(row) === "invested") return true
+  if (investorCommitmentFinishRecorded(row)) return true
   if (investorEsignIsFullyCompletedForRow(row)) return true
   const doc = String(row.docSignedDateIso ?? row.signedDate ?? "").trim()
   if (!doc) return false

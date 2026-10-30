@@ -136,6 +136,8 @@ export const addDealForm = pgTable("add_deal_form", {
     .notNull()
     .default("none"),
   stripePriceId: varchar("stripe_price_id", { length: 255 }),
+  /** Seat package the lead already paid: 5 | 10 | 10plus. */
+  stripeSeatBand: varchar("stripe_seat_band", { length: 16 }),
   stripeCurrentPeriodEnd: timestamp("stripe_current_period_end", {
     withTimezone: true,
   }),

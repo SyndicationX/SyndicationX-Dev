@@ -8,11 +8,13 @@ import {
   Pencil,
   Play,
   Trash2,
+  UserMinus,
 } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { ConfirmDeleteModal } from "@/common/components/ConfirmDeleteModal"
 import { toast } from "@/common/components/Toast"
+import { MemberRemoveConfirmModal } from "@/modules/Syndication/usermanagement/MemberRemoveConfirmModal"
 import "@/modules/Syndication/usermanagement/user_management.css"
 import "@/modules/Syndication/Deals/tabs/deal_members/components/deal-member-row-actions.css"
 
@@ -83,6 +85,8 @@ export function InvestingProfilesRowActions({
   const [open, setOpen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const profileUsesRemoveConfirm = kind === "profile"
   const wrapRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -101,16 +105,28 @@ export function InvestingProfilesRowActions({
   const confirmDelete = useCallback(async () => {
     if (!onDelete) return
     setDeleteBusy(true)
+    setDeleteError("")
     try {
       await Promise.resolve(onDelete())
-      toast.success(deleteTitle, `“${nameForMsg}” was deleted.`)
+      toast.success(
+        profileUsesRemoveConfirm ? "Profile removed" : deleteTitle,
+        profileUsesRemoveConfirm
+          ? `“${nameForMsg}” was removed.`
+          : `“${nameForMsg}” was deleted.`,
+      )
       setDeleteConfirmOpen(false)
-    } catch {
-      /* parent shows the error toast */
+    } catch (e) {
+      if (profileUsesRemoveConfirm) {
+        setDeleteError(
+          e instanceof Error && e.message.trim()
+            ? e.message
+            : "Could not remove profile.",
+        )
+      }
     } finally {
       setDeleteBusy(false)
     }
-  }, [onDelete, deleteTitle, nameForMsg])
+  }, [onDelete, deleteTitle, nameForMsg, profileUsesRemoveConfirm])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -362,16 +378,26 @@ export function InvestingProfilesRowActions({
                     role="menuitem"
                     onClick={() => {
                       close()
+                      setDeleteError("")
                       setDeleteConfirmOpen(true)
                     }}
                   >
-                    <Trash2
-                      className="um_kebab_menuitem_icon"
-                      size={16}
-                      strokeWidth={2}
-                      aria-hidden
-                    />
-                    Delete
+                    {profileUsesRemoveConfirm ? (
+                      <UserMinus
+                        className="um_kebab_menuitem_icon"
+                        size={16}
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                    ) : (
+                      <Trash2
+                        className="um_kebab_menuitem_icon"
+                        size={16}
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                    )}
+                    {profileUsesRemoveConfirm ? "Remove" : "Delete"}
                   </button>
                 </li>
               ) : null}
@@ -401,18 +427,37 @@ export function InvestingProfilesRowActions({
           )
         : null}
     </div>
-    <ConfirmDeleteModal
-      open={deleteConfirmOpen}
-      title={deleteTitle}
-      message={`Are you sure you want to delete this ${kind}? This cannot be undone.`}
-      itemLabel={nameForMsg}
-      busy={deleteBusy}
-      onCancel={() => {
-        if (deleteBusy) return
-        setDeleteConfirmOpen(false)
-      }}
-      onConfirm={() => void confirmDelete()}
-    />
+    {profileUsesRemoveConfirm && deleteConfirmOpen ? (
+      <MemberRemoveConfirmModal
+        memberName={nameForMsg}
+        busy={deleteBusy}
+        error={deleteError}
+        message={
+          <>
+            This will remove <strong>{nameForMsg}</strong> from My profiles.
+          </>
+        }
+        onClose={() => {
+          if (deleteBusy) return
+          setDeleteError("")
+          setDeleteConfirmOpen(false)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
+    ) : (
+      <ConfirmDeleteModal
+        open={deleteConfirmOpen}
+        title={deleteTitle}
+        message={`Are you sure you want to delete this ${kind}? This cannot be undone.`}
+        itemLabel={nameForMsg}
+        busy={deleteBusy}
+        onCancel={() => {
+          if (deleteBusy) return
+          setDeleteConfirmOpen(false)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
+    )}
     </>
   )
 }

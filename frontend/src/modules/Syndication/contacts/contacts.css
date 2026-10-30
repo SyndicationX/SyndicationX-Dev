@@ -3720,8 +3720,136 @@
 
 .contacts_th_organization,
 .contacts_td_organization {
-  min-width: 8.5rem;
-  max-width: 14rem;
+  min-width: 10rem;
+  max-width: 16rem;
+}
+
+.contacts_org_cell {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.contacts_org_cell_button {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.contacts_org_cell_button:focus-visible,
+.contacts_org_more:focus-visible {
+  outline: 2px solid var(--portal-focus, #2563eb);
+  outline-offset: 2px;
+}
+
+.contacts_org_more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 1.85rem;
+  height: 1.5rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.contacts_org_more:hover {
+  background: #e0e7ff;
+}
+
+.contacts_org_modal.deals_add_inv_modal_panel.um_modal.um_modal_view {
+  max-width: min(42rem, 100%);
+}
+
+.contacts_org_intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.65rem;
+  margin-bottom: 0.85em;
+}
+
+.contacts_org_intro_name {
+  font-weight: 600;
+  color: var(--portal-text, #0f172a);
+  overflow-wrap: anywhere;
+}
+
+.contacts_org_intro_meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.contacts_org_panel_body {
+  padding-bottom: 0.15rem;
+}
+
+.contacts_org_table_wrap {
+  border: 1px solid var(--portal-table-border, #e2e8f0);
+  border-radius: var(--ui-button-border-radius, 4px);
+  overflow: auto;
+}
+
+.contacts_org_table.um_table {
+  min-width: 28rem;
+  font-size: 0.8125rem;
+}
+
+.contacts_org_table.um_table th,
+.contacts_org_table.um_table td {
+  padding: 0.55rem 0.7rem;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.contacts_org_table.um_table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.contacts_org_table.um_table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.contacts_org_table_company {
+  font-weight: 600;
+  width: 34%;
+}
+
+.contacts_org_table_muted {
+  color: var(--portal-text-muted, #64748b);
+}
+
+:root[data-theme="dark"] .contacts_org_more {
+  background: color-mix(in srgb, #818cf8 16%, transparent);
+  border-color: color-mix(in srgb, #818cf8 40%, transparent);
+  color: #e0e7ff;
+}
+
+:root[data-theme="dark"] .contacts_org_intro_name {
+  color: var(--portal-text, #f1f5f9);
+}
+
+:root[data-theme="dark"] .contacts_org_table_wrap {
+  border-color: var(--portal-border, rgba(255, 255, 255, 0.14));
 }
 
 .contacts_organization {

@@ -88,8 +88,23 @@ export function stripWizardStepMeta(
 
 export function saveAddProfileDraft(draft: AddProfileFormDraft): void {
   const form = stripWizardStepMeta(draft.form)
+  let backendProfileId =
+    typeof draft.backendProfileId === "string" && draft.backendProfileId.trim()
+      ? draft.backendProfileId.trim()
+      : null
+  if (!backendProfileId) {
+    const existingId = loadAddProfileDraft()?.backendProfileId?.trim() || ""
+    if (existingId && !addProfileDraftHasContent({ ...draft, form })) {
+      backendProfileId = existingId
+    }
+  }
+  const stored: AddProfileFormDraft = {
+    form,
+    step: draft.step,
+    ...(backendProfileId ? { backendProfileId } : {}),
+  }
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...draft, form }))
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
   } catch {
     /* quota / private mode */
   }

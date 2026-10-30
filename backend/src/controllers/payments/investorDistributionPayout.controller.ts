@@ -11,6 +11,10 @@ import {
   getDealDistributionFundingStatus,
 } from "../../services/payments/dealDistributionFunding.service.js";
 import {
+  archiveInvestorBankAccount,
+  listDistributionBankAccountSetup,
+} from "../../services/bankAccounts/index.js";
+import {
   attachInvestorConnectBankToProfile,
   createInvestorConnectOnboardingLink,
   executeDistributionPayouts,
@@ -112,6 +116,28 @@ export async function getInvestorSharedConnectBanks(
     return;
   }
   res.status(200).json({ banks: result.banks });
+}
+
+/** DELETE /investing/stripe-connect/banks/:accountId */
+export async function deleteInvestorSharedConnectBank(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const user = await getValidJwtUser(req);
+  if (!user?.id) {
+    res.status(401).json({ message: "Authorization required" });
+    return;
+  }
+  const result = await archiveInvestorBankAccount({
+    investorUserId: user.id,
+    actorUserId: user.id,
+    accountId: param(req.params.accountId),
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ message: result.message });
+    return;
+  }
+  res.status(200).json({ ok: true, profileIds: result.profileIds });
 }
 
 /** POST /investing/profiles/:profileId/stripe-connect/attach */
@@ -241,7 +267,18 @@ export async function getDistributionPayouts(
     return;
   }
   const rows = await listDistributionPayouts({ dealId, distributionId });
+  let bankAccountSetup: { investmentId: string; status: "set_up" | "not_set_up" }[] =
+    [];
+  try {
+    bankAccountSetup = await listDistributionBankAccountSetup({
+      dealId,
+      distributionId,
+    });
+  } catch (err) {
+    console.error("listDistributionBankAccountSetup:", err);
+  }
   res.status(200).json({
+    bankAccountSetup,
     payouts: rows.map((row) => ({
       id: row.id,
       investmentId: row.investmentId,

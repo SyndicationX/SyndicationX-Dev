@@ -42,7 +42,7 @@
 .metric_card_hint {
   display: inline-flex;
   color: var(--portal-text-muted);
-  cursor: help;
+  cursor: pointer;
   flex-shrink: 0;
 }
 

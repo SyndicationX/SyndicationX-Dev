@@ -1,3 +1,4 @@
+import { ChevronRight, Plus, Upload } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import "../usermanagement/user_management.css"
 import "./contacts.css"
@@ -62,6 +63,7 @@ export default function CrmOverviewPage() {
             className="um_btn_secondary"
             onClick={() => navigate("/contacts/import")}
           >
+            <Upload size={16} strokeWidth={2} aria-hidden />
             Import contacts
           </button>
           <button
@@ -69,7 +71,8 @@ export default function CrmOverviewPage() {
             className="um_btn_primary"
             onClick={() => navigate("/contacts/campaigns")}
           >
-            + New campaign
+            <Plus size={16} strokeWidth={2} aria-hidden />
+            New campaign
           </button>
         </div>
       </header>
@@ -109,6 +112,7 @@ export default function CrmOverviewPage() {
                   onClick={() => navigate(a.to)}
                 >
                   {a.action}
+                  <ChevronRight size={16} strokeWidth={2} aria-hidden />
                 </button>
               </li>
             ))}

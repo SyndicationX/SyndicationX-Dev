@@ -55,11 +55,30 @@ export {
   esignTemplateDisplayNameForFile,
 } from "./dealMemberSendEsignDropbox.service.js";
 
+function investorSignEmailSubject(params: {
+  emailSubject?: string;
+  documentNames?: string[];
+  dealName: string;
+}): string {
+  const custom = params.emailSubject?.trim();
+  if (custom && custom !== "__sx_portal_signing__") return custom;
+  const names = (params.documentNames ?? []).map((name) => name.trim()).filter(Boolean);
+  const documentTitle =
+    names.length === 0
+      ? params.dealName.trim() || "Document"
+      : names.length === 1
+        ? names[0]!
+        : names.join(", ");
+  return `Please sign: ${documentTitle}`;
+}
+
 export async function sendDealMemberSendEsignEmail(params: {
   dealId: string;
   toEmail: string;
   memberDisplayName?: string;
   documentNames?: string[];
+  /** Document custom subject. When empty, SignFlow's default is used. */
+  emailSubject?: string;
 }): Promise<{ ok: true } | { ok: false; error: unknown }> {
   const to = params.toEmail.trim().toLowerCase();
   if (!to.includes("@")) {
@@ -82,9 +101,11 @@ export async function sendDealMemberSendEsignEmail(params: {
       };
     }
 
-    const subject =
-      process.env.DEAL_MEMBER_ESIGN_SUBJECT?.trim()?.replace(/\{dealName\}/g, dealName) ||
-      `eSign documents ready — ${dealName}`;
+    const subject = investorSignEmailSubject({
+      emailSubject: params.emailSubject,
+      documentNames: params.documentNames,
+      dealName,
+    });
     const documentNames = (params.documentNames ?? [])
       .map((n) => n.trim())
       .filter(Boolean);

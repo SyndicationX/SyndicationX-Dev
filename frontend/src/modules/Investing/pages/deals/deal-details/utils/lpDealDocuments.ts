@@ -9,6 +9,7 @@ import {
   sectionDisplayLabel,
   sectionSharedWithDisplay,
   sectionVisibleOnOfferingPreview,
+  workspaceListsOfferingDocuments,
 } from "@/modules/Syndication/Deals/utils/offeringPreviewDocSections"
 
 export interface LpDealDocumentRow {
@@ -50,7 +51,7 @@ export function listDocumentsForLpDealPage(dealId: string): LpDealDocumentRow[] 
       })
     }
   }
-  if (out.length > 0) return out
+  if (out.length > 0 || workspaceListsOfferingDocuments(sections)) return out
   for (const d of readOfferingPreviewDocuments(id)) {
     if (offeringPreviewDocumentExcludedFromInvestorOffering(d, sections)) continue
     const scope = resolveFlatDocumentSharedWithScope(d.sharedWithScope)

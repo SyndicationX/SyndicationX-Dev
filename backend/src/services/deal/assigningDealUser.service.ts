@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { db, pool } from "../../database/db.js";
 import { assigningDealUser, contact, users } from "../../schema/schema.js";
 import { dealInvestment } from "../../schema/deal.schema/deal-investment.schema.js";
@@ -54,7 +54,12 @@ export async function reconcileAssigningDealUsersForDeal(
     .select({ contactId: dealInvestment.contactId })
     .from(dealInvestment)
     .where(
-      and(eq(dealInvestment.dealId, dealId), eq(dealInvestment.isDraft, false)),
+      and(
+        eq(dealInvestment.dealId, dealId),
+        eq(dealInvestment.isDraft, false),
+        isNull(dealInvestment.removedAt),
+        isNull(dealInvestment.investorUnlinkedAt),
+      ),
     );
 
   const memberRows = await db
@@ -66,7 +71,11 @@ export async function reconcileAssigningDealUsersForDeal(
     .select({ contactMemberId: dealLpInvestor.contactMemberId })
     .from(dealLpInvestor)
     .where(
-      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+      and(
+        eq(dealLpInvestor.dealId, dealId),
+        eq(dealLpInvestor.isDraft, false),
+        isNull(dealLpInvestor.removedAt),
+      ),
     );
 
   const uuidCandidates = [

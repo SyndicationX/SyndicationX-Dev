@@ -272,6 +272,7 @@ export function ExportInvestmentsModal({
             onClick={handleExportSelected}
             disabled={selectedIds.size === 0}
           >
+            <Download size={16} strokeWidth={2} aria-hidden />
             Export selected
           </button>
           <button

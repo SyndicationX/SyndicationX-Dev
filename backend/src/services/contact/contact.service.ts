@@ -626,12 +626,27 @@ async function contactRowBelongsToOrganization(
   return false;
 }
 
+export async function stampContactsSignupAsByEmail(
+  emailNorm: string,
+  signupAs: string,
+): Promise<void> {
+  const email = normalizeContactEmailForScope(emailNorm);
+  const stored = String(signupAs ?? "").trim().toLowerCase();
+  if (!email.includes("@")) return;
+  if (stored !== "investor" && stored !== "syndicator" && stored !== "both") return;
+  await db
+    .update(contact)
+    .set({ signupAs: stored })
+    .where(sql`lower(trim(${contact.email})) = ${email}`);
+}
+
 export async function ensureSelfRegisteredInvestorContact(params: {
   userId: string;
   emailNorm: string;
   firstName: string;
   lastName: string;
   phone: string;
+  signupAs?: string;
 }): Promise<string | null> {
   const userId = String(params.userId ?? "").trim();
   const emailNorm = normalizeContactEmailForScope(params.emailNorm);
@@ -646,6 +661,13 @@ export async function ensureSelfRegisteredInvestorContact(params: {
 
   const firstName = String(params.firstName ?? "").trim();
   const lastName = String(params.lastName ?? "").trim();
+  const signupAsRaw = String(params.signupAs ?? "").trim().toLowerCase();
+  const signupAs =
+    signupAsRaw === "investor" ||
+    signupAsRaw === "syndicator" ||
+    signupAsRaw === "both"
+      ? signupAsRaw
+      : "";
 
   const [existing] = await db
     .select()
@@ -670,6 +692,7 @@ export async function ensureSelfRegisteredInvestorContact(params: {
           ? { fullName: buildContactFullName(nextFirstName, nextLastName) }
           : {}),
         ...(phoneStored ? { phone: phoneStored } : {}),
+        ...(signupAs ? { signupAs } : {}),
       })
       .where(eq(contact.id, existing.id))
       .returning();
@@ -699,6 +722,7 @@ export async function ensureSelfRegisteredInvestorContact(params: {
       visibleToUsers: false,
       relationship506b: "NO",
       importSource: "portal_signup",
+      ...(signupAs ? { signupAs } : {}),
     })
     .returning();
   if (inserted) queueGhlContactRowSync(inserted);
@@ -2437,6 +2461,191 @@ export async function countDealInvestmentsByContactIdForViewer(params: {
     GROUP BY links.contact_key
   `);
   fillDealCountMapFromExecute(result, executed);
+  return result;
+}
+
+/** A deal the contact is on, grouped under the company that owns that deal. */
+export type ContactOrganizationDeal = {
+  dealId: string;
+  dealName: string;
+  contactRole: string;
+};
+
+/** Company this investor belongs to, with the deals they are on there. */
+export type ContactOrganizationSummary = {
+  companyId: string;
+  companyName: string;
+  deals: ContactOrganizationDeal[];
+};
+
+/**
+ * Companies an investor is part of, from every non-draft deal linked to the contact.
+ * Platform admins see every company and its deals. Other sponsors see only the
+ * active organization and the deals that belong to it. Keyed by lowercased contact id.
+ */
+export async function listContactOrganizationsByContactIdForViewer(params: {
+  viewerUserId: string;
+  jwtUserRole: string | undefined;
+  contactIds: string[];
+  requestedOrganizationId?: string | null;
+}): Promise<Map<string, ContactOrganizationSummary[]>> {
+  const result = new Map<string, ContactOrganizationSummary[]>();
+  const keys = [
+    ...new Set(
+      params.contactIds.map((id) => id.trim().toLowerCase()).filter(Boolean),
+    ),
+  ];
+  if (keys.length === 0) return result;
+
+  const scope = await resolveDealViewerScope(
+    params.viewerUserId,
+    params.jwtUserRole,
+    params.requestedOrganizationId,
+  );
+  const viewerOrganizationId = String(scope.organizationId ?? "")
+    .trim()
+    .toLowerCase();
+  if (!scope.isPlatformAdmin && !viewerOrganizationId) return result;
+  const organizationFilter = scope.isPlatformAdmin
+    ? sql``
+    : sql`AND lower(co.id::text) = ${viewerOrganizationId}`;
+
+  const idParams = sql.join(keys.map((k) => sql`${k}`), sql`, `);
+
+  const executed = await db.execute(sql`
+    WITH contact_keys AS (
+      SELECT
+        lower(trim(c.id::text)) AS contact_key,
+        lower(trim(c.email)) AS email_norm
+      FROM contact c
+      WHERE lower(trim(c.id::text)) IN (${idParams})
+    ),
+    roster_ids AS (
+      SELECT contact_key, contact_key AS roster_id
+      FROM contact_keys
+      UNION
+      SELECT ck.contact_key, lower(trim(other.id::text))
+      FROM contact_keys ck
+      INNER JOIN contact other
+        ON lower(trim(other.email)) = ck.email_norm
+      WHERE ck.email_norm <> ''
+        AND position('@' in ck.email_norm) > 1
+      UNION
+      SELECT ck.contact_key, lower(trim(u.id::text))
+      FROM contact_keys ck
+      INNER JOIN users u
+        ON lower(trim(u.email)) = ck.email_norm
+      WHERE ck.email_norm <> ''
+        AND position('@' in ck.email_norm) > 1
+    ),
+    links AS (
+      SELECT r.contact_key, di.deal_id::text AS deal_id,
+             NULLIF(trim(di.investor_role), '') AS role,
+             3 AS priority
+      FROM deal_investment di
+      INNER JOIN roster_ids r
+        ON lower(trim(di.contact_id)) = r.roster_id
+      WHERE di.is_draft = false
+      UNION ALL
+      SELECT r.contact_key, dm.deal_id::text,
+             NULLIF(trim(dm.deal_member_role), ''),
+             1
+      FROM deal_member dm
+      INNER JOIN roster_ids r
+        ON lower(trim(dm.contact_member_id)) = r.roster_id
+      WHERE dm.is_draft = false
+      UNION ALL
+      SELECT r.contact_key, lp.deal_id::text,
+             NULLIF(trim(lp.role), ''),
+             2
+      FROM deal_lp_investor lp
+      INNER JOIN roster_ids r
+        ON lower(trim(lp.contact_member_id)) = r.roster_id
+      WHERE lp.is_draft = false
+      UNION ALL
+      SELECT ck.contact_key, lp.deal_id::text,
+             NULLIF(trim(lp.role), ''),
+             2
+      FROM deal_lp_investor lp
+      INNER JOIN contact_keys ck
+        ON lower(trim(lp.email)) = ck.email_norm
+      WHERE lp.is_draft = false
+        AND ck.email_norm <> ''
+        AND position('@' in ck.email_norm) > 1
+      UNION ALL
+      SELECT r.contact_key, a.deal_id::text,
+             'Investor',
+             4
+      FROM assigning_deal_user a
+      INNER JOIN roster_ids r
+        ON lower(trim(a.user_id::text)) = r.roster_id
+    ),
+    ranked AS (
+      SELECT
+        contact_key,
+        deal_id,
+        (ARRAY_AGG(role ORDER BY priority ASC)
+          FILTER (WHERE role IS NOT NULL))[1] AS contact_role
+      FROM links
+      GROUP BY contact_key, deal_id
+    )
+    SELECT
+      ranked.contact_key AS contact_key,
+      d.id::text AS deal_id,
+      d.deal_name AS deal_name,
+      COALESCE(ranked.contact_role, '') AS contact_role,
+      COALESCE(co.id::text, '') AS company_id,
+      COALESCE(co.name, '') AS company_name
+    FROM ranked
+    INNER JOIN add_deal_form d ON d.id::text = ranked.deal_id
+    LEFT JOIN companies co ON co.id = d.organization_id
+    WHERE TRUE
+      ${organizationFilter}
+  `);
+
+  const raw = executed as unknown as { rows?: unknown[] } | unknown[];
+  const list = Array.isArray(raw) ? raw : (raw.rows ?? []);
+  const grouped = new Map<string, Map<string, ContactOrganizationSummary>>();
+  for (const row of list) {
+    if (row == null || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const contactKey = String(record.contact_key ?? "").trim().toLowerCase();
+    const companyName = String(record.company_name ?? "").trim();
+    const dealId = String(record.deal_id ?? "").trim();
+    if (!contactKey || !companyName || !dealId) continue;
+    const companyId = String(record.company_id ?? "").trim();
+    const companyKey = companyId.toLowerCase() || `name:${companyName.toLowerCase()}`;
+    let companies = grouped.get(contactKey);
+    if (!companies) {
+      companies = new Map();
+      grouped.set(contactKey, companies);
+    }
+    let company = companies.get(companyKey);
+    if (!company) {
+      company = { companyId, companyName, deals: [] };
+      companies.set(companyKey, company);
+    }
+    if (!company.deals.some((deal) => deal.dealId === dealId)) {
+      company.deals.push({
+        dealId,
+        dealName: String(record.deal_name ?? "").trim() || "Deal",
+        contactRole: String(record.contact_role ?? "").trim(),
+      });
+    }
+  }
+  for (const [contactKey, companies] of grouped) {
+    const sorted = [...companies.values()]
+      .map((company) => ({
+        ...company,
+        deals: [...company.deals].sort((a, b) =>
+          a.dealName.localeCompare(b.dealName, undefined, { sensitivity: "base" }),
+        ),
+      }))
+      .sort((a, b) =>
+        a.companyName.localeCompare(b.companyName, undefined, { sensitivity: "base" }),
+      );
+    result.set(contactKey, sorted);
+  }
   return result;
 }
 

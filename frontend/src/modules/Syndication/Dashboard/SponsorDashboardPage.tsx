@@ -105,7 +105,10 @@ function SyndicatingDashboard() {
           icon={ClipboardList}
           title="# of reviews"
           loading={loading}
-          description="—"
+          description={
+            summary != null ? formatCount(summary.reviewsCount) : "—"
+          }
+          hintTitle="Feedback you have submitted."
         />
       </section>
 

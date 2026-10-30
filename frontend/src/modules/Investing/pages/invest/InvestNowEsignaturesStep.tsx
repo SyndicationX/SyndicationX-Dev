@@ -1,8 +1,7 @@
 import { Download, Eye, FileSignature, Loader2, RefreshCw } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import type { DealEsignTemplateFileRecord } from "@/modules/Syndication/Deals/api/dealsApi"
 import {
-  fetchDealEsignTemplateViewUrl,
   fetchDealMyEsignDocuments,
   isDealEsignTemplateReady,
   postDealMyEsignMarkViewed,
@@ -75,7 +74,6 @@ export function InvestNowEsignaturesStep({
   esignScope,
   esignCategoryId,
   profileTemplate,
-  commitmentProfileId,
   investorDisplayName,
   sendError,
   esignSendOk,
@@ -97,10 +95,6 @@ export function InvestNowEsignaturesStep({
   const [signModalSignatureRequestId, setSignModalSignatureRequestId] = useState<
     string | null
   >(null)
-  const [templatePreviewUrl, setTemplatePreviewUrl] = useState<string | null>(
-    null,
-  )
-  const [templatePreviewLoading, setTemplatePreviewLoading] = useState(false)
 
   const templateName = useMemo(
     () =>
@@ -159,29 +153,23 @@ export function InvestNowEsignaturesStep({
     setSignModalOpen(true)
   }, [firstPendingSignatureRequestId])
 
-  useEffect(() => {
-    const fileId = profileTemplate?.id?.trim()
-    if (!fileId || !dealId.trim()) {
-      setTemplatePreviewUrl(null)
-      return
-    }
-    let cancelled = false
-    setTemplatePreviewLoading(true)
-      void fetchDealEsignTemplateViewUrl(dealId, fileId, {
-        profileId: commitmentProfileId?.trim(),
-      }).then((res) => {
-      if (cancelled) return
-      setTemplatePreviewLoading(false)
-      setTemplatePreviewUrl(res.ok ? res.viewUrl : null)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [dealId, profileTemplate?.id, commitmentProfileId])
+  const documentsForThisStep = useMemo(() => {
+    const currentId = fallbackSignatureRequestId?.trim() || ""
+    const forCurrent = currentId
+      ? esignDocuments.filter((doc) => doc.signatureRequestId?.trim() === currentId)
+      : []
+    if (forCurrent.length > 0) return forCurrent
+    const latestId = [...esignDocuments]
+      .reverse()
+      .map((doc) => doc.signatureRequestId?.trim() || "")
+      .find(Boolean)
+    if (!latestId) return esignDocuments
+    return esignDocuments.filter((doc) => doc.signatureRequestId?.trim() === latestId)
+  }, [esignDocuments, fallbackSignatureRequestId])
 
   const displayDocuments =
-    esignDocuments.length > 0
-      ? esignDocuments
+    documentsForThisStep.length > 0
+      ? documentsForThisStep
       : profileTemplate &&
           needsSignature &&
           esignSendOk &&
@@ -191,7 +179,7 @@ export function InvestNowEsignaturesStep({
             {
               id: `template-${profileTemplate.id}`,
               name: templateName,
-              url: templatePreviewUrl ?? "",
+              url: "",
               status: "pending" as const,
               canSign: canStartSigning,
               signatureRequestId: firstPendingSignatureRequestId,
@@ -314,8 +302,7 @@ export function InvestNowEsignaturesStep({
           {displayDocuments.map((doc) => {
             const url = doc.url?.trim() || ""
             const showSign = docCanSign(doc)
-            const viewUrl =
-              url && (doc.status === "signed" || !esignCompleted) ? url : ""
+            const viewUrl = doc.status === "signed" && url ? url : ""
             return (
               <li key={doc.id} className="invest_now_esign_doc_row">
                 <div className="invest_now_esign_doc_main">
@@ -335,16 +322,10 @@ export function InvestNowEsignaturesStep({
                         className={
                           doc.status === "signed"
                             ? "invest_now_esign_doc_status invest_now_esign_doc_status--signed"
-                            : templatePreviewLoading && !url
-                              ? "invest_now_esign_doc_status invest_now_esign_doc_status--loading"
-                              : "invest_now_esign_doc_status invest_now_esign_doc_status--pending"
+                            : "invest_now_esign_doc_status invest_now_esign_doc_status--pending"
                         }
                       >
-                        {doc.status === "signed"
-                          ? "Signed"
-                          : templatePreviewLoading && !url
-                            ? "Loading preview…"
-                            : "Awaiting signature"}
+                        {doc.status === "signed" ? "Signed" : "Awaiting signature"}
                       </span>
                     </div>
                   </div>

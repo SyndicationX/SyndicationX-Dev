@@ -254,7 +254,7 @@
   display: inline-flex;
   align-items: center;
   color: var(--portal-text-muted, #64748b);
-  cursor: help;
+  cursor: pointer;
 }
 
 .portal_dropdown_select_option {
@@ -262,7 +262,11 @@
   -webkit-appearance: none;
   display: block;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 0;
   padding: 0.5em 0.65em;
   border: none;

@@ -185,7 +185,7 @@
   margin: 0;
   flex-shrink: 0;
   align-self: center;
-  cursor: help;
+  cursor: pointer;
   border-radius: 4px;
   line-height: 1;
   vertical-align: middle;

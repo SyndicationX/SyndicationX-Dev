@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react"
+import { ChevronLeft, ChevronRight, Copy, Plus, Trash2 } from "lucide-react"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import { FloatingTableHScroll } from "../../../../../common/components/data-table/FloatingTableHScroll"
 import { attachHorizontalScrollBehavior } from "../../../../../common/utils/horizontalScrollRegion"
@@ -336,7 +336,8 @@ function TypeSection({
                 </button>
               </div>
               <button type="button" className="cs_add_btn" onClick={onAdd}>
-                + Add {type === "lp" || type === "gp" ? "sub-class" : "class"}
+                <Plus size={14} strokeWidth={2} aria-hidden />
+                Add {type === "lp" || type === "gp" ? "sub-class" : "class"}
               </button>
               <button
                 type="button"

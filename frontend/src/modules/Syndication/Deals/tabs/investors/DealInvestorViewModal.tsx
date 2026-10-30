@@ -1,25 +1,20 @@
 import type { LucideIcon } from "lucide-react"
 import {
-  Activity,
-  BadgeCheck,
   Briefcase,
-  Building2,
-  Calendar,
-  CalendarCheck,
   CircleDollarSign,
-  DollarSign,
   IdCard,
-  Mail,
-  Phone,
-  Percent,
   Pencil,
-  Shield,
-  Tag,
-  User,
   UserRound,
   X,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { createPortal } from "react-dom"
 import { Link } from "react-router-dom"
 import {
@@ -32,7 +27,6 @@ import {
 } from "../../../../../common/components/data-table/DataTable"
 import { TabsScrollStrip } from "../../../../../common/components/tabs-scroll-strip/TabsScrollStrip"
 import { isPlatformAdmin } from "@/common/auth/roleUtils"
-import { ViewReadonlyField } from "../../../../../common/components/ViewReadonlyField"
 import { formatDateDdMmmYyyy } from "../../../../../common/utils/formatDateDisplay"
 import { RedactedPill } from "../../../../../common/components/redacted-pill/RedactedPill"
 import {
@@ -41,6 +35,7 @@ import {
   isPrivacyRedacted,
 } from "../../../../../common/utils/displayEmail"
 import { fetchDistributionPayouts } from "@/modules/Investing/api/stripeInvestorPaymentsApi"
+import { BankAccountSetupBadge } from "../distributions/BankAccountSetupBadge"
 import { fetchDealInvestors } from "../../api/dealsApi"
 import { fetchDistributionSetup } from "../../distribution-setup/api/distributionSetupApi"
 import {
@@ -51,9 +46,8 @@ import {
   dealInvestorStatusDisplayLabel,
   investorFundedColumnLabel,
 } from "../../utils/dealInvestorTableDisplay"
-import { displayInvestorCommittedAmount } from "../../utils/offeringMoneyFormat"
-import { investorSignedColumnDisplay } from "../../utils/investorEsignStatus"
-import { parseStoredClassPercent } from "../distributions/utils/investorDistributionAllocation"
+import { displayAddedInvestorsCommittedAmount, displayInvestorCommittedAmount } from "../../utils/offeringMoneyFormat"
+import { matchDealInvestorClass } from "../../utils/investorClassOverviewFields"
 import type { DealInvestorClass } from "../../types/deal-investor-class.types"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
@@ -102,12 +96,25 @@ interface DealInvestorViewModalProps {
   dealAllClassNamesLine: string
   /** When omitted, the Edit button is hidden (e.g. Distribution Details). */
   onEdit?: (row: DealInvestorRow) => void
+  /** Lead and admin sponsors cannot edit a co-sponsor's investor from this popup. */
+  editDisabled?: boolean
+  editDisabledTitle?: string
   /** When set, shows this-run payment snapshot above the history list. */
   distributionContext?: DealInvestorViewDistributionContext | null
   /** Deal id — loads compact distribution history in the Distributions tab. */
   dealId?: string | null
   /** Initial section when the modal opens (defaults to investor, or distribution when context is set). */
   initialSectionTab?: InvestorViewSectionTab
+  /**
+   * Team Members (Class B — General Partners): same detail layout, but the
+   * Investment section is replaced with this person's distribution history.
+   */
+  distributionsInsteadOfInvestment?: boolean
+  /**
+   * General Partners roster (Lead, Admin, Co-sponsor): show this person's
+   * sponsor details instead of an investment record.
+   */
+  sponsorDetails?: boolean
 }
 
 const BASE_INVESTOR_VIEW_SECTION_TABS: Array<{
@@ -160,6 +167,61 @@ function achStatusTone(status: string): string {
   return "neutral"
 }
 
+function joinedStoredNames(raw: string | null | undefined): string {
+  const parts = String(raw ?? "")
+    .split("||")
+    .map((part) => part.trim())
+    .filter((part) => part && part !== "—")
+  return parts.length > 0 ? parts.join(", ") : "—"
+}
+
+function DetailFact({ label, value }: { label: string; value: ReactNode }) {
+  if (typeof value === "string") {
+    const text = value.trim()
+    if (!text || text === "—") return null
+  }
+  return (
+    <div className="deal_inv_view_fact">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  )
+}
+
+function DetailGroup({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  const items = Array.isArray(children) ? children : [children]
+  if (items.every((item) => item == null || item === false)) return null
+  return (
+    <div className="deal_inv_view_group">
+      <h4 className="deal_inv_view_group_label">{title}</h4>
+      <dl className="deal_inv_view_facts">{children}</dl>
+    </div>
+  )
+}
+
+function MoneyMetric({
+  label,
+  amount,
+}: {
+  label: string
+  amount: string
+}) {
+  return (
+    <div className="deal_inv_view_metric">
+      <span className="deal_inv_view_metric_label">{label}</span>
+      <span className="deal_inv_view_metric_value">
+        <CardCompactAmount amount={amount} />
+      </span>
+    </div>
+  )
+}
+
 function displayOrDash(v: string | null | undefined): string {
   const t = String(v ?? "").trim()
   if (!t || t === "—") return "—"
@@ -174,12 +236,34 @@ function displayPctOrDash(v: string | null | undefined): string {
   return `${n.toFixed(2)}%`
 }
 
+/**
+ * Class A - Limited Partners stores raise_amount_distributions as 0 and has no
+ * distribution lines. The Distributions tab is omitted for that class.
+ */
+function classALimitedPartnerHasNoDistribution(
+  row: DealInvestorRow,
+  classes: DealInvestorClass[],
+): boolean {
+  const matched = matchDealInvestorClass(row.investorClass, classes)
+  const name = String(matched?.name ?? row.investorClass ?? "")
+    .trim()
+    .toLowerCase()
+  const type = String(matched?.subscriptionType ?? "")
+    .trim()
+    .toLowerCase()
+  const isClassALp =
+    (type === "lp" && /^class a\b/.test(name)) ||
+    (name.includes("class a") && name.includes("limited partner"))
+  if (!isClassALp) return false
+  if (!matched) return true
+  const amount = Number(
+    String(matched.raiseAmountDistributions ?? "").replace(/[^0-9.-]/g, ""),
+  )
+  return !Number.isFinite(amount) || amount === 0
+}
+
 function ownershipPercentLabel(row: DealInvestorRow): string {
-  const n =
-    parseStoredClassPercent(row.percentOfClassDistributions) ??
-    parseStoredClassPercent(row.percentOfClassOwnership)
-  if (n == null) return "—"
-  return `${(Math.round(n * 100) / 100).toFixed(2)}%`
+  return displayPctOrDash(row.entityOwnershipPercent)
 }
 
 function resolveInvestorClassDisplay(
@@ -210,10 +294,11 @@ function countersignedDisplay(row: DealInvestorRow): string {
   return "—"
 }
 
-function datePlacedDisplay(row: DealInvestorRow): string {
-  const iso = String(row.investedAtIso ?? "").trim()
-  if (iso) return formatDateDdMmmYyyy(iso)
-  return "—"
+/** Document signed date stored on the investment (`doc_signed_date`). */
+function documentSignedDisplay(row: DealInvestorRow): string {
+  const stored = String(row.docSignedDateIso ?? row.signedDate ?? "").trim()
+  if (!stored || stored === "—" || stored.toLowerCase() === "pending") return "—"
+  return formatDateDdMmmYyyy(stored)
 }
 
 function normId(v: unknown): string {
@@ -238,22 +323,42 @@ export function DealInvestorViewModal({
   investorClasses,
   dealAllClassNamesLine,
   onEdit,
+  editDisabled = false,
+  editDisabledTitle = "This investor was added by a co-sponsor. Only view is available.",
   distributionContext = null,
   dealId = null,
   initialSectionTab,
+  distributionsInsteadOfInvestment = false,
+  sponsorDetails = false,
 }: DealInvestorViewModalProps) {
   const dealIdTrimmed = String(dealId ?? "").trim()
-  const hasThisRun = distributionContext != null
-  const showDistributionsTab = Boolean(dealIdTrimmed) || hasThisRun
+  const omitClassADistributions = row
+    ? classALimitedPartnerHasNoDistribution(row, investorClasses)
+    : false
+  // Investor details keep Investment. Team Members (Class B — General Partners)
+  // use this same modal with that person's distributions instead.
+  // Class A - Limited Partners has no stored distribution (amount is 0).
+  const showDistributionsTab =
+    distributionsInsteadOfInvestment && !omitClassADistributions && !sponsorDetails
 
   const sectionTabs = useMemo(() => {
+    if (sponsorDetails) {
+      return [{ id: "investor" as const, label: "Sponsor", Icon: UserRound }]
+    }
     if (!showDistributionsTab) return BASE_INVESTOR_VIEW_SECTION_TABS
-    return [...BASE_INVESTOR_VIEW_SECTION_TABS, DISTRIBUTION_VIEW_SECTION_TAB]
-  }, [showDistributionsTab])
+    return [
+      BASE_INVESTOR_VIEW_SECTION_TABS[0]!,
+      BASE_INVESTOR_VIEW_SECTION_TABS[1]!,
+      DISTRIBUTION_VIEW_SECTION_TAB,
+    ]
+  }, [showDistributionsTab, sponsorDetails])
 
-  const preferDistributionsTab = Boolean(dealIdTrimmed) || hasThisRun
+  const preferDistributionsTab = showDistributionsTab
   const defaultTab: InvestorViewSectionTab =
-    initialSectionTab ?? (preferDistributionsTab ? "distribution" : "investor")
+    initialSectionTab &&
+    (initialSectionTab !== "distribution" || showDistributionsTab)
+      ? initialSectionTab
+      : "investor"
 
   const [sectionTab, setSectionTab] =
     useState<InvestorViewSectionTab>(defaultTab)
@@ -267,10 +372,7 @@ export function DealInvestorViewModal({
 
   useEffect(() => {
     if (!row) return
-    setSectionTab(
-      initialSectionTab ??
-        (preferDistributionsTab ? "distribution" : "investor"),
-    )
+    setSectionTab(defaultTab)
     ignoreScrollSpyUntilRef.current = 0
     const el = scrollRef.current
     if (el) el.scrollTop = 0
@@ -279,10 +381,10 @@ export function DealInvestorViewModal({
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [row, onClose, preferDistributionsTab, initialSectionTab])
+  }, [row, onClose, defaultTab])
 
   useEffect(() => {
-    if (!row || !dealIdTrimmed) {
+    if (!row || !dealIdTrimmed || omitClassADistributions || !showDistributionsTab) {
       setHistoryRows([])
       setHistoryLoading(false)
       return
@@ -325,6 +427,7 @@ export function DealInvestorViewModal({
           ),
         ]
         const payoutByDist = new Map<string, string>()
+        const setupByDist = new Map<string, "set_up" | "not_set_up">()
         await Promise.all(
           distIds.map(async (distId) => {
             try {
@@ -332,12 +435,23 @@ export function DealInvestorViewModal({
                 dealIdTrimmed,
                 distId,
               )
-              const hit = list.find((p) =>
+              const hit = list.payouts.find((p) =>
                 payoutMatchesInvestor(matchKeys, p.investmentId),
               )
               payoutByDist.set(distId, hit?.status?.trim() || "not sent")
+              const setups = list.bankAccountSetup.filter((line) =>
+                payoutMatchesInvestor(matchKeys, line.investmentId),
+              )
+              setupByDist.set(
+                distId,
+                setups.length > 0 &&
+                  setups.every((line) => line.status === "set_up")
+                  ? "set_up"
+                  : "not_set_up",
+              )
             } catch {
               payoutByDist.set(distId, "not sent")
+              setupByDist.set(distId, "not_set_up")
             }
           }),
         )
@@ -346,6 +460,8 @@ export function DealInvestorViewModal({
           history.map((h) => ({
             ...h,
             achStatus: payoutByDist.get(h.distributionId) ?? h.achStatus,
+            bankAccountSetup:
+              setupByDist.get(h.distributionId) ?? h.bankAccountSetup,
           })),
         )
       })
@@ -358,7 +474,7 @@ export function DealInvestorViewModal({
     return () => {
       cancelled = true
     }
-  }, [row, dealIdTrimmed])
+  }, [row, dealIdTrimmed, omitClassADistributions, showDistributionsTab])
 
   const syncActiveTabFromScroll = useCallback(() => {
     if (Date.now() < ignoreScrollSpyUntilRef.current) return
@@ -436,6 +552,13 @@ export function DealInvestorViewModal({
         cell: (r) => r.date,
       },
       {
+        id: "bankAccountSetup",
+        header: "Bank account setup",
+        colWidth: "9rem",
+        sortValue: (r) => r.bankAccountSetup,
+        cell: (r) => <BankAccountSetupBadge status={r.bankAccountSetup} />,
+      },
+      {
         id: "achStatus",
         header: "ACH status",
         colWidth: "8rem",
@@ -492,8 +615,22 @@ export function DealInvestorViewModal({
     dealAllClassNamesLine,
   )
   const investedAmount = displayInvestorCommittedAmount(investorRow)
+  const roleLabel = investorRoleLabel(investorRow.investorRole ?? "")
+  const statusLabel = dealInvestorStatusDisplayLabel(investorRow)
+  const sponsorCompany = joinedStoredNames(investorRow.addedByCompanyName)
+  const sponsorPerson = joinedStoredNames(investorRow.addedByDisplayName)
+  const headerMeta = sponsorDetails
+    ? [roleLabel, statusLabel].filter((part) => part && part !== "—")
+    : [invClass, roleLabel, statusLabel].filter(
+        (part) => part && part !== "—",
+      )
+  const sponsorCommitted = displayInvestorCommittedAmount(investorRow)
+  const investorsCommitted = displayAddedInvestorsCommittedAmount(investorRow)
+  const mailStatusLabel =
+    investorRow.invitationMailSent === true ? "Mail sent" : "Not sent"
 
   function handleEdit() {
+    if (editDisabled) return
     onEdit?.(investorRow)
     onClose()
   }
@@ -515,13 +652,20 @@ export function DealInvestorViewModal({
               id="deal-inv-investor-view-title"
               className="um_modal_title add_contact_modal_title deal_inv_view_modal_title"
             >
-              <span>Investor details</span>
-              {displayOrDash(investorRow.displayName) !== "—" ? (
-                <span className="deal_inv_view_title_investor_name">
-                  {displayOrDash(investorRow.displayName)}
-                </span>
-              ) : null}
+              <span className="deal_inv_view_kicker">
+                {sponsorDetails ? "Sponsor details" : "Investor details"}
+              </span>
+              <span className="deal_inv_view_title_investor_name">
+                {displayOrDash(investorRow.displayName)}
+              </span>
             </h2>
+            {headerMeta.length > 0 ? (
+              <p className="deal_inv_view_meta">
+                {headerMeta.map((part) => (
+                  <span key={part}>{part}</span>
+                ))}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -585,16 +729,12 @@ export function DealInvestorViewModal({
               id="deal-inv-view-panel-investor"
               aria-labelledby="deal-inv-view-tab-investor"
             >
-              <h3 className="deal_inv_view_section_label">Investor</h3>
-              <div className="um_view_grid">
-                <ViewReadonlyField
-                  Icon={UserRound}
-                  label="Investor name"
-                  value={displayOrDash(investorRow.displayName)}
-                />
-                <ViewReadonlyField
-                  Icon={Mail}
-                  label="Email address"
+              <h3 className="deal_inv_view_section_label">
+                {sponsorDetails ? "Sponsor" : "Investor"}
+              </h3>
+              <dl className="deal_inv_view_facts">
+                <DetailFact
+                  label="Email"
                   value={
                     isPrivacyRedacted(investorRow.userEmail) ? (
                       <RedactedPill />
@@ -604,9 +744,8 @@ export function DealInvestorViewModal({
                   }
                 />
                 {String(investorRow.userPhone ?? "").trim() ? (
-                  <ViewReadonlyField
-                    Icon={Phone}
-                    label="Phone number"
+                  <DetailFact
+                    label="Phone"
                     value={
                       isPrivacyRedacted(investorRow.userPhone) ? (
                         <RedactedPill />
@@ -616,14 +755,31 @@ export function DealInvestorViewModal({
                     }
                   />
                 ) : null}
-                <ViewReadonlyField
-                  Icon={User}
+                <DetailFact
                   label="Username"
                   value={displayOrDash(investorRow.userDisplayName)}
                 />
-              </div>
+                {sponsorDetails ? (
+                  <>
+                    <DetailFact label="Deal role" value={roleLabel} />
+                    <DetailFact label="Company" value={sponsorCompany} />
+                    <DetailFact
+                      label="Company admin"
+                      value={joinedStoredNames(investorRow.companyAdminName)}
+                    />
+                    <DetailFact label="Sponsor committed" value={sponsorCommitted} />
+                    <DetailFact
+                      label="Investors committed"
+                      value={investorsCommitted}
+                    />
+                    <DetailFact label="Status" value={statusLabel} />
+                    <DetailFact label="Email status" value={mailStatusLabel} />
+                  </>
+                ) : null}
+              </dl>
             </section>
 
+            {sponsorDetails ? null : (
             <section
               ref={(el) => {
                 sectionRefs.current.profile = el
@@ -634,26 +790,24 @@ export function DealInvestorViewModal({
               aria-labelledby="deal-inv-view-tab-profile"
             >
               <h3 className="deal_inv_view_section_label">Profile</h3>
-              <div className="um_view_grid">
-                <ViewReadonlyField
-                  Icon={IdCard}
-                  label="Profile name"
+              <dl className="deal_inv_view_facts">
+                <DetailFact
+                  label="Profile"
                   value={investmentProfileLabel(investorRow)}
                 />
-                <ViewReadonlyField
-                  Icon={Shield}
+                <DetailFact
                   label="Accreditation"
                   value={displayOrDash(investorRow.selfAccredited)}
                 />
-                <ViewReadonlyField
-                  Icon={BadgeCheck}
+                <DetailFact
                   label="Verified accreditation"
-                  fieldClassName="deals_deal_view_field_full"
                   value={displayOrDash(investorRow.verifiedAccLabel)}
                 />
-              </div>
+              </dl>
             </section>
+            )}
 
+            {sponsorDetails || showDistributionsTab ? null : (
             <section
               ref={(el) => {
                 sectionRefs.current.investment = el
@@ -664,107 +818,71 @@ export function DealInvestorViewModal({
               aria-labelledby="deal-inv-view-tab-investment"
             >
               <h3 className="deal_inv_view_section_label">Investment</h3>
-              <div className="um_view_grid">
-                <ViewReadonlyField
-                  Icon={Briefcase}
-                  label="Role"
-                  value={investorRoleLabel(investorRow.investorRole ?? "")}
+              <div
+                className="deal_inv_view_metrics"
+                aria-label="Investment amounts"
+              >
+                <MoneyMetric label="Invested" amount={investedAmount} />
+                <MoneyMetric
+                  label="Funded amount"
+                  amount={String(investorRow.amountReceived ?? "")}
                 />
-                <ViewReadonlyField
-                  Icon={Activity}
-                  label="Investment status"
-                  value={dealInvestorStatusDisplayLabel(investorRow)}
+                <MoneyMetric
+                  label="Accrued"
+                  amount={String(investorRow.accruedAmount ?? "")}
                 />
-                <ViewReadonlyField
-                  Icon={Tag}
-                  label="Investor class"
-                  value={invClass}
+                <MoneyMetric
+                  label="Committed"
+                  amount={String(investorRow.committed ?? "")}
                 />
-                <ViewReadonlyField
-                  Icon={Building2}
-                  label="Sponsor name"
-                  value={displayOrDash(
-                    String(investorRow.addedByCompanyName ?? "")
-                      .split("||")
-                      .map((part) => part.trim())
-                      .filter((part) => part && part !== "—")
-                      .join(", "),
-                  )}
-                />
-                {isPlatformAdmin() ? (
-                  <ViewReadonlyField
-                    Icon={User}
-                    label="Sponsor"
-                    value={displayOrDash(
-                      String(investorRow.addedByDisplayName ?? "")
-                        .split("||")
-                        .map((part) => part.trim())
-                        .filter((part) => part && part !== "—")
-                        .join(", "),
-                    )}
-                  />
-                ) : null}
-                <ViewReadonlyField
-                  Icon={BadgeCheck}
+              </div>
+              <DetailGroup title="Position">
+                <DetailFact label="Class" value={invClass} />
+                <DetailFact label="Role" value={roleLabel} />
+                <DetailFact label="Status" value={statusLabel} />
+                <DetailFact
                   label="Fund approval"
                   value={investorFundedColumnLabel(investorRow)}
                 />
-                <ViewReadonlyField
-                  Icon={DollarSign}
-                  label="Invested amount"
-                  value={<CardCompactAmount amount={investedAmount} />}
-                />
-                <ViewReadonlyField
-                  Icon={DollarSign}
-                  label="Committed"
-                  value={<CardCompactAmount amount={investorRow.committed} />}
-                />
-                <ViewReadonlyField
-                  Icon={Calendar}
-                  label="Date placed"
-                  value={datePlacedDisplay(investorRow)}
-                />
-                <ViewReadonlyField
-                  Icon={Percent}
-                  label="Percent of class (ownership)"
+                <DetailFact label="Sponsor" value={sponsorCompany} />
+                {isPlatformAdmin() ? (
+                  <DetailFact label="Sponsor contact" value={sponsorPerson} />
+                ) : null}
+              </DetailGroup>
+              <DetailGroup title="Ownership">
+                <DetailFact
+                  label="Class ownership"
                   value={displayPctOrDash(investorRow.percentOfClassOwnership)}
                 />
-                <ViewReadonlyField
-                  Icon={Percent}
-                  label="Percent of class (distributions)"
+                <DetailFact
+                  label="Class distributions"
                   value={displayPctOrDash(
                     investorRow.percentOfClassDistributions,
                   )}
                 />
-                <ViewReadonlyField
-                  Icon={Percent}
-                  label="Entity Ownership"
+                <DetailFact
+                  label="Entity ownership"
                   value={displayPctOrDash(investorRow.entityOwnershipPercent)}
                 />
-                <ViewReadonlyField
-                  Icon={Percent}
-                  label="Distribution Allocation %"
+                <DetailFact
+                  label="Allocation"
                   value={displayPctOrDash(
                     investorRow.distributionAllocationPercent,
                   )}
                 />
-                <ViewReadonlyField
-                  Icon={Calendar}
-                  label="Document signed on"
-                  value={investorSignedColumnDisplay(investorRow)}
+              </DetailGroup>
+              <DetailGroup title="Dates">
+                <DetailFact
+                  label="Document signed"
+                  value={documentSignedDisplay(investorRow)}
                 />
-                <ViewReadonlyField
-                  Icon={CalendarCheck}
-                  label="Document countersigned on"
+                <DetailFact
+                  label="Countersigned"
                   value={countersignedDisplay(investorRow)}
                 />
-                <ViewReadonlyField
-                  Icon={Calendar}
-                  label="Received / funded date"
-                  value={formatDateDdMmmYyyy(investorRow.fundedDate)}
-                />
-              </div>
+              </DetailGroup>
             </section>
+            )}
 
             {showDistributionsTab ? (
               <section
@@ -777,6 +895,11 @@ export function DealInvestorViewModal({
                 aria-labelledby="deal-inv-view-tab-distribution"
               >
                 <h3 className="deal_inv_view_section_label">Distributions</h3>
+                {distributionContext?.distributionName?.trim() ? (
+                  <p className="deal_inv_view_dist_history_label">
+                    {distributionContext.distributionName.trim()}
+                  </p>
+                ) : null}
 
                 <div className="deal_dist_summary deal_inv_view_dist_summary">
                   <div className="deal_dist_summary_item">
@@ -864,7 +987,9 @@ export function DealInvestorViewModal({
                     emptyLabel={
                       historyLoading
                         ? "Loading distributions…"
-                        : "No distributions for this investor on this deal yet."
+                        : distributionsInsteadOfInvestment
+                          ? "No distributions for this team member on this deal yet."
+                          : "No distributions for this investor on this deal yet."
                     }
                     initialSort={{ columnId: "date", direction: "desc" }}
                   />
@@ -887,6 +1012,8 @@ export function DealInvestorViewModal({
                 <button
                   type="button"
                   className="um_btn_primary"
+                  disabled={editDisabled}
+                  title={editDisabled ? editDisabledTitle : undefined}
                   onClick={handleEdit}
                 >
                   <Pencil size={16} strokeWidth={2} aria-hidden />

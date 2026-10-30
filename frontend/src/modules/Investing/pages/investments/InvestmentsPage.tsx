@@ -34,6 +34,10 @@ import "@/modules/Syndication/usermanagement/user_management.css"
 import "@/modules/Syndication/Deals/deal-investors-tab.css"
 import "@/modules/Syndication/Deals/deals-list.css"
 import { DEALS_LIST_REFETCH_EVENT } from "@/modules/Syndication/Deals/createDealFormDraftStorage"
+import {
+  deleteMyInvestorDealParticipation,
+  patchMyInvestorDealParticipation,
+} from "@/modules/Investing/api/investorParticipationApi"
 import { ExportInvestmentsModal } from "./ExportInvestmentsModal"
 import {
   investmentRowMatchesOnboardingTab,
@@ -41,7 +45,6 @@ import {
 } from "./investmentOnboardingBucket"
 import type { InvestNowLocationState } from "@/modules/Investing/pages/invest/investNowLocationState"
 import type { InvestNowDraftProgress } from "@/modules/Investing/pages/invest/investNowDraftProgress"
-import type { InvestNowStepperPhase } from "@/modules/Investing/pages/invest/investNowFlowSteps"
 import { getMergedInvestmentListRows } from "./investmentsRuntimeData"
 import type { InvestmentListRow } from "./investments.types"
 import {
@@ -114,6 +117,9 @@ function InvestmentProgressCell({
 }) {
   const { percent, phaseLabel } = progress
   const stepLabel = phaseLabel.trim() || "In progress"
+  if (percent >= 100) {
+    return <InvestmentsEmptyDash />
+  }
 
   return (
     <div className="investments_table_progress_cell">
@@ -500,11 +506,7 @@ export default function InvestmentsPage() {
   )
 
   const openInvestNowResume = useCallback(
-    (
-      dealId: string,
-      scope?: InvestmentListRow["investNowResumeScope"],
-      phaseId?: InvestNowStepperPhase["id"],
-    ) => {
+    (dealId: string, scope?: InvestmentListRow["investNowResumeScope"]) => {
       const id = dealId.trim()
       if (!id) return
       switchToInvesting()
@@ -515,11 +517,36 @@ export default function InvestmentsPage() {
           investmentId: scope?.investmentId,
           userInvestorProfileId: scope?.userInvestorProfileId,
           profileId: scope?.profileId,
-          phaseId,
         } satisfies InvestNowLocationState,
       })
     },
     [navigate, switchToInvesting, investNowReturnTo],
+  )
+
+  const saveDealParticipation = useCallback(
+    async (
+      title: string,
+      work: () => Promise<
+        { ok: true; sponsorNotified: boolean } | { ok: false; message: string }
+      >,
+      notice: (sponsorNotified: boolean) => string,
+    ) => {
+      try {
+        const result = await work()
+        if (!result.ok) {
+          toast.error(title, result.message)
+          return
+        }
+        toast.success(title, notice(result.sponsorNotified))
+        window.dispatchEvent(new Event(DEALS_LIST_REFETCH_EVENT))
+      } catch (err) {
+        toast.error(
+          title,
+          err instanceof Error ? err.message : "Something went wrong.",
+        )
+      }
+    },
+    [],
   )
 
   const columns: DataTableColumn<InvestmentListRow>[] = useMemo(
@@ -722,43 +749,69 @@ export default function InvestmentsPage() {
           const investorArchived = investmentRowArchivedForInvestorView(r)
           const showResume =
             !investorArchived &&
+            !r.sponsorRemoved &&
             onPendingTab &&
             Boolean(r.hasInvestNowDraft && r.investNowResumeScope)
           const showInvestNow =
             !investorArchived &&
             (onPendingTab ? !showResume : activeTab === "in_progress")
-          const actionsDisabled =
-            investorArchived || (!showResume && !showInvestNow)
           return (
             <div className="deal_members_actions_cell">
-              {/* Preview deal action disabled for investments table */}
               <DealRowActions
                 readOnlyActions
+                investorManage
+                allowInvestorDelete={Boolean(r.investorCanDeleteDeal)}
                 dealId={dealId}
                 dealName={r.investmentName}
                 dealStage={r.status}
-                archived={investorArchived}
-                actionsDisabled={actionsDisabled}
+                archived={Boolean(r.investorArchived)}
                 onInvestNow={
                   showInvestNow ? () => openInvestNowFresh(dealId) : undefined
                 }
                 onResumeInvesting={
                   showResume
                     ? () =>
-                        openInvestNowResume(
-                          dealId,
-                          r.investNowResumeScope,
-                          r.investNowDraftProgress?.phaseId,
-                        )
+                        openInvestNowResume(dealId, r.investNowResumeScope)
                     : undefined
                 }
+                onInvestorArchived={(reason) =>
+                  void saveDealParticipation(
+                    "Deal archived",
+                    () => patchMyInvestorDealParticipation(dealId, true, reason),
+                    (notified) =>
+                      notified
+                        ? "It is in Archives. The sponsor was notified."
+                        : "It is in Archives. The sponsor could not be emailed.",
+                  )
+                }
+                onInvestorRestored={
+                  r.sponsorRemoved
+                    ? undefined
+                    : () =>
+                        void saveDealParticipation(
+                          "Deal restored",
+                          () => patchMyInvestorDealParticipation(dealId, false),
+                          () => "It is back in your active investments.",
+                        )
+                }
+                onInvestorDeleted={async () => {
+                  const result = await deleteMyInvestorDealParticipation(dealId)
+                  if (!result.ok) throw new Error(result.message)
+                  toast.success(
+                    "Soft commitment removed",
+                    result.sponsorNotified
+                      ? "Removed from the deal. The sponsor was notified."
+                      : "Removed from the deal. The sponsor could not be emailed.",
+                  )
+                  window.dispatchEvent(new Event(DEALS_LIST_REFETCH_EVENT))
+                }}
               />
             </div>
           )
         },
       },
     ],
-    [activeTab, openInvestNowFresh, openInvestNowResume],
+    [activeTab, openInvestNowFresh, openInvestNowResume, saveDealParticipation],
   )
 
   const investmentsEmptyMessage =

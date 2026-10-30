@@ -32,6 +32,7 @@ import {
   createInvestorSignatureRequest,
   esignDocumentsFromSelectedFiles,
   esignTemplateDisplayNameForFile,
+  sendDealMemberSendEsignEmail,
 } from "./dealMemberSendEsign.service.js";
 import { resolveEsignFilesForInvestorProfile } from "./dealEsignProfileTemplate.service.js";
 import {
@@ -382,6 +383,18 @@ export async function sendMyInvestNowEsignIfNeeded(params: {
     await notifySequentialInvestorsSignTurnAvailable(dealId);
   } catch (err) {
     console.warn("notifySequentialInvestorsSignTurnAvailable (Invest Now send):", err);
+  }
+
+  if (getActiveEsignProvider() === "signflow") {
+    const mailed = await sendDealMemberSendEsignEmail({
+      dealId,
+      toEmail: email,
+      memberDisplayName: params.memberDisplayName?.trim() || undefined,
+      documentNames: selectedFiles.map((f) => esignTemplateDisplayNameForFile(f)),
+    });
+    if (!mailed.ok) {
+      console.warn("sendDealMemberSendEsignEmail (Invest Now):", mailed.error);
+    }
   }
 
   let trackedInvestmentId = investmentIdForTarget;

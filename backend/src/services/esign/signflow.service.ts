@@ -304,6 +304,38 @@ export async function ensureSignFlowInvestorPhaseRecorded(
 }
 
 /** Create or reuse a signing session token for embedded investor signing. */
+/**
+ * Remove the investor signature on a live SignFlow document so they can sign again.
+ * SignFlow rejects this after a sponsor signature is stored.
+ */
+export async function resetSignFlowInvestorSignature(params: {
+  documentId: string;
+  recipientEmail: string;
+  /** Keep answers already entered so the investor can change them. */
+  preserveFieldValues?: boolean;
+}): Promise<void> {
+  const documentId = params.documentId.trim();
+  const recipientEmail = params.recipientEmail.trim().toLowerCase();
+  if (!documentId) {
+    throw new Error("SignFlow documentId is required");
+  }
+  if (!recipientEmail) {
+    throw new Error("recipientEmail is required");
+  }
+
+  await signflowRequest(
+    `/documents/${encodeURIComponent(documentId)}/embed/reset-investor-signature`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipientEmail,
+        preserveFieldValues: params.preserveFieldValues === true,
+      }),
+    },
+  );
+}
+
 export async function createSignFlowEmbedSigningSession(params: {
   documentId: string;
   recipientEmail?: string;
@@ -378,7 +410,7 @@ export function mapSignFlowEmbedSessionError(
       code: "waiting_for_prior_signer",
       message:
         message ||
-        "Your documents are not ready for signature yet. We will notify you when it is your turn to sign.",
+        "The other party on this document must sign first.",
       waitingFor,
     };
   }
@@ -454,6 +486,25 @@ export async function createSignFlowSponsorEmbedSigningSession(params: {
 /** Stable embed recipient ids — must match SignFlow `EMBED_DEFAULT_RECIPIENTS`. */
 export const SIGNFLOW_EMBED_INVESTOR_RECIPIENT_ID = "rec_investor";
 export const SIGNFLOW_EMBED_SPONSOR_RECIPIENT_ID = "rec_sponsor";
+/** Generic template sponsor. Any deal sponsor may claim this slot until one has signed. */
+export const SIGNFLOW_OPEN_SPONSOR_RECIPIENT_ID = "rec_sponsor_open";
+export const SIGNFLOW_OPEN_SPONSOR_NAME = "Anyone can sign";
+export const SIGNFLOW_OPEN_SPONSOR_EMAIL = "sponsor@embed.local";
+/** Kept on the sent copy so the slot stays open after a sponsor's name is filled in. */
+export const SIGNFLOW_OPEN_SPONSOR_ROLE = "open-sponsor";
+/** Invisible suffix so a claimed slot stays open until that sponsor signs. */
+const SIGNFLOW_OPEN_SPONSOR_MARK = "\u2060";
+
+export function signFlowOpenSponsorSignerName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.includes(SIGNFLOW_OPEN_SPONSOR_MARK)) return trimmed;
+  return `${trimmed}${SIGNFLOW_OPEN_SPONSOR_MARK}`;
+}
+/**
+ * Holds alternate signature lines (an "OR" block) that are not this signer's.
+ * Not a real recipient, so SignFlow does not ask anyone to sign those lines.
+ */
+export const SIGNFLOW_PARKED_ALTERNATE_RECIPIENT_ID = "rec_alternate_signature";
 
 export function resolveSignFlowInvestorRecipientId(doc: SignFlowDocument): string {
   const recipients = doc.recipients ?? [];
@@ -472,9 +523,7 @@ export function resolveSignFlowInvestorRecipientId(doc: SignFlowDocument): strin
 
 export function resolveSignFlowSponsorRecipientId(doc: SignFlowDocument): string {
   const recipients = doc.recipients ?? [];
-  const seller = recipients.find(
-    (r) => String(r.role ?? "").trim().toLowerCase() === "seller",
-  );
+  const seller = recipients.find((r) => matchSignFlowPartyRole(r, "sponsor"));
   const byClientId = recipients.find(
     (r) => r.id?.trim() === SIGNFLOW_EMBED_SPONSOR_RECIPIENT_ID,
   );
@@ -516,6 +565,9 @@ export function normalizeSignFlowFieldRecipientIds(
     ) {
       return { ...field, recipientId: sponsorId };
     }
+    if (rid === SIGNFLOW_PARKED_ALTERNATE_RECIPIENT_ID) {
+      return field;
+    }
     return { ...field, recipientId: investorId };
   });
 }
@@ -532,8 +584,8 @@ const EMBED_TEMPLATE_RECIPIENTS = [
   },
   {
     id: SIGNFLOW_EMBED_SPONSOR_RECIPIENT_ID,
-    name: "Sponsor",
-    email: "sponsor@embed.local",
+    name: SIGNFLOW_OPEN_SPONSOR_NAME,
+    email: SIGNFLOW_OPEN_SPONSOR_EMAIL,
     role: "seller",
     color: "#2563eb",
     order: 2,
@@ -606,7 +658,7 @@ export async function ensureSignFlowEmbedRecipients(documentId: string): Promise
     },
     {
       id: SIGNFLOW_EMBED_SPONSOR_RECIPIENT_ID,
-      name: existingSeller?.name?.trim() || EMBED_TEMPLATE_RECIPIENTS[1].name,
+      name: openSponsorDisplayName(existingSeller?.name),
       email: existingSeller?.email?.trim() || EMBED_TEMPLATE_RECIPIENTS[1].email,
       role: "seller",
       color: existingSeller?.color ?? EMBED_TEMPLATE_RECIPIENTS[1].color,
@@ -635,31 +687,18 @@ export async function ensureSignFlowEmbedRecipients(documentId: string): Promise
     return field;
   });
 
-  const recipientsStable =
-    oldBuyerId === SIGNFLOW_EMBED_INVESTOR_RECIPIENT_ID &&
-    oldSellerId === SIGNFLOW_EMBED_SPONSOR_RECIPIENT_ID &&
-    existingBuyer &&
-    existingSeller;
+  // Buyer and seller rows already exist. Replacing them deletes every field
+  // (recipient delete cascades to document_fields). Leave this document alone.
+  if (existingBuyer && existingSeller) return;
 
   const docForFieldNormalization: SignFlowDocument = {
     ...doc,
-    recipients: recipientsStable ? existing : nextRecipients,
+    recipients: nextRecipients,
   };
   const normalizedFields = normalizeSignFlowFieldRecipientIds(
     docForFieldNormalization,
     nextFields,
   );
-  const fieldsNeedRecipientSync = normalizedFields.some(
-    (field, index) =>
-      String(field.recipientId ?? "").trim() !==
-      String(fields[index]?.recipientId ?? "").trim(),
-  );
-
-  if (recipientsStable) {
-    if (!fieldsNeedRecipientSync) return;
-    await patchSignFlowDocument(documentId, { fields: normalizedFields });
-    return;
-  }
 
   await patchSignFlowDocument(documentId, {
     recipients: nextRecipients,
@@ -758,9 +797,9 @@ export function normalizeSignFlowFieldTypeForApi(type: string): string {
   return String(type ?? "text").trim() || "text";
 }
 
-export function normalizeSignFlowFieldsForApi(
-  fields: SignFlowField[],
-): SignFlowField[] {
+export function normalizeSignFlowFieldsForApi<T extends { type?: string }>(
+  fields: T[],
+): Array<T & { type: string }> {
   return fields.map((field) => ({
     ...field,
     type: normalizeSignFlowFieldTypeForApi(String(field.type ?? "text")),
@@ -769,11 +808,11 @@ export function normalizeSignFlowFieldsForApi(
 
 /**
  * Resolve template fields for send/sign.
- * Live SignFlow is the base (respects sponsor deletes). SynX snapshot/bindings
- * only fill in sponsor-added catalog fields that are missing from live.
+ * The live SignFlow document is the layout the sponsor last left in the editor.
+ * Saved snapshots are not copied back, or removed fields show up again.
  */
 export function resolveSignFlowTemplateDocumentFields(
-  file: {
+  _file: {
     signflowStatus?: string;
     signflowTemplateFields?: SignFlowField[];
     signflowInvestorDataFieldBindings?: Array<{
@@ -786,54 +825,7 @@ export function resolveSignFlowTemplateDocumentFields(
   },
   templateDoc: SignFlowDocument,
 ): SignFlowDocument {
-  const stored = file.signflowTemplateFields ?? [];
-  const live = (templateDoc.fields ?? []) as SignFlowField[];
-
-  if (!live.length && stored.length) {
-    return { ...templateDoc, fields: stored };
-  }
-  if (!stored.length) return templateDoc;
-
-  const bindingKeys = new Set(
-    (file.signflowInvestorDataFieldBindings ?? [])
-      .map((b) => String(b.dataKey ?? "").trim())
-      .filter(Boolean),
-  );
-  if (!bindingKeys.size) return templateDoc;
-
-  const liveHasCatalogKey = (dataKey: string) =>
-    live.some((field) => String(field.dataKey ?? "").trim() === dataKey);
-
-  const liveHasPlacement = (field: SignFlowField) =>
-    live.some((existing) => {
-      const pageA = Math.max(1, Math.floor(Number(existing.page) || 1));
-      const pageB = Math.max(
-        1,
-        Math.floor(Number(field.templatePage ?? field.page) || 1),
-      );
-      if (pageA !== pageB) return false;
-      return (
-        Math.abs(Number(existing.x) - Number(field.x)) < 1.5 &&
-        Math.abs(Number(existing.y) - Number(field.y)) < 1.5 &&
-        String(existing.label ?? "").trim().toLowerCase() ===
-          String(field.label ?? "").trim().toLowerCase()
-      );
-    });
-
-  const missingCatalogFields = stored.filter((field) => {
-    const dataKey = String(field.dataKey ?? "").trim();
-    if (!dataKey || !bindingKeys.has(dataKey)) return false;
-    if (liveHasCatalogKey(dataKey)) return false;
-    if (liveHasPlacement(field)) return false;
-    return true;
-  });
-
-  if (!missingCatalogFields.length) return templateDoc;
-
-  return {
-    ...templateDoc,
-    fields: [...live, ...missingCatalogFields],
-  };
+  return templateDoc;
 }
 
 export function findSignFlowTemplateRecipient(
@@ -983,15 +975,14 @@ export function signFlowInvestorSignsBeforeSponsor(
   const minInvestorOrder = Math.min(
     ...investors.map((r) => Number(r.order) || 1),
   );
-  if (minInvestorOrder < sponsorOrder) return true;
-
-  const workflowType = String(
-    doc.workflowType ?? DEFAULT_ESIGN_SIGNFLOW_WORKFLOW_TYPE,
-  )
-    .trim()
-    .toLowerCase();
-  // Legacy parallel sends used order 1 for both parties — still investor-first.
-  return workflowType === "parallel" && minInvestorOrder === sponsorOrder;
+  if (minInvestorOrder < sponsorOrder) {
+    const workflowType = String(doc.workflowType ?? "")
+      .trim()
+      .toLowerCase();
+    // Parallel lets either party sign, even when older sends stored different orders.
+    return workflowType !== "parallel";
+  }
+  return false;
 }
 
 /** True when sponsor must wait for investor signature (investor-first by order). */
@@ -1068,8 +1059,7 @@ export function mapSignFlowTemplateFieldsForInvestor(
         ...(f.dataKey?.trim() ? { dataKey: f.dataKey.trim() } : {}),
         ...(f.value?.trim() ? { value: f.value.trim() } : {}),
         recipientId: investorRecipientId,
-        // Sponsor-added catalog fields (dataKey) always count for the investor.
-        required: f.dataKey?.trim() ? true : f.required !== false,
+        required: f.required !== false,
         ...(profileTypes ? { profileTypes } : {}),
         ...(profileType ? { profileType } : {}),
         ...(String(f.radioGroupId ?? "").trim()
@@ -1103,6 +1093,72 @@ export function signFlowInvestorTemplateHasFieldsForProfile(
     }
     return signFlowFieldAppliesToProfile(f, profileType);
   });
+}
+
+export type SignFlowSponsorSigningGroup = {
+  clientRecipientId: string;
+  name: string;
+  email: string;
+  color?: string;
+  /** Generic template sponsor. Any deal sponsor may sign; the first signature closes the slot. */
+  placeholder: boolean;
+  fields: SignFlowField[];
+};
+
+/** One signing party per sponsor who has fields on the template. */
+export function collectSignFlowSponsorSigningGroups(
+  template: SignFlowDocument,
+): SignFlowSponsorSigningGroup[] {
+  const recipients = template.recipients ?? [];
+  const sellers = recipients.filter((recipient) =>
+    matchSignFlowPartyRole(recipient, "sponsor"),
+  );
+  const groups: SignFlowSponsorSigningGroup[] = [];
+
+  sellers.forEach((seller, index) => {
+    const sourceId = String(seller.id ?? "").trim();
+    if (!sourceId) return;
+    const owned = (template.fields ?? []).filter(
+      (field) => String(field.recipientId ?? "").trim() === sourceId,
+    );
+    if (owned.length === 0) return;
+    const email = String(seller.email ?? "").trim().toLowerCase();
+    const name = String(seller.name ?? "").trim() || email || "Sponsor";
+    const clientRecipientId = `rec_sponsor_${index + 1}`;
+    groups.push({
+      clientRecipientId,
+      name,
+      email,
+      color: seller.color,
+      placeholder: isSignFlowOpenSponsorRecipient({
+        id: seller.id,
+        email,
+        name,
+        role: seller.role,
+      }),
+      fields: owned.map((field) => {
+        const { templatePage, pageHash } = resolveSignFlowFieldTemplateAnchor(field);
+        return {
+          type: String(field.type ?? "signature"),
+          label: String(field.label ?? "Field"),
+          x: signFlowFieldCoordinate(field.x, 10),
+          y: signFlowFieldCoordinate(field.y, 10),
+          width: Math.max(1, signFlowFieldCoordinate(field.width, 20)),
+          height: Math.max(1, signFlowFieldCoordinate(field.height, 4)),
+          page: templatePage,
+          templatePage,
+          ...(pageHash ? { pageHash } : {}),
+          recipientId: clientRecipientId,
+          required: field.required !== false,
+          ...(String(field.radioGroupId ?? "").trim()
+            ? { radioGroupId: String(field.radioGroupId).trim() }
+            : {}),
+        };
+      }),
+    });
+  });
+
+  return groups;
 }
 
 export function mapSignFlowTemplateFieldsForSponsor(
@@ -1166,12 +1222,14 @@ export function signFlowRecipientHasSigned(recipient: {
   status?: string;
   signedAt?: string | null;
 }): boolean {
-  if (recipient.signed === true) return true;
-  if (recipient.signedAt?.trim()) return true;
   const status = String(recipient.signingStatus ?? recipient.status ?? "")
     .trim()
     .toLowerCase();
-  return status === "signed" || status === "completed";
+  if (status === "signed" || status === "completed") return true;
+  if (recipient.signed === true) return true;
+  // A pending recipient can still carry a timestamp from an earlier view.
+  if (recipient.signed === false) return false;
+  return Boolean(recipient.signedAt?.trim());
 }
 
 function recipientHasSigned(
@@ -1184,6 +1242,70 @@ export function signFlowAnySponsorHasSigned(doc: SignFlowDocument): boolean {
   return (doc.recipients ?? [])
     .filter((recipient) => matchSignFlowPartyRole(recipient, "sponsor"))
     .some(recipientHasSigned);
+}
+
+export function isSignFlowOpenSponsorName(name: string | null | undefined): boolean {
+  return String(name ?? "").trim().toLowerCase() === SIGNFLOW_OPEN_SPONSOR_NAME.toLowerCase();
+}
+
+function openSponsorDisplayName(name: string | null | undefined): string {
+  const label = String(name ?? "").trim();
+  if (!label || label.toLowerCase() === "sponsor") return SIGNFLOW_OPEN_SPONSOR_NAME;
+  return label;
+}
+
+/** Generic Sponsor recipient: any deal sponsor may sign until one signature is recorded. */
+export function isSignFlowOpenSponsorRecipient(recipient: {
+  id?: string | null;
+  email?: string | null;
+  name?: string | null;
+  role?: string | null;
+}): boolean {
+  const role = String(recipient.role ?? "").trim().toLowerCase();
+  if (role === SIGNFLOW_OPEN_SPONSOR_ROLE) return true;
+  if (String(recipient.name ?? "").includes(SIGNFLOW_OPEN_SPONSOR_MARK)) return true;
+  const id = String(recipient.id ?? "").trim().toLowerCase();
+  if (id === SIGNFLOW_OPEN_SPONSOR_RECIPIENT_ID) return true;
+  if (isSignFlowOpenSponsorName(recipient.name)) return true;
+  const email = String(recipient.email ?? "").trim().toLowerCase();
+  // SignFlow labels this dropdown choice "Any sponsor".
+  if (!email.includes("@") || email.endsWith("@embed.local")) return true;
+  const name = String(recipient.name ?? "").trim().toLowerCase();
+  return name === "any sponsor" || name === "sponsor";
+}
+
+/** Who may still counter-sign. An open slot stays available to every deal sponsor. */
+export function signFlowPendingSponsorSignAudience(doc: SignFlowDocument): {
+  openToAnySponsor: boolean;
+  namedEmails: string[];
+  allSponsorSlotsSigned: boolean;
+} {
+  const sponsors = (doc.recipients ?? []).filter((recipient) =>
+    matchSignFlowPartyRole(recipient, "sponsor"),
+  );
+  if (sponsors.length === 0) {
+    return {
+      openToAnySponsor: false,
+      namedEmails: [],
+      allSponsorSlotsSigned: true,
+    };
+  }
+  const unsigned = sponsors.filter((recipient) => !recipientHasSigned(recipient));
+  const namedEmails = [
+    ...new Set(
+      unsigned
+        .filter((recipient) => !isSignFlowOpenSponsorRecipient(recipient))
+        .map((recipient) => String(recipient.email ?? "").trim().toLowerCase())
+        .filter((email) => email.includes("@") && !email.endsWith("@embed.local")),
+    ),
+  ];
+  return {
+    openToAnySponsor: unsigned.some((recipient) =>
+      isSignFlowOpenSponsorRecipient(recipient),
+    ),
+    namedEmails,
+    allSponsorSlotsSigned: unsigned.length === 0,
+  };
 }
 
 function matchSignFlowPartyRole(
@@ -1205,6 +1327,7 @@ function matchSignFlowPartyRole(
     role.includes("sponsor") ||
     role.includes("seller") ||
     id === "rec_sponsor" ||
+    id === SIGNFLOW_OPEN_SPONSOR_RECIPIENT_ID ||
     id === "rec_2" ||
     role === "recipient_b"
   );
@@ -1238,11 +1361,20 @@ export function evaluateSignFlowRecipientSignAccess(
 
   const requesterIsInvestor = matchSignFlowPartyRole(requester, "investor");
   const requesterIsSponsor = matchSignFlowPartyRole(requester, "sponsor");
+  const workflowType = String(doc.workflowType ?? "")
+    .trim()
+    .toLowerCase();
+  // Parallel: investor or sponsor may sign without waiting for the other party.
+  if (workflowType === "parallel") {
+    return { allowed: true };
+  }
+
   const sponsorOrder = Number(sponsor.order) || 2;
   const minInvestorOrder = Math.min(
     ...investors.map((r) => Number(r.order) || 1),
   );
   const sponsorSignsFirst = sponsorOrder < minInvestorOrder;
+  const investorSignsFirst = minInvestorOrder < sponsorOrder;
   const anyInvestorSigned =
     opts?.investorHasCompletedSignature === true ||
     investors.some(recipientHasSigned);
@@ -1254,11 +1386,11 @@ export function evaluateSignFlowRecipientSignAccess(
       code: "waiting_for_prior_signer",
       waitingFor: "sponsor",
       message:
-        "The lead sponsor must sign first. You will be able to sign after they complete their signature.",
+        "A sponsor must sign first. You will be able to sign after a sponsor completes their signature.",
     };
   }
 
-  if (requesterIsSponsor && !sponsorSignsFirst && !anyInvestorSigned) {
+  if (requesterIsSponsor && investorSignsFirst && !anyInvestorSigned) {
     return {
       allowed: false,
       code: "waiting_for_prior_signer",
@@ -1271,37 +1403,80 @@ export function evaluateSignFlowRecipientSignAccess(
   return { allowed: true };
 }
 
+/**
+ * Parallel documents share one signing turn. Older sends stored investor order 1
+ * and sponsor order 2; equalize those so SignFlow lets either party sign.
+ */
+export async function ensureParallelPartiesMaySign(
+  documentId: string,
+  doc: SignFlowDocument,
+): Promise<SignFlowDocument> {
+  const workflowType = String(doc.workflowType ?? "")
+    .trim()
+    .toLowerCase();
+  if (workflowType !== "parallel") return doc;
+  const recipients = doc.recipients ?? [];
+  if (recipients.length < 2) return doc;
+  const orders = recipients.map((r) => Number(r.order) || 1);
+  if (orders.every((order) => order === orders[0])) return doc;
+  return patchSignFlowDocument(documentId, {
+    workflowType: "parallel",
+    recipients: recipients.map((recipient) => ({ ...recipient, order: 1 })),
+  });
+}
+
 export async function patchSignFlowDocument(
   documentId: string,
   body: Record<string, unknown>,
 ): Promise<SignFlowDocument> {
-  let patchBody = body;
-  if (
-    body.fields === undefined &&
-    (body.recipients !== undefined || body.workflowType !== undefined)
-  ) {
-    const current = await getSignFlowDocument(documentId);
-    const preservedFields = normalizeSignFlowFieldRecipientIds(
-      current,
-      current.fields ?? [],
-    );
-    if (preservedFields.length > 0) {
-      patchBody = { ...body, fields: preservedFields };
-    }
-  }
-
+  // Do not resend a previously read field list. A recipient-only patch used to
+  // attach that snapshot and put deleted fields back after the editor saved.
   const doc = await signflowRequest<SignFlowDocument>(
     `/documents/${encodeURIComponent(documentId.trim())}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patchBody),
+      body: JSON.stringify(body),
     },
   );
   if (!doc?.id) {
     throw new Error("SignFlow returned an incomplete document patch response");
   }
   return doc;
+}
+
+/** Original template PDF stored on the SignFlow document (not a signed copy). */
+export async function downloadSignFlowSourcePdf(
+  doc: SignFlowDocument,
+): Promise<Buffer | null> {
+  const { baseUrl, apiKey } = requireSignFlowConfig();
+  const candidates: string[] = [];
+  const fileUrl = doc.fileUrl?.trim();
+  if (fileUrl) {
+    candidates.push(
+      /^https?:\/\//i.test(fileUrl) ? fileUrl : buildUrl(baseUrl, fileUrl),
+    );
+  }
+  const documentId = doc.id?.trim();
+  if (documentId) {
+    const encoded = encodeURIComponent(documentId);
+    candidates.push(buildUrl(baseUrl, `/documents/${encoded}/file`));
+    candidates.push(buildUrl(baseUrl, `/documents/${encoded}/download`));
+  }
+
+  for (const url of candidates) {
+    try {
+      const headers: Record<string, string> = {};
+      if (url.startsWith(baseUrl)) headers.Authorization = `Bearer ${apiKey}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) continue;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.subarray(0, 4).toString() === "%PDF") return buf;
+    } catch {
+      /* try the next location */
+    }
+  }
+  return null;
 }
 
 export async function downloadSignFlowSignedPdfBuffer(

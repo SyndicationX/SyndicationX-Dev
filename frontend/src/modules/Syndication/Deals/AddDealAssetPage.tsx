@@ -129,21 +129,22 @@ export function AddDealAssetPage() {
           setAssetDraft(persisted.draft)
           setAttrRows(normalizeAssetAttributeMoneyRows(persisted.attrRows))
           const saved = persisted.imagePreviewDataUrls
-          const fromSaved = Array.isArray(saved) ? saved : []
-          if (assetId === primaryId) {
+          if (Array.isArray(saved)) {
+            setExistingImageUrls(dedupeGalleryUrlsPreserveOrder(saved))
+          } else if (assetId === primaryId) {
             try {
               const detail = await fetchDealById(dealId)
               if (cancelled) return
-              const fromApi = assetImagePathsToUrls(detail.assetImagePath)
               setExistingImageUrls(
-                dedupeGalleryUrlsPreserveOrder([...fromApi, ...fromSaved]),
+                dedupeGalleryUrlsPreserveOrder(
+                  assetImagePathsToUrls(detail.assetImagePath),
+                ),
               )
             } catch {
-              if (!cancelled)
-                setExistingImageUrls(dedupeGalleryUrlsPreserveOrder(fromSaved))
+              if (!cancelled) setExistingImageUrls([])
             }
           } else {
-            setExistingImageUrls(dedupeGalleryUrlsPreserveOrder(fromSaved))
+            setExistingImageUrls([])
           }
           return
         }

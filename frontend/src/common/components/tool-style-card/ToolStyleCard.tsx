@@ -1,5 +1,6 @@
 import { type LucideIcon, HelpCircle } from "lucide-react"
 import type { ReactNode } from "react"
+import { FormTooltip } from "../form-tooltip/FormTooltip"
 import "./tool-style-card.css"
 
 interface ToolStyleCardProps {
@@ -14,6 +15,8 @@ interface ToolStyleCardProps {
   variant?: "default" | "metric"
   /** Shows a skeleton loader in place of the value while data is loading */
   loading?: boolean
+  /** Info icon beside the title. Opens this explanation. */
+  infoText?: string
 }
 
 function ToolStyleCardValue({
@@ -58,6 +61,7 @@ export function ToolStyleCard({
   className = "",
   variant = "default",
   loading = false,
+  infoText,
 }: ToolStyleCardProps) {
   const rootClass = [
     "tool_style_card",
@@ -68,6 +72,16 @@ export function ToolStyleCard({
   ]
     .filter(Boolean)
     .join(" ")
+
+  const infoEl = infoText?.trim() ? (
+    <FormTooltip
+      className="tool_style_card_info"
+      label={`About ${title}`}
+      placement="bottom"
+      panelAlign="start"
+      content={<p className="tool_style_card_info_text">{infoText.trim()}</p>}
+    />
+  ) : null
 
   const hintEl = hintTitle ? (
     <span
@@ -85,6 +99,7 @@ export function ToolStyleCard({
         <div className="tool_style_card_metric_header">
           <div className="tool_style_card_label_cluster">
             <span className="tool_style_card_label_inline">{title}</span>
+            {infoEl}
             {hintEl}
           </div>
           <div className="tool_style_card_icon_box" aria-hidden>
@@ -103,6 +118,7 @@ export function ToolStyleCard({
         </div>
         <div className="tool_style_card_title_row">
           <h3 className="tool_style_card_title">{title}</h3>
+          {infoEl}
           {hintEl}
         </div>
         <ToolStyleCardValue loading={loading} description={description} metric={false} />

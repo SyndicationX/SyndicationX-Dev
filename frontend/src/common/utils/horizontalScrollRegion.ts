@@ -254,7 +254,18 @@ export function attachHorizontalScrollBehavior(
     if (!isDragging) stopEdgeScroll()
   }
 
+  function onExternalSeek() {
+    stopWheelSmooth()
+    wheelTarget = scroller.scrollLeft
+  }
+
+  function onScrollerScroll() {
+    if (wheelRaf == null) wheelTarget = scroller.scrollLeft
+  }
+
   scroller.addEventListener("wheel", onWheel, { passive: false })
+  scroller.addEventListener("scroll", onScrollerScroll, { passive: true })
+  scroller.addEventListener("data-table-hscroll-seek", onExternalSeek)
   scroller.addEventListener("pointerdown", onPointerDown)
   scroller.addEventListener("pointermove", onPointerMove)
   scroller.addEventListener("pointerup", endPan)
@@ -265,6 +276,8 @@ export function attachHorizontalScrollBehavior(
     stopWheelSmooth()
     stopEdgeScroll()
     scroller.removeEventListener("wheel", onWheel)
+    scroller.removeEventListener("scroll", onScrollerScroll)
+    scroller.removeEventListener("data-table-hscroll-seek", onExternalSeek)
     scroller.removeEventListener("pointerdown", onPointerDown)
     scroller.removeEventListener("pointermove", onPointerMove)
     scroller.removeEventListener("pointerup", endPan)

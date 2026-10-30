@@ -31,7 +31,12 @@ import {
   type EsignSignflowSigningOrder,
   type EsignSignflowWorkflowType,
 } from "../../constants/esignSigningWorkflow.js";
-import type { SignFlowField } from "../esign/signflow.service.js";
+import { isEsignProviderUnreachableError } from "../esign/esignProviderErrors.js";
+import {
+  downloadSignFlowSourcePdf,
+  getSignFlowDocument,
+  type SignFlowField,
+} from "../esign/signflow.service.js";
 import {
   buildStoredAssetName,
   type DealMemoryUploadFile,
@@ -99,6 +104,8 @@ export type SignflowInvestorDataFieldBinding = {
   page: number;
   x: number;
   y: number;
+  /** False when the sponsor marked the field optional. Missing means required. */
+  required?: boolean;
 };
 
 export function resolveEsignTemplateProvider(
@@ -375,12 +382,48 @@ export async function ensureEsignTemplatePdfIncludesW9(
   return { file, absolutePath: absPath };
 }
 
+async function localEsignTemplatePdfReadable(
+  relativePath: string,
+): Promise<boolean> {
+  try {
+    await access(resolveEsignTemplateAbsolutePath(relativePath), fsConstants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lead sponsor can still open a template whose local PDF was deleted, because
+ * SignFlow keeps the file. Investor send reads the local path, so copy it back.
+ */
+async function restoreMissingEsignTemplatePdfFromSignFlow(
+  file: EsignTemplateFileRecord,
+): Promise<void> {
+  const relativePath = file.relativePath?.trim();
+  if (!relativePath || (await localEsignTemplatePdfReadable(relativePath))) return;
+  const documentId = file.signflowDocumentId?.trim();
+  if (!documentId) return;
+  try {
+    const doc = await getSignFlowDocument(documentId);
+    const pdf = await downloadSignFlowSourcePdf(doc);
+    if (!pdf) return;
+    const absPath = resolveEsignTemplateAbsolutePath(relativePath);
+    await mkdir(path.dirname(absPath), { recursive: true });
+    await writeFile(absPath, pdf);
+  } catch (err) {
+    if (isEsignProviderUnreachableError(err)) throw err;
+    console.warn("restoreMissingEsignTemplatePdfFromSignFlow:", err);
+  }
+}
+
 /** Questionnaire page 1 (when enabled), main document, then W-9 appendix when applicable. */
 export async function ensureEsignTemplatePdfPrepared(
   dealId: string,
   file: EsignTemplateFileRecord,
   state?: EsignTemplatesJson,
 ): Promise<{ file: EsignTemplateFileRecord; absolutePath: string }> {
+  await restoreMissingEsignTemplatePdfFromSignFlow(file);
   const currentState = state ?? (await getDealEsignTemplatesState(dealId));
   const withQuestionnaire = await ensureEsignTemplatePdfIncludesQuestionnaire(
     dealId,

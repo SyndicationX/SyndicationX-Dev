@@ -41,6 +41,13 @@
   padding-bottom: 0.45em;
 }
 
+.um_users_roles_scope {
+  margin: -0.15em 0 0.85em;
+  color: var(--portal-text-muted, #64748b);
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
 .um_header_row {
   display: flex;
   flex-wrap: wrap;
@@ -437,7 +444,13 @@ a.um_btn_secondary {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
   padding: 1em;
+  overflow: auto;
+  overscroll-behavior: contain;
   background: rgb(15 23 42 / 45%);
 }
 
@@ -1047,6 +1060,23 @@ select option {
   padding-right: 0.5em;
 }
 
+.um_th_serial,
+.um_td_serial {
+  width: 3.25rem;
+  min-width: 3.25rem;
+  max-width: 3.25rem;
+  text-align: center;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+  color: var(--portal-text-muted, #64748b);
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+  box-sizing: border-box;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+
 /* Row selection (Members & Contacts datatables) */
 .um_th_checkbox,
 .um_td_checkbox {
@@ -1107,6 +1137,30 @@ select option {
 }
 
 .um_user_meta_username--placeholder {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+button.um_user_meta_name_btn {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-transform: capitalize;
+  color: var(--portal-primary, #2563eb);
+  cursor: pointer;
+}
+
+button.um_user_meta_name_btn:hover {
+  text-decoration: underline;
+}
+
+button.um_user_meta_name_btn.um_user_meta_username--placeholder {
   color: #94a3b8;
   font-weight: 500;
 }
@@ -1403,6 +1457,24 @@ td.um_td_memberships:not(.um_td_role) {
   padding: 0;
 }
 
+.um_modal_view:has(.um_view_invitation) {
+  max-height: min(90vh, 52rem);
+  overflow: auto;
+}
+
+.um_view_invitation {
+  margin-top: 1.25em;
+}
+
+.um_view_section_label {
+  margin: 0 0 0.75em;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--portal-text-muted, #64748b);
+}
+
 .um_view_field {
   display: flex;
   flex-direction: column;
@@ -1473,6 +1545,106 @@ td.um_td_memberships:not(.um_td_role) {
 
 .um_modal_view .um_modal_head {
   margin-bottom: 1.25em;
+}
+
+.um_member_remove_modal {
+  max-width: 32rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+.um_member_remove_modal .um_modal_head {
+  margin-bottom: 0;
+  padding: 1.1rem 1.25rem 0.85rem;
+}
+
+.um_member_remove_warning {
+  margin: 0;
+  padding: 0.75rem 1.25rem;
+  background: #fff4e8;
+  color: #9a3412;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.um_member_remove_body {
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.um_member_remove_message {
+  margin: 0 0 1em;
+  font-size: 0.875em;
+  line-height: 1.5;
+  color: var(--portal-text, #0f172a);
+}
+
+.um_member_remove_confirm_field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--portal-text, #0f172a);
+}
+
+.um_member_remove_confirm_input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 2.5rem;
+  padding: 0.55em 0.75em;
+  border: 1px solid var(--portal-border, #d6d3d1);
+  border-radius: 0.5rem;
+  font: inherit;
+  color: var(--portal-text, #0f172a);
+  background: var(--portal-surface, #fff);
+}
+
+.um_btn_danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  box-sizing: border-box;
+  min-height: var(--portal-button-height, var(--top-navbar-control-height, 2.25rem));
+  height: var(--portal-button-height, var(--top-navbar-control-height, 2.25rem));
+  padding: 0 1.15em;
+  border: 1px solid #e11d48;
+  border-radius: var(--ui-button-border-radius, 4px);
+  background: #e11d48;
+  color: #fff;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 1em;
+  line-height: 1.25;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.um_btn_danger:hover:not(:disabled) {
+  background: #be123c;
+  border-color: #be123c;
+}
+
+.um_btn_danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+:root[data-theme="dark"] .um_member_remove_message,
+:root[data-theme="dark"] .um_member_remove_confirm_field {
+  color: var(--portal-text, #f1f5f9);
+}
+
+:root[data-theme="dark"] .um_member_remove_warning {
+  background: rgb(154 52 18 / 28%);
+  color: #fdba74;
+}
+
+:root[data-theme="dark"] .um_member_remove_confirm_input {
+  background: var(--portal-surface, #0f172a);
+  color: var(--portal-text, #f1f5f9);
 }
 
 /* Username + email grid above edit/suspend forms (matches view modal fields). */
@@ -1602,7 +1774,7 @@ a.um_member_subpage_cancel.um_btn_secondary {
 
 /* Sortable headers: no th padding so the control fills the full column cell.
    Exclude checkbox + actions so header select-all aligns with row checkboxes. */
-.um_table_sortable thead th:not(.um_th_actions):not(.um_th_checkbox) {
+.um_table_sortable thead th:not(.um_th_actions):not(.um_th_checkbox):not(.um_th_serial) {
   padding: 0;
   vertical-align: middle;
   /* position: relative; */

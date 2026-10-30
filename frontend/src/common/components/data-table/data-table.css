@@ -417,8 +417,8 @@
   table-layout: fixed;
 }
 
-.um_table_wrap.data_table_shell .um_table_members.data_table td,
-.um_table_wrap.data_table_shell .um_table_members.data_table th {
+.um_table_wrap.data_table_shell .um_table_members.data_table td:not(.um_td_serial),
+.um_table_wrap.data_table_shell .um_table_members.data_table th:not(.um_th_serial) {
   word-break: break-word;
   overflow-wrap: anywhere;
 }

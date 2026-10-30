@@ -1,4 +1,4 @@
-import { Bell, Inbox, Loader2 } from "lucide-react"
+import { Bell, CheckCheck, ChevronRight, Inbox, Loader2, RefreshCw } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useNotifications } from "../hooks/useNotifications"
@@ -61,7 +61,9 @@ export function NotificationsPage() {
             >
               {isLoading ? (
                 <Loader2 className="notifications_refresh_spinner" size={16} aria-hidden />
-              ) : null}
+              ) : (
+                <RefreshCw size={16} strokeWidth={2} aria-hidden />
+              )}
               Refresh
             </button>
             {unreadCount > 0 ? (
@@ -70,6 +72,7 @@ export function NotificationsPage() {
                 className="notifications_mark_all_btn"
                 onClick={markAllRead}
               >
+                <CheckCheck size={16} strokeWidth={2} aria-hidden />
                 Mark all as read
               </button>
             ) : null}
@@ -134,6 +137,7 @@ export function NotificationsPage() {
               className="notifications_empty_link_btn"
               onClick={() => void refresh()}
             >
+              <RefreshCw size={16} strokeWidth={2} aria-hidden />
               Try again
             </button>
           </div>
@@ -155,6 +159,7 @@ export function NotificationsPage() {
                 onClick={() => setFilter("all")}
               >
                 View all
+                <ChevronRight size={16} strokeWidth={2} aria-hidden />
               </button>
             ) : null}
           </div>

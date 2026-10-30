@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getUploadsPhysicalRoot } from "../../config/uploadPaths.js";
 import {
   DEAL_ASSETS_UPLOAD_SUBDIR,
@@ -23,6 +23,7 @@ import {
   dealInvestment,
   type DealInvestmentInsert,
   type DealInvestmentRow,
+  type FundApprovedAtHistoryEntry,
 } from "../../schema/deal.schema/deal-investment.schema.js";
 import { dealLpInvestor } from "../../schema/deal.schema/deal-lp-investor.schema.js";
 import { dealMember } from "../../schema/deal.schema/deal-member.schema.js";
@@ -76,6 +77,20 @@ const LP_INVESTOR_ROLE_MATCH = [
 export function isLpInvestorRole(raw: string | null | undefined): boolean {
   const s = String(raw ?? "").trim().toLowerCase();
   return s === "lp_investors" || s === "lp investors" || s === "lp investor";
+}
+
+/** Sponsor-removed or unlinked investments stay in the table for audit and are not continued. */
+export function isRetiredDealInvestment(row: {
+  removedAt?: Date | string | null;
+  investorUnlinkedAt?: Date | string | null;
+  status?: string | null;
+}): boolean {
+  const status = String(row.status ?? "").trim().toLowerCase();
+  return (
+    Boolean(row.removedAt) ||
+    Boolean(row.investorUnlinkedAt) ||
+    status === "removed"
+  );
 }
 
 /** True when the stored role is General Partner (value or plural label). */
@@ -207,10 +222,32 @@ function isMezzanineSubscriptionType(subscriptionType: string): boolean {
   return subscriptionType.trim().toLowerCase() === "mezzanine";
 }
 
-function isInvestorOnboardingSubscriptionType(subscriptionType: string): boolean {
+function nameLooksLikeGeneralPartner(name: string | null | undefined): boolean {
+  return /\bgp\b|general partner/i.test(String(name ?? ""));
+}
+
+/**
+ * Investor onboarding may use LP, mezzanine, preferred equity, and classes
+ * saved with a blank type (Class Setup displays those as LP, e.g. Class A).
+ * GP is excluded.
+ */
+function isInvestorOnboardingClass(row: {
+  subscriptionType: string;
+  name?: string | null;
+}): boolean {
+  const subscriptionType = String(row.subscriptionType ?? "");
+  if (isGpSubscriptionType(subscriptionType)) return false;
+  if (
+    !subscriptionType.trim() &&
+    nameLooksLikeGeneralPartner(row.name)
+  ) {
+    return false;
+  }
   return (
+    !subscriptionType.trim() ||
     isLpSubscriptionType(subscriptionType) ||
-    isMezzanineSubscriptionType(subscriptionType)
+    isMezzanineSubscriptionType(subscriptionType) ||
+    subscriptionType.trim().toLowerCase() === "preferred_equity"
   );
 }
 
@@ -245,9 +282,7 @@ export async function resolveFirstLpInvestorClassForDeal(
   { ok: true; storedInvestorClass: string } | { ok: false; message: string }
 > {
   const classes = await listInvestorClassesByDealId(dealId);
-  const onboardingClasses = classes.filter((c) =>
-    isInvestorOnboardingSubscriptionType(c.subscriptionType),
-  );
+  const onboardingClasses = classes.filter((c) => isInvestorOnboardingClass(c));
   if (onboardingClasses.length === 0) {
     return {
       ok: false,
@@ -303,16 +338,14 @@ export async function resolveInvestorClassForDealInvestment(
     return { ok: false, message: "Investor class is required." };
   }
 
-  function rejectIfClassNotAllowed(
-    subscriptionType: string,
-  ): { ok: false; message: string } | null {
-    if (
-      opts?.lpOnboardingOnly &&
-      !isInvestorOnboardingSubscriptionType(subscriptionType)
-    ) {
+  function rejectIfClassNotAllowed(row: {
+    subscriptionType: string;
+    name?: string | null;
+  }): { ok: false; message: string } | null {
+    if (opts?.lpOnboardingOnly && !isInvestorOnboardingClass(row)) {
       return { ok: false, message: LP_ONBOARDING_CLASS_UNAVAILABLE_MESSAGE };
     }
-    if (opts?.excludeGp && isGpSubscriptionType(subscriptionType)) {
+    if (opts?.excludeGp && isGpSubscriptionType(row.subscriptionType)) {
       return { ok: false, message: GP_CLASS_ON_INVESTORS_TAB_MESSAGE };
     }
     return null;
@@ -320,7 +353,7 @@ export async function resolveInvestorClassForDealInvestment(
 
   const byId = classes.find((c) => c.id === t);
   if (byId) {
-    const blocked = rejectIfClassNotAllowed(byId.subscriptionType);
+    const blocked = rejectIfClassNotAllowed(byId);
     if (blocked) return blocked;
     const name = byId.name?.trim();
     return {
@@ -332,7 +365,7 @@ export async function resolveInvestorClassForDealInvestment(
   const norm = (s: string) => s.trim().toLowerCase();
   const byName = classes.find((c) => norm(c.name) === norm(t));
   if (byName) {
-    const blocked = rejectIfClassNotAllowed(byName.subscriptionType);
+    const blocked = rejectIfClassNotAllowed(byName);
     if (blocked) return blocked;
     const name = byName.name?.trim();
     return {
@@ -363,6 +396,11 @@ export type CreateDealInvestmentInput = {
   fundApprovedBy?: string | null;
   /** Last fund-approval timestamp when `fundApproved` is true. */
   fundApprovedAt?: Date | null;
+  /**
+   * Full funded-date trail. Omit on update to leave the stored JSON alone.
+   * The last entry is the date shown in the investors table.
+   */
+  fundApprovedAtHistory?: FundApprovedAtHistoryEntry[];
   status: string;
   investorClass: string;
   docSignedDate: string | null;
@@ -376,6 +414,71 @@ export type CreateDealInvestmentInput = {
    */
   isDraft?: boolean;
 };
+
+function parseFundApprovedAtHistory(raw: unknown): FundApprovedAtHistoryEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const entries: FundApprovedAtHistoryEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const date = String((item as { date?: unknown }).date ?? "").trim();
+    if (!date || Number.isNaN(new Date(date).getTime())) continue;
+    const recordedAtRaw = String(
+      (item as { recordedAt?: unknown }).recordedAt ?? "",
+    ).trim();
+    const source =
+      (item as { source?: unknown }).source === "edited" ? "edited" : "approved";
+    entries.push({
+      date: new Date(date).toISOString(),
+      recordedAt:
+        recordedAtRaw && !Number.isNaN(new Date(recordedAtRaw).getTime())
+          ? new Date(recordedAtRaw).toISOString()
+          : new Date(date).toISOString(),
+      source,
+    });
+  }
+  return entries;
+}
+
+/**
+ * Keeps every earlier funded date and appends `nextDate` as the latest.
+ * An edit also records the previous current date when it is not already stored.
+ */
+export function recordFundApprovedAtHistory(params: {
+  history: unknown;
+  previousDate: Date | null;
+  nextDate: Date;
+  source: "approved" | "edited";
+}): FundApprovedAtHistoryEntry[] {
+  let history = parseFundApprovedAtHistory(params.history);
+  if (params.previousDate) {
+    const prevIso = params.previousDate.toISOString();
+    if (!history.some((entry) => entry.date === prevIso)) {
+      history = [
+        ...history,
+        { date: prevIso, recordedAt: prevIso, source: "approved" },
+      ];
+    }
+  }
+  const nextIso = params.nextDate.toISOString();
+  const last = history[history.length - 1];
+  if (last?.date === nextIso) return history;
+  return [
+    ...history,
+    {
+      date: nextIso,
+      recordedAt: new Date().toISOString(),
+      source: params.source,
+    },
+  ];
+}
+
+/** Date shown in the investors table: the last stored funded date. */
+function latestFundApprovedAtIso(row: DealInvestmentRow): string {
+  const history = parseFundApprovedAtHistory(row.fundApprovedAtHistory);
+  const latest = history[history.length - 1]?.date;
+  if (latest) return latest;
+  return row.fundApprovedAt ? new Date(row.fundApprovedAt).toISOString() : "";
+}
 
 /** Matches PostgreSQL uuid text (any variant) — used for users.id lookups */
 function looksLikeUuid(s: string): boolean {
@@ -711,6 +814,29 @@ function fundApprovedSnapshotStoredFromInput(
   return String(rounded);
 }
 
+function committedFieldsForInvestorApi(
+  row: DealInvestmentRow,
+  keepRemovedCommitment = false,
+): {
+  committed: string;
+  commitmentAmountRaw: string;
+  extraContributionAmounts: string[];
+} {
+  const extras = (row.extraContributionAmounts as string[] | null) ?? [];
+  if (isRetiredDealInvestment(row) && !keepRemovedCommitment) {
+    return {
+      committed: "—",
+      commitmentAmountRaw: "",
+      extraContributionAmounts: [],
+    };
+  }
+  return {
+    committed: formatCommitted(row.commitmentAmount, extras),
+    commitmentAmountRaw: row.commitmentAmount ?? "",
+    extraContributionAmounts: extras,
+  };
+}
+
 function formatCommitted(
   commitmentAmount: string,
   extras: string[] | null | undefined,
@@ -888,15 +1014,61 @@ export async function loadInvitationMailSentFlags(
   });
 }
 
+function investorQuestionnaireWasSaved(raw: string | null | undefined): boolean {
+  const text = String(raw ?? "").trim();
+  if (!text) return false;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    return Object.values(parsed as Record<string, unknown>).some(
+      (value) => String(value ?? "").trim().length > 0,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** W-9 name and address were stored, so Invest Now is past the questionnaire. */
+function investorW9WasSaved(raw: string | null | undefined): boolean {
+  const text = String(raw ?? "").trim();
+  if (!text) return false;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const o = parsed as Record<string, unknown>;
+    const pick = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = String(o[key] ?? "").trim();
+        if (value) return value;
+      }
+      return "";
+    };
+    const name = pick("name");
+    const line = pick("addressLine", "address_line");
+    const street = pick("street1");
+    const city = pick("city");
+    const state = pick("state");
+    const zip = pick("zip");
+    return Boolean(name && (line || (street && city && state && zip)));
+  } catch {
+    return false;
+  }
+}
+
 export function mapRowToInvestorApi(
   row: DealInvestmentRow,
   resolvedByUserId?: Map<string, ResolvedPortalUser>,
-  opts?: { invitationMailSent?: boolean },
+  opts?: { invitationMailSent?: boolean; keepRemovedCommitment?: boolean },
 ) {
   const invitationMailSent = Boolean(opts?.invitationMailSent);
+  const keepRemovedCommitment = Boolean(opts?.keepRemovedCommitment);
   const cid = row.contactId?.trim() ?? "";
   if (cid === DEAL_INVESTMENT_AUTOSAVE_CONTACT_PLACEHOLDER) {
-    const extras = (row.extraContributionAmounts as string[] | null) ?? [];
+    const amount = committedFieldsForInvestorApi(row, keepRemovedCommitment);
     return {
       id: row.id,
       displayName: "Draft",
@@ -910,16 +1082,11 @@ export function mapRowToInvestorApi(
       status: row.status?.trim() || "—",
       fundApproved: Boolean(row.fundApproved),
       fundApprovedByUserId: String(row.fundApprovedBy ?? "").trim(),
-      fundApprovedAtIso: row.fundApprovedAt
-        ? new Date(row.fundApprovedAt).toISOString()
-        : "",
+      fundApprovedAtIso: latestFundApprovedAtIso(row),
       fundApprovedCommitmentSnapshot: String(
         row.fundApprovedCommitmentSnapshot ?? "",
       ).trim(),
-      committed: formatCommitted(
-        row.commitmentAmount,
-        row.extraContributionAmounts as string[] | null,
-      ),
+      committed: amount.committed,
       signedDate: formatSignedDate(
         row.docSignedDate,
         row.esignStatusJson,
@@ -937,10 +1104,20 @@ export function mapRowToInvestorApi(
       profileId: row.profileId ?? "",
       userInvestorProfileId: String(row.userInvestorProfileId ?? "").trim(),
       offeringId: row.offeringId ?? "",
-      commitmentAmountRaw: row.commitmentAmount ?? "",
-      extraContributionAmounts: extras,
+      commitmentAmountRaw: amount.commitmentAmountRaw,
+      extraContributionAmounts: amount.extraContributionAmounts,
       docSignedDateIso: row.docSignedDate?.trim() ?? "",
+      amountReceived: String(row.fundedAmount ?? "").trim(),
+      accruedAmount: String(row.accruedPreferredReturn ?? "").trim(),
       invitationMailSent,
+      investorArchived: Boolean(row.investorArchivedAt),
+      commitmentCompletedAtIso: row.commitmentCompletedAt
+        ? new Date(row.commitmentCompletedAt).toISOString()
+        : "",
+      investorW9Saved: investorW9WasSaved(row.investorW9FormJson),
+      investorQuestionnaireSaved: investorQuestionnaireWasSaved(
+        row.investorQuestionnaireAnswersJson,
+      ),
     };
   }
   const legacy = userForContact(row.contactId);
@@ -960,7 +1137,7 @@ export function mapRowToInvestorApi(
     userEmail = emailFromContactId;
   }
 
-  const extras = (row.extraContributionAmounts as string[] | null) ?? [];
+  const amount = committedFieldsForInvestorApi(row, keepRemovedCommitment);
   return {
     id: row.id,
     displayName,
@@ -974,16 +1151,11 @@ export function mapRowToInvestorApi(
     status: row.status?.trim() || "—",
     fundApproved: Boolean(row.fundApproved),
     fundApprovedByUserId: String(row.fundApprovedBy ?? "").trim(),
-    fundApprovedAtIso: row.fundApprovedAt
-      ? new Date(row.fundApprovedAt).toISOString()
-      : "",
+    fundApprovedAtIso: latestFundApprovedAtIso(row),
     fundApprovedCommitmentSnapshot: String(
       row.fundApprovedCommitmentSnapshot ?? "",
     ).trim(),
-    committed: formatCommitted(
-      row.commitmentAmount,
-      row.extraContributionAmounts as string[] | null,
-    ),
+    committed: amount.committed,
     signedDate: formatSignedDate(
       row.docSignedDate,
       row.esignStatusJson,
@@ -1002,13 +1174,23 @@ export function mapRowToInvestorApi(
     profileId: row.profileId ?? "",
     userInvestorProfileId: String(row.userInvestorProfileId ?? "").trim(),
     offeringId: row.offeringId ?? "",
-    commitmentAmountRaw: row.commitmentAmount ?? "",
-    extraContributionAmounts: extras,
+    commitmentAmountRaw: amount.commitmentAmountRaw,
+    extraContributionAmounts: amount.extraContributionAmounts,
     docSignedDateIso: row.docSignedDate?.trim() ?? "",
+    amountReceived: String(row.fundedAmount ?? "").trim(),
+    accruedAmount: String(row.accruedPreferredReturn ?? "").trim(),
     investedAtIso: row.createdAt
       ? new Date(row.createdAt).toISOString()
       : "",
     invitationMailSent,
+    investorArchived: Boolean(row.investorArchivedAt),
+    commitmentCompletedAtIso: row.commitmentCompletedAt
+      ? new Date(row.commitmentCompletedAt).toISOString()
+      : "",
+    investorW9Saved: investorW9WasSaved(row.investorW9FormJson),
+    investorQuestionnaireSaved: investorQuestionnaireWasSaved(
+      row.investorQuestionnaireAnswersJson,
+    ),
   };
 }
 
@@ -1195,7 +1377,11 @@ async function loadLpRosterContactKeysForDeal(dealId: string): Promise<Set<strin
     .select({ contactMemberId: dealLpInvestor.contactMemberId })
     .from(dealLpInvestor)
     .where(
-      and(eq(dealLpInvestor.dealId, dealId), eq(dealLpInvestor.isDraft, false)),
+      and(
+        eq(dealLpInvestor.dealId, dealId),
+        eq(dealLpInvestor.isDraft, false),
+        isNull(dealLpInvestor.removedAt),
+      ),
     );
   const set = new Set<string>();
   for (const r of rows) {
@@ -1239,7 +1425,9 @@ export async function enrichInvestorRolesForDealRows(
  */
 export async function mapDealInvestmentsToInvestorApi(
   rows: DealInvestmentRow[],
+  options?: { keepRemovedCommitment?: boolean },
 ): Promise<ReturnType<typeof mapRowToInvestorApi>[]> {
+  const keepRemovedCommitment = Boolean(options?.keepRemovedCommitment);
   const dealId = rows[0]?.dealId;
   const enriched =
     dealId && rows.length > 0
@@ -1251,7 +1439,10 @@ export async function mapDealInvestmentsToInvestorApi(
   );
   if (!dealId || enriched.length === 0) {
     return enriched.map((r) =>
-      withUserInvestorProfileName(mapRowToInvestorApi(r, resolved, {}), profileNames),
+      withUserInvestorProfileName(
+        mapRowToInvestorApi(r, resolved, { keepRemovedCommitment }),
+        profileNames,
+      ),
     );
   }
   const emptyLpSet = new Set<string>();
@@ -1268,6 +1459,7 @@ export async function mapDealInvestmentsToInvestorApi(
     const base = withUserInvestorProfileName(
       mapRowToInvestorApi(r, resolved, {
         invitationMailSent: flags[i] === true,
+        keepRemovedCommitment,
       }),
       profileNames,
     );
@@ -1629,6 +1821,9 @@ export async function sumCommittedFromInvestorsAddedByMemberContacts(
          FROM deal_investment di
          WHERE di.deal_id = $1::uuid
            AND di.is_draft = false
+           AND di.removed_at IS NULL
+           AND di.investor_unlinked_at IS NULL
+           AND lower(trim(coalesce(di.status, ''))) <> 'removed'
            AND trim(coalesce(di.contact_id, '')) <> ''
            AND trim(di.contact_id) <> '__portal_investment_autosave__'
          GROUP BY 1
@@ -2075,9 +2270,10 @@ function appendCompanyName(
 }
 
 /**
- * Companies a sponsor belongs to. Portal `organization_id` is often empty;
- * company membership (and the contact’s organization) is the usual source.
- * Multiple names are joined with `||`.
+ * Company a person belongs to. Company membership wins over `users.organization_id`.
+ * A CRM contact is matched to the portal account by email and uses that account's company.
+ * The contact's own organization is used only when no portal account exists.
+ * Multiple memberships are joined with `||`.
  */
 export async function resolveUserCompanyNamesByIds(
   ids: (string | null | undefined)[],
@@ -2091,18 +2287,7 @@ export async function resolveUserCompanyNamesByIds(
   const idList = [...need];
   const m = new Map<string, string>();
 
-  const found = await db
-    .select({
-      id: users.id,
-      companyName: companies.name,
-    })
-    .from(users)
-    .leftJoin(companies, eq(users.organizationId, companies.id))
-    .where(inArray(users.id, idList));
-  for (const u of found) {
-    appendCompanyName(m, String(u.id).toLowerCase(), u.companyName);
-  }
-
+  const membershipByUser = new Map<string, string>();
   try {
     const memberships = await db
       .select({
@@ -2113,7 +2298,11 @@ export async function resolveUserCompanyNamesByIds(
       .innerJoin(companies, eq(userCompanyMembership.companyId, companies.id))
       .where(inArray(userCompanyMembership.userId, idList));
     for (const row of memberships) {
-      appendCompanyName(m, String(row.userId).toLowerCase(), row.companyName);
+      appendCompanyName(
+        membershipByUser,
+        String(row.userId).toLowerCase(),
+        row.companyName,
+      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -2122,6 +2311,29 @@ export async function resolveUserCompanyNamesByIds(
     }
   }
 
+  const found = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      companyName: companies.name,
+    })
+    .from(users)
+    .leftJoin(companies, eq(users.organizationId, companies.id))
+    .where(inArray(users.id, idList));
+  for (const u of found) {
+    const key = String(u.id).toLowerCase();
+    const memberCompanies = membershipByUser.get(key);
+    if (memberCompanies) {
+      m.set(key, memberCompanies);
+    } else {
+      appendCompanyName(m, key, u.companyName);
+    }
+  }
+  for (const [key, names] of membershipByUser) {
+    if (!m.has(key)) m.set(key, names);
+  }
+
+  const contactOrgFallback = new Map<string, string>();
   const contactRows = await db
     .select({
       id: contact.id,
@@ -2134,7 +2346,8 @@ export async function resolveUserCompanyNamesByIds(
   const emailToKeys = new Map<string, string[]>();
   for (const row of contactRows) {
     const key = String(row.id).toLowerCase();
-    appendCompanyName(m, key, row.companyName);
+    const orgName = String(row.companyName ?? "").trim();
+    if (orgName) contactOrgFallback.set(key, orgName);
     const email = String(row.email ?? "").trim().toLowerCase();
     if (!email) continue;
     const keys = emailToKeys.get(email) ?? [];
@@ -2143,23 +2356,259 @@ export async function resolveUserCompanyNamesByIds(
   }
 
   const emails = [...emailToKeys.keys()];
+  const portalAccountKeys = new Set<string>();
   if (emails.length > 0) {
     const byEmail = await db
       .select({
+        id: users.id,
         email: users.email,
         companyName: companies.name,
       })
       .from(users)
       .leftJoin(companies, eq(users.organizationId, companies.id))
-      .where(inArray(users.email, emails));
+      .where(inArray(sql`lower(trim(${users.email}))`, emails));
+    const matchedUserIds = byEmail
+      .map((row) => String(row.id ?? "").trim())
+      .filter((id) => looksLikeUuid(id));
+    const membershipForMatched = new Map<string, string>();
+    if (matchedUserIds.length > 0) {
+      try {
+        const extraMemberships = await db
+          .select({
+            userId: userCompanyMembership.userId,
+            companyName: companies.name,
+          })
+          .from(userCompanyMembership)
+          .innerJoin(
+            companies,
+            eq(userCompanyMembership.companyId, companies.id),
+          )
+          .where(inArray(userCompanyMembership.userId, matchedUserIds));
+        for (const row of extraMemberships) {
+          appendCompanyName(
+            membershipForMatched,
+            String(row.userId).toLowerCase(),
+            row.companyName,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes('relation "user_company_membership" does not exist')) {
+          throw err;
+        }
+      }
+    }
     for (const row of byEmail) {
       const keys = emailToKeys.get(String(row.email ?? "").trim().toLowerCase());
+      if (!keys) continue;
+      for (const key of keys) portalAccountKeys.add(key);
+      const userKey = String(row.id ?? "").toLowerCase();
+      const chosen =
+        membershipForMatched.get(userKey) ||
+        String(row.companyName ?? "").trim();
+      if (!chosen) continue;
+      for (const key of keys) m.set(key, chosen);
+    }
+  }
+
+  for (const [key, orgName] of contactOrgFallback) {
+    if (portalAccountKeys.has(key) || m.has(key)) continue;
+    appendCompanyName(m, key, orgName);
+  }
+
+  // Portal account with no membership and no organization_id: use the CRM
+  // contact company that shares the account email.
+  const emailToAccountKeys = new Map<string, string[]>();
+  for (const u of found) {
+    const key = String(u.id).toLowerCase();
+    if (m.has(key)) continue;
+    const email = String(u.email ?? "").trim().toLowerCase();
+    if (!email.includes("@")) continue;
+    const keys = emailToAccountKeys.get(email) ?? [];
+    keys.push(key);
+    emailToAccountKeys.set(email, keys);
+  }
+  const accountEmails = [...emailToAccountKeys.keys()];
+  if (accountEmails.length > 0) {
+    const contactCompanies = await db
+      .select({
+        email: contact.email,
+        companyName: companies.name,
+      })
+      .from(contact)
+      .innerJoin(companies, eq(contact.organizationId, companies.id))
+      .where(inArray(sql`lower(trim(${contact.email}))`, accountEmails));
+    for (const row of contactCompanies) {
+      const keys = emailToAccountKeys.get(
+        String(row.email ?? "").trim().toLowerCase(),
+      );
       if (!keys) continue;
       for (const key of keys) appendCompanyName(m, key, row.companyName);
     }
   }
 
   return m;
+}
+
+function companyAdminDisplayName(row: {
+  firstName?: string | null;
+  lastName?: string | null;
+  username?: string | null;
+  email?: string | null;
+}): string {
+  const full = [row.firstName, row.lastName]
+    .map((part) => String(part ?? "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (full) return full;
+  const username = String(row.username ?? "").trim();
+  if (username) return username;
+  return String(row.email ?? "").trim();
+}
+
+/**
+ * First-created company admin for each company name.
+ * Membership role `company_admin` is ordered by when that admin membership was
+ * created. Legacy `users.role` + organization is used when there is no membership
+ * row, ordered by the user account's `created_at`.
+ */
+export async function resolveFirstCompanyAdminNamesByCompanyNames(
+  companyNames: string[],
+): Promise<Map<string, string>> {
+  const lowered = [
+    ...new Set(
+      companyNames
+        .map((name) => String(name ?? "").trim().toLowerCase())
+        .filter((name) => name && name !== "—"),
+    ),
+  ];
+  if (lowered.length === 0) return new Map();
+
+  type AdminCandidate = {
+    companyKey: string;
+    userId: string;
+    display: string;
+    createdAtMs: number;
+    fromMembership: boolean;
+  };
+  const byCompanyUser = new Map<string, AdminCandidate>();
+  const consider = (candidate: AdminCandidate) => {
+    if (!candidate.display || !Number.isFinite(candidate.createdAtMs)) return;
+    const key = `${candidate.companyKey}\0${candidate.userId}`;
+    const prev = byCompanyUser.get(key);
+    if (!prev) {
+      byCompanyUser.set(key, candidate);
+      return;
+    }
+    if (prev.fromMembership && !candidate.fromMembership) return;
+    if (!prev.fromMembership && candidate.fromMembership) {
+      byCompanyUser.set(key, candidate);
+      return;
+    }
+    if (candidate.createdAtMs < prev.createdAtMs) {
+      byCompanyUser.set(key, candidate);
+    }
+  };
+
+  try {
+    const membershipAdmins = await db
+      .select({
+        companyName: companies.name,
+        userId: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        username: users.username,
+        email: users.email,
+        createdAt: userCompanyMembership.createdAt,
+      })
+      .from(userCompanyMembership)
+      .innerJoin(companies, eq(userCompanyMembership.companyId, companies.id))
+      .innerJoin(users, eq(userCompanyMembership.userId, users.id))
+      .where(
+        and(
+          sql`lower(trim(${userCompanyMembership.role})) = 'company_admin'`,
+          inArray(sql`lower(trim(${companies.name}))`, lowered),
+        ),
+      );
+    for (const row of membershipAdmins) {
+      consider({
+        companyKey: String(row.companyName ?? "").trim().toLowerCase(),
+        userId: String(row.userId ?? "").toLowerCase(),
+        display: companyAdminDisplayName(row),
+        createdAtMs: row.createdAt?.getTime() ?? Number.NaN,
+        fromMembership: true,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('relation "user_company_membership" does not exist')) {
+      throw err;
+    }
+  }
+
+  const orgAdmins = await db
+    .select({
+      companyName: companies.name,
+      userId: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      username: users.username,
+      email: users.email,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .innerJoin(companies, eq(users.organizationId, companies.id))
+    .where(
+      and(
+        sql`lower(trim(${users.role})) = 'company_admin'`,
+        inArray(sql`lower(trim(${companies.name}))`, lowered),
+      ),
+    );
+  for (const row of orgAdmins) {
+    consider({
+      companyKey: String(row.companyName ?? "").trim().toLowerCase(),
+      userId: String(row.userId ?? "").toLowerCase(),
+      display: companyAdminDisplayName(row),
+      createdAtMs: row.createdAt?.getTime() ?? Number.NaN,
+      fromMembership: false,
+    });
+  }
+
+  const winner = new Map<string, AdminCandidate>();
+  for (const candidate of byCompanyUser.values()) {
+    const prev = winner.get(candidate.companyKey);
+    if (
+      !prev ||
+      candidate.createdAtMs < prev.createdAtMs ||
+      (candidate.createdAtMs === prev.createdAtMs &&
+        candidate.userId < prev.userId)
+    ) {
+      winner.set(candidate.companyKey, candidate);
+    }
+  }
+
+  const out = new Map<string, string>();
+  for (const [companyKey, candidate] of winner) {
+    if (candidate.display) out.set(companyKey, candidate.display);
+  }
+  return out;
+}
+
+/** Parallel `||` list aligned with `addedByCompanyName` company parts. */
+export function companyAdminNamesAlignedToCompanies(
+  companyField: string,
+  adminByCompanyLower: Map<string, string>,
+): string {
+  const parts = String(companyField ?? "")
+    .split("||")
+    .map((part) => part.trim());
+  const admins = parts.map((name) => {
+    if (!name || name === "—") return "";
+    return adminByCompanyLower.get(name.toLowerCase()) ?? "";
+  });
+  if (admins.every((name) => !name)) return "";
+  return admins.join("||");
 }
 
 /**
@@ -2287,13 +2736,6 @@ export async function enrichInvestorApiRowsWithAddedBy<
   const leadFallback = needsLeadFallback
     ? await resolveDealLeadSponsorFallback(dealId)
     : {};
-  const [dealCompanyRow] = await db
-    .select({ companyName: companies.name })
-    .from(addDealForm)
-    .leftJoin(companies, eq(addDealForm.organizationId, companies.id))
-    .where(eq(addDealForm.id, dealId))
-    .limit(1);
-  const dealCompanyName = String(dealCompanyRow?.companyName ?? "").trim();
 
   let leadCompanyName: string | undefined;
   if (leadFallback.userId) {
@@ -2338,9 +2780,6 @@ export async function enrichInvestorApiRowsWithAddedBy<
     }
     if (!companyName && !uid && leadCompanyName) {
       companyName = leadCompanyName;
-    }
-    if (!companyName && dealCompanyName) {
-      companyName = dealCompanyName;
     }
     const patch: {
       addedByUserId?: string;
@@ -2399,23 +2838,56 @@ export async function assertDealExists(dealId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Autosaved draft rows are hidden unless `includeDrafts` is set (modal resume only). */
+/**
+ * Autosaved draft rows are hidden unless `includeDrafts` is set (modal resume only).
+ * Investor-archived commitments are hidden unless `includeInvestorArchived` is set.
+ * Sponsor-removed investments and unlinked investor associations stay in the
+ * table for audit and are hidden from rosters and active totals.
+ * The owning investor still receives archived rows from the investors API so they can restore them.
+ */
 export async function listDealInvestmentsByDealId(
   dealId: string,
-  options?: { lpInvestorsOnly?: boolean; includeDrafts?: boolean },
+  options?: {
+    lpInvestorsOnly?: boolean;
+    includeDrafts?: boolean;
+    includeInvestorArchived?: boolean;
+    includeRemoved?: boolean;
+    /** Keep sponsor-removed investments visible. Unlinked investors stay hidden. */
+    includeStatusRemoved?: boolean;
+  },
 ): Promise<DealInvestmentRow[]> {
   const draftExpr =
     options?.includeDrafts === true
       ? undefined
       : eq(dealInvestment.isDraft, false);
+  const archivedExpr =
+    options?.includeInvestorArchived === true
+      ? undefined
+      : isNull(dealInvestment.investorArchivedAt);
+  const removedExpr =
+    options?.includeRemoved === true
+      ? undefined
+      : options?.includeStatusRemoved === true
+        ? isNull(dealInvestment.investorUnlinkedAt)
+        : and(
+            isNull(dealInvestment.removedAt),
+            isNull(dealInvestment.investorUnlinkedAt),
+          );
   const whereExpr =
     options?.lpInvestorsOnly === true
       ? and(
           eq(dealInvestment.dealId, dealId),
           inArray(dealInvestment.investor_role, [...LP_INVESTOR_ROLE_MATCH]),
           draftExpr,
+          archivedExpr,
+          removedExpr,
         )
-      : and(eq(dealInvestment.dealId, dealId), draftExpr);
+      : and(
+          eq(dealInvestment.dealId, dealId),
+          draftExpr,
+          archivedExpr,
+          removedExpr,
+        );
   return db
     .select()
     .from(dealInvestment)
@@ -2453,7 +2925,13 @@ export async function sumCommittedAmountByDealIds(
     })
     .from(dealInvestment)
     .where(
-      and(inArray(dealInvestment.dealId, ids), eq(dealInvestment.isDraft, false)),
+      and(
+        inArray(dealInvestment.dealId, ids),
+        eq(dealInvestment.isDraft, false),
+        isNull(dealInvestment.investorArchivedAt),
+        isNull(dealInvestment.removedAt),
+        isNull(dealInvestment.investorUnlinkedAt),
+      ),
     );
 
   for (const row of rows) {
@@ -2560,6 +3038,16 @@ export async function insertDealInvestment(params: {
     fundApprovedAt: params.input.fundApproved
       ? params.input.fundApprovedAt ?? null
       : null,
+    fundApprovedAtHistory: params.input.fundApprovedAtHistory
+      ? params.input.fundApprovedAtHistory
+      : params.input.fundApproved && params.input.fundApprovedAt
+        ? recordFundApprovedAtHistory({
+            history: [],
+            previousDate: null,
+            nextDate: params.input.fundApprovedAt,
+            source: "approved",
+          })
+        : [],
     fundApprovedCommitmentSnapshot: params.input.fundApproved
       ? fundApprovedSnapshotStoredFromInput(params.input)
       : "",
@@ -2645,6 +3133,9 @@ export async function updateDealInvestment(params: {
       fundApprovedAt: params.input.fundApproved
         ? params.input.fundApprovedAt ?? null
         : null,
+      ...(params.input.fundApprovedAtHistory === undefined
+        ? {}
+        : { fundApprovedAtHistory: params.input.fundApprovedAtHistory }),
       ...(params.input.fundApproved
         ? {
             fundApprovedCommitmentSnapshot:

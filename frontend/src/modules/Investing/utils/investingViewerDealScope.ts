@@ -47,6 +47,7 @@ export function committedAmountForViewerEmail(
   let sum = 0
   for (const inv of payload.investors) {
     if (!investorRowMatchesViewerEmail(inv, viewerEmailNorm)) continue
+    if (inv.investorArchived) continue
     if (!investorCommittedVisibleToViewer(inv)) continue
     sum += investorRowCommittedNumeric(inv)
   }
@@ -64,6 +65,13 @@ export function committedAmountMatchingInvestorsTable(
   let sum = 0
   for (const inv of payload.investors) {
     if (!investorRowMatchesViewerEmail(inv, viewerEmailNorm)) continue
+    if (inv.investorArchived) continue
+    if (
+      inv.sponsorRemoved ||
+      String(inv.status ?? "").trim().toLowerCase() === "removed"
+    ) {
+      continue
+    }
     sum += investorRowCommittedAmountNumeric(inv)
   }
   return sum
@@ -135,6 +143,19 @@ export function dealIsInViewerInvestingScope(
  * Investments list tabs: onboarded LP (committed and/or eSign started) or invited
  * LP who has not started Invest Now. Excludes sponsor-only deal visibility.
  */
+function viewerHasSponsorRemovedInvestment(
+  payload: DealInvestorsPayload,
+  viewerEmailNorm: string,
+): boolean {
+  if (!viewerEmailNorm) return false
+  return payload.investors.some(
+    (inv) =>
+      investorRowMatchesViewerEmail(inv, viewerEmailNorm) &&
+      (inv.sponsorRemoved === true ||
+        String(inv.status ?? "").trim().toLowerCase() === "removed"),
+  )
+}
+
 export function dealIsInViewerInvestmentsListScope(
   payload: DealInvestorsPayload,
   viewerEmailNorm: string,
@@ -142,7 +163,8 @@ export function dealIsInViewerInvestmentsListScope(
   if (!viewerEmailNorm) return false
   return (
     viewerDealHasStartedInvestment(payload, viewerEmailNorm) ||
-    viewerDealNeedsOnboarding(payload, viewerEmailNorm)
+    viewerDealNeedsOnboarding(payload, viewerEmailNorm) ||
+    viewerHasSponsorRemovedInvestment(payload, viewerEmailNorm)
   )
 }
 

@@ -40,7 +40,17 @@ def _anchor_to_field(
         recipient_role=recipient_role,  # type: ignore[arg-type]
         required=anchor.kind in ("signature", "date", "initials")
         or anchor.label
-        in ("First Name", "Last Name", "Email", "Phone", "Address", "Investment Amount"),
+        in (
+            "First Name",
+            "Last Name",
+            "Email",
+            "Phone",
+            "Address",
+            "Investment Amount",
+            "Subscription Amount",
+            "Unit Amount",
+            "Number of Units",
+        ),
     )
 
 

@@ -40,6 +40,20 @@ export const CONTACT_RELATIONSHIP_506B_OPTIONS: ReadonlyArray<{
   { value: "NO", label: "506(b) No" },
 ]
 
+/** One deal this contact is on at a company. */
+export interface ContactOrganizationDeal {
+  dealId: string
+  dealName: string
+  contactRole: string
+}
+
+/** Company this investor belongs to, with the deals they are on there. */
+export interface ContactOrganizationSummary {
+  companyId: string
+  companyName: string
+  deals: ContactOrganizationDeal[]
+}
+
 /** One deal shown on a contact’s Deals tab. */
 export interface ContactDealRow {
   dealId: string
@@ -96,6 +110,11 @@ export interface ContactRow {
   organizationName?: string
   /** Company of the user who added this contact. */
   addedByCompanyName?: string
+  /**
+   * Every company this investor is part of, with that company’s deals.
+   * Loaded with contact deal stats.
+   */
+  organizations?: ContactOrganizationSummary[]
   /** ISO timestamp when the contact was created (from API) */
   createdAt?: string
   /**
@@ -108,6 +127,11 @@ export interface ContactRow {
    * cannot be added to deals.
    */
   platformAdminOnly?: boolean
+  /**
+   * Self-serve signup answer for “Are you an”: Investor, Syndicator, or Both.
+   * Empty when this contact did not choose one.
+   */
+  signupRole?: string
   /** Linked to a portal `users` row for this email. */
   isPortalUser?: boolean
   /** True after a portal signup invitation was successfully emailed. */

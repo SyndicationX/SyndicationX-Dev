@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, type ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 import {
   Calendar,
@@ -42,6 +42,8 @@ type InvestingEntityViewModalProps = {
   /** Shown beside Close — typically navigates to the edit flow. */
   onEdit?: () => void
   editLabel?: string
+  /** Extra profile section, such as the bank account details table. */
+  supplement?: ReactNode
 }
 
 const PROFILE_RECORD_SECTION_HEADING = "Profile record"
@@ -185,6 +187,7 @@ function ProfileDocumentViewBody({
   onClose,
   onEdit,
   editLabel,
+  supplement,
 }: {
   profileTitle: string
   sections: InvestingEntityViewSection[]
@@ -192,6 +195,7 @@ function ProfileDocumentViewBody({
   onClose: () => void
   onEdit?: () => void
   editLabel: string
+  supplement?: ReactNode
 }) {
   const profileTypeSection = sections.find(
     (s) => s.heading === PROFILE_TYPE_SECTION_HEADING,
@@ -260,6 +264,7 @@ function ProfileDocumentViewBody({
               />
             </section>
           ))}
+          {supplement}
         </div>
       </div>
 
@@ -292,6 +297,7 @@ export function InvestingEntityViewModal({
   sections,
   onEdit,
   editLabel = "Edit",
+  supplement,
 }: InvestingEntityViewModalProps) {
   useEffect(() => {
     if (!open) return
@@ -353,6 +359,7 @@ export function InvestingEntityViewModal({
             onClose={onClose}
             onEdit={onEdit}
             editLabel={editLabel}
+            supplement={supplement}
           />
         ) : (
           <>

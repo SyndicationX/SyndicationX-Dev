@@ -57,6 +57,15 @@ export function completedInvestNowProgress(): InvestNowDraftProgress {
   }
 }
 
+/** Fresh Invest now after a sponsor removal: bar starts on the Investor step. */
+export function freshInvestNowProgress(): InvestNowDraftProgress {
+  return {
+    percent: 0,
+    phaseLabel: phaseLabelFor("investor"),
+    phaseId: "investor",
+  }
+}
+
 /**
  * Estimate Invest Now completion from a draft investor row (no commitment GET).
  * Aligns with the five Invest Now stepper phases on the wizard.
@@ -81,6 +90,17 @@ export function investNowDraftProgressFromInvestorRow(
   if (investorRowCommittedNumeric(row) > 0) {
     completedPhases = 2
     phaseId = "questionnaire"
+  }
+
+  // Saved answers mean the questionnaire step is already done. A later W-9
+  // means Invest Now has moved on to signing.
+  if (row.investorQuestionnaireSaved) {
+    completedPhases = 3
+    phaseId = "w9"
+  }
+  if (row.investorW9Saved) {
+    completedPhases = 4
+    phaseId = "esignatures"
   }
 
   if (investorEsignWasSent(row)) {
