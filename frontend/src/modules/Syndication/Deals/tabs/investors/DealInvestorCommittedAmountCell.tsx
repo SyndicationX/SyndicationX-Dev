@@ -4,6 +4,7 @@ import {
 } from "../../../../../common/components/card-compact-amount/CardCompactAmount"
 import { formatCardCompactUsdExact } from "../../../../../common/utils/cardCompactUsdAmount"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
+import { DealTableHyphen } from "./DealTableHyphen"
 import {
   displayInvestorCommittedAmount,
   investorCommittedPendingSplit,
@@ -25,7 +26,7 @@ export function DealInvestorCommittedAmountCell({
   if (!split) {
     const amount = parseMoneyDigits(displayInvestorCommittedAmount(row))
     if (!Number.isFinite(amount)) {
-      return <span className={wrapClass}>—</span>
+      return <DealTableHyphen />
     }
     return (
       <span className={wrapClass}>

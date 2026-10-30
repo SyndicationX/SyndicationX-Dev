@@ -1,4 +1,5 @@
 import { useMemo, useRef } from "react"
+import { DealTableHyphen } from "./DealTableHyphen"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import "./investor-class-pills.css"
 
@@ -39,7 +40,7 @@ export function InvestorClassPillsDisplay({
   const extraCount = hiddenTokens.length
 
   if (tokens.length === 0)
-    return <span className="deal_inv_class_pill_muted">—</span>
+    return <DealTableHyphen />
 
   const row = (
     <div ref={rowRef} className="deal_inv_class_pills_row">

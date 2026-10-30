@@ -230,8 +230,8 @@
   .um_table.deal_inv_table,
 .deal_inv_table_panel .um_table.deal_inv_table {
   table-layout: auto;
-  width: 100%;
-  min-width: max-content;
+  width: max-content;
+  min-width: 100%;
   max-width: none;
 }
 
@@ -241,13 +241,14 @@
   min-width: 0;
 }
 
+.deal_inv_table_panel .um_table_wrap .um_table.deal_inv_table thead th,
 .deal_inv_table_panel .um_table.deal_inv_table thead th {
   font-size: var(--portal-table-font-size, 0.9375rem);
   line-height: 1.35;
   font-weight: 600;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
   background: var(--portal-table-header-bg, #f8fafc);
   color: var(--portal-table-header-text, #475569);
   border-bottom: 1px solid
@@ -267,9 +268,13 @@
   gap: 0.3em;
 }
 
+.deal_inv_table_panel .um_table_wrap .um_table.deal_inv_table tbody td,
 .deal_inv_table_panel .um_table.deal_inv_table tbody td {
   font-size: 0.8125rem;
   padding: 0.7em 0.5em;
+  word-break: normal;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .deal_inv_table_panel .um_table.deal_inv_table .um_user_meta_username,
@@ -343,23 +348,21 @@
 
 .deal_inv_table_panel thead th.deals_th_align_center {
   text-align: center;
-  min-width: 7.5rem;
 }
 
 .deal_inv_table_panel thead th.deals_th_align_right {
   text-align: right;
-  min-width: 9.5rem;
 }
 
 .deal_inv_table_panel .um_table_sortable .um_sort_header_ctl {
   max-width: none;
-  min-width: 0;
+  min-width: max-content;
   white-space: nowrap;
 }
 
 .deal_inv_table_panel .um_table_sortable .um_sort_header_label {
-  flex: 0 1 auto;
-  min-width: min-content;
+  flex: 0 0 auto;
+  min-width: max-content;
   white-space: nowrap;
 }
 
@@ -847,9 +850,8 @@
 
 /* Investor Class: pills; optional tooltip when clipped or long text */
 .deal_inv_td_investor_class {
-  width: 1%;
-  max-width: none;
-  white-space: nowrap;
+  max-width: 14em;
+  min-width: 0;
   vertical-align: middle;
 }
 
@@ -1311,6 +1313,28 @@
   color: #e5e7eb;
 }
 
+/* Empty cells: one centered hyphen, same size and position in every column. */
+.deal_inv_table_panel .deal_inv_cell_hyphen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 1.25em;
+  margin: 0;
+  color: var(--portal-text-muted, #94a3b8);
+  line-height: 1;
+  text-align: center;
+}
+
+.deal_inv_table_panel .deal_inv_cell_hyphen > span {
+  display: inline-block;
+  width: 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-align: center;
+}
+
 /* Single-line data cells: ellipsis + `title` tooltip (full text remains in DOM for screen readers) */
 .deal_inv_ellipsis_text {
   display: block;
@@ -1365,7 +1389,7 @@
 }
 
 .deal_inv_table_panel .deal_inv_td_ellipsis {
-  max-width: 11em;
+  max-width: none;
   min-width: 0;
 }
 
@@ -1374,7 +1398,7 @@
 .deal_inv_table_panel .deal_inv_table.um_table_members tbody td.deal_inv_td_profile {
   min-width: 11rem;
   max-width: 16rem;
-  width: 14rem;
+  width: 12rem;
   vertical-align: middle;
   white-space: normal !important;
   overflow: visible;
@@ -1388,8 +1412,8 @@
 .deal_inv_profile_full_text {
   display: block;
   white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
   line-height: 1.4;
   font-size: 0.8125rem;
   color: var(--um-text, #1f2937);
@@ -1401,8 +1425,8 @@
 }
 
 .deal_inv_table_panel .deal_inv_td_verified {
-  min-width: 8.5em;
-  max-width: 12em;
+  min-width: 0;
+  max-width: 8.5em;
 }
 
 .deal_inv_table_panel thead th.deal_inv_th_role,
@@ -1469,9 +1493,9 @@
 
 /* Actions column: kebab menu (Deals list, Investors, Deal Members, etc.). */
 .deal_inv_table_panel .deal_inv_table.um_table_members thead .um_th_actions {
-  width: 10%;
+  width: 4.5rem;
   min-width: 4.5rem;
-  max-width: none;
+  max-width: 4.5rem;
   box-sizing: border-box;
 }
 
@@ -1480,9 +1504,9 @@
   tbody
   td.um_td_actions.deal_inv_td_actions {
   white-space: normal;
-  width: 10%;
+  width: 4.5rem;
   min-width: 4.5rem;
-  max-width: none;
+  max-width: 4.5rem;
   overflow: visible;
   box-sizing: border-box;
 }

@@ -567,9 +567,8 @@
 }
 
 /**
- * Members / Investors tables: always allow natural column width (max-content).
- * Do NOT collapse to fixed 100% before overflow is measured — that chicken-egg
- * prevents horizontal scroll from ever appearing.
+ * Members / Investors tables fit the viewport. Column widths come from
+ * colgroup / cell caps so a long label does not stretch the table.
  */
 .um_table_wrap.data_table_shell
   .data_table_scroll_region:has(.um_table.deal_inv_table).data_table_scroll_region--overflow-x,
@@ -592,10 +591,10 @@
   .data_table_scroll_region:not(.data_table_scroll_region--empty)
   .um_table.deal_inv_table,
 .um_table_wrap.data_table_shell .data_table_scroll_region .um_table.deal_inv_table {
-  table-layout: auto;
+  table-layout: fixed;
   width: 100%;
-  min-width: max-content;
-  max-width: none;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .data_table_scroll_region.data_table_scroll_region--empty .um_table.deal_inv_table,
@@ -659,10 +658,10 @@
 }
 
 .um_table_wrap:not(.data_table_shell) .um_table.deal_inv_table {
-  table-layout: auto;
-  width: max-content;
-  min-width: 100%;
-  max-width: none;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .um_table_wrap:not(.data_table_shell)
@@ -682,10 +681,10 @@
 
 /* Default-variant DataTable (`visualVariant="default"`): same zoom/scroll behavior as Investors. */
 .data_table_scroll .data_table {
-  table-layout: auto;
-  width: max-content;
-  min-width: 100%;
-  max-width: none;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .data_table_scroll .data_table th,

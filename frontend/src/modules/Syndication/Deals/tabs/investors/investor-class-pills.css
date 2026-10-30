@@ -6,9 +6,9 @@
   flex-wrap: nowrap;
   align-items: center;
   gap: 0.35rem;
-  width: max-content;
-  max-width: none;
-  overflow: visible;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .deal_inv_td_investor_class .deal_inv_class_pills_row {
@@ -16,9 +16,9 @@
 }
 
 .deal_inv_class_pill {
-  flex: 0 0 auto;
-  min-width: max-content;
-  max-width: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   box-sizing: border-box;
@@ -31,7 +31,8 @@
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
-  overflow: visible;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 :root[data-theme="dark"] .deal_inv_class_pill {

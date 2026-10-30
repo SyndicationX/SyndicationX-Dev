@@ -1,4 +1,5 @@
 import { CircleCheck, Clock3, Eye } from "lucide-react"
+import { DealTableHyphen } from "./DealTableHyphen"
 import { FormTooltip } from "../../../../../common/components/form-tooltip/FormTooltip"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
@@ -62,7 +63,7 @@ export function DealInvestorSignedCell({
 
   const tone = signedTone(display)
   if (!tone) {
-    return <span className="deal_inv_signed_empty">—</span>
+    return <DealTableHyphen />
   }
 
   const hover = signedColumnHover(display)

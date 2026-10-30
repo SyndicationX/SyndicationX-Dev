@@ -1131,9 +1131,7 @@ a.deals_list_add_link.um_btn_primary {
 }
 
 .deals_list_table_panel .deals_td_investor_class_cell {
-  width: 1%;
-  max-width: none;
-  white-space: nowrap;
+  max-width: 14em;
 }
 
 /* Deal details modal — compact; no inner scroll (overlay scrolls if viewport is short) */

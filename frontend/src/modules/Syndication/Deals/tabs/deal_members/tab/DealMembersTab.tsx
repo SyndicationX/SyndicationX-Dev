@@ -84,6 +84,7 @@ import {
 } from "../../../utils/offeringMoneyFormat"
 import { TableCompactAmountCell } from "../../../../../../common/components/card-compact-amount/CardCompactAmount"
 import { DealInvestorCommittedAmountCell } from "../../investors/DealInvestorCommittedAmountCell"
+import { DealTableHyphen, isTableHyphen } from "../../investors/DealTableHyphen"
 import { InviteMailStatusBadge } from "../../investors/InviteMailStatusBadge"
 import { DealInvestorRoleCell } from "../../investors/DealInvestorRoleBadge"
 import { InvestorClassPillsDisplay } from "../../investors/InvestorClassPillsDisplay"
@@ -264,7 +265,8 @@ const ROSTER_COPY: Record<
 
 function GpVerifiedAccBadge({ label }: { label: string }) {
   const t = String(label ?? "").trim() || "—"
-  const hint = t !== "—" ? t : undefined
+  if (isTableHyphen(t)) return <DealTableHyphen />
+  const hint = t
   return (
     <span
       className="deal_inv_verified_badge deal_inv_verified_badge_ellipsis"
@@ -293,11 +295,7 @@ function GpVerifiedAccBadge({ label }: { label: string }) {
 // }
 
 function GpEmptyDash() {
-  return (
-    <span className="deal_gp_empty_dash" aria-hidden>
-      <span>-</span>
-    </span>
-  )
+  return <DealTableHyphen />
 }
 
 interface DealMembersTabProps {
@@ -903,8 +901,7 @@ export function DealMembersTab({
             )
             const dealLine = gpClassNamesLine.trim()
             const pillSource = assignedRaw || dealLine
-            if (!pillSource.trim())
-              return <span className="deal_inv_class_pill_muted">—</span>
+            if (!pillSource.trim()) return <DealTableHyphen />
             const titleForTooltip =
               assignedRaw && dealLine && assignedRaw !== dealLine
                 ? `${assignedRaw} · Deal: ${dealLine}`
@@ -1016,10 +1013,10 @@ export function DealMembersTab({
             parseMoneyDigits(displayAddedInvestorsCommittedAmount(row)),
           tdClassName: "deal_inv_td_ellipsis deal_inv_td_committed um_td_numeric",
           cell: (row) => {
-            if (row.id === ADD_MEMBER_DRAFT_ROW_ID) return "—"
+            if (row.id === ADD_MEMBER_DRAFT_ROW_ID) return <DealTableHyphen />
             const text = displayAddedInvestorsCommittedAmount(row)
             const display = String(text ?? "").trim()
-            if (!display || display === "—") return "—"
+            if (!display || isTableHyphen(display)) return <DealTableHyphen />
             return (
               <span className="deal_inv_ellipsis_text deal_inv_ellipsis_text_end">
                 <TableCompactAmountCell amount={display} />
@@ -1192,10 +1189,10 @@ export function DealMembersTab({
         tdClassName:
           "deal_inv_td_ellipsis deal_inv_td_committed um_td_numeric deal_gp_td_amount",
         cell: (r) => {
-          if (r.id === ADD_MEMBER_DRAFT_ROW_ID) return "—"
+          if (r.id === ADD_MEMBER_DRAFT_ROW_ID) return <DealTableHyphen />
           const text = displayAddedInvestorsCommittedAmount(r)
           const display = String(text ?? "").trim()
-          if (!display || display === "—") return "—"
+          if (!display || isTableHyphen(display)) return <DealTableHyphen />
           return (
             <span className="deal_inv_ellipsis_text deal_inv_ellipsis_text_end">
               <TableCompactAmountCell amount={display} />

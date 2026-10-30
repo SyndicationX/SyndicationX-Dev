@@ -103,62 +103,32 @@
 .deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_profile,
 .deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table thead th.deal_inv_th_profile.deal_gp_th_profile,
 .deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table tbody td.deal_inv_td_profile.deal_gp_td_profile {
-  min-width: 5.5rem;
-  max-width: 8.5rem;
-  width: 6.75rem;
+  min-width: 11rem;
+  max-width: 16rem;
+  width: 12rem;
 }
 
-/* Deal role: column and pill stay as wide as the role label. */
+/* Deal role: Lead Sponsor / Admin sponsor / Co-sponsor pills share one width */
 .deal_members_tab .deal_inv_table_panel thead th.deal_gp_th_role,
 .deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_role,
 .deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table thead th.deal_inv_th_role.deal_gp_th_role,
 .deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table tbody td.deal_inv_td_role.deal_gp_td_role {
-  width: 1%;
-  min-width: 0;
-  max-width: none;
-  white-space: nowrap;
+  min-width: 11.5rem;
+  max-width: 12.5rem;
+  width: 11.5rem;
 }
 
 .deal_members_tab .deal_inv_table_panel .deal_gp_td_role .um_role_badge.deal_inv_role_badge {
   box-sizing: border-box;
-  width: auto;
-  min-width: 0;
-  max-width: none;
+  width: 10.75rem;
+  min-width: 10.75rem;
+  max-width: 10.75rem;
   justify-content: flex-start;
 }
 
 .deal_members_tab .deal_inv_table_panel .deal_gp_td_role .um_role_badge .um_role_badge_label {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 0;
-}
-
-/* General Partners: the name column keeps the spare room. Role, amounts, status, and email stay as wide as their content. */
-.deal_members_tab .deal_inv_table_panel thead th.deal_gp_th_user,
-.deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_user {
-  width: auto;
-  min-width: 16rem;
-  max-width: none;
-}
-
-.deal_members_tab .deal_inv_table_panel thead th.deal_gp_th_amount,
-.deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_amount,
-.deal_members_tab .deal_inv_table_panel thead th.deal_gp_th_status,
-.deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_status,
-.deal_members_tab .deal_inv_table_panel thead th.deal_gp_th_mail,
-.deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_mail {
-  width: 1%;
-  max-width: none;
-  white-space: nowrap;
-}
-
-.deal_members_tab .deal_inv_table_panel thead th.deal_gp_th_amount,
-.deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_amount {
-  min-width: 11.75rem;
-  padding-right: 1.1rem;
-}
-
-.deal_members_tab .deal_inv_table_panel tbody td.deal_gp_td_status .deal_inv_status_badge {
-  max-width: 15rem;
 }
 
 .deal_members_tab .deal_inv_table_panel .deal_inv_table.um_table_members thead th.um_th_actions,
@@ -352,8 +322,8 @@
   .data_table_scroll_region
   .um_table.deal_inv_table,
 .deal_members_tab .deal_inv_table_panel .um_table.deal_inv_table {
-  width: 100%;
-  min-width: max-content;
+  width: max-content;
+  min-width: 100%;
   max-width: none;
   table-layout: auto;
 }

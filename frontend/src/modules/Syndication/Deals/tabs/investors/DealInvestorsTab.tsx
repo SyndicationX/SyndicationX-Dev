@@ -45,6 +45,7 @@ import {
 } from "../deal_members/add-investment/addMemberFormDraftStorage";
 import { notifyDealInvestorsExportAudit } from "../../api/dealInvestorsExportNotifyApi";
 import { InviteMailStatusBadge } from "./InviteMailStatusBadge";
+import { DealTableHyphen, isTableHyphen } from "./DealTableHyphen";
 import {
   DealInvestorCompanyGroups,
   groupInvestorsByCompany,
@@ -392,7 +393,7 @@ function resolveInvestorClassLabelForRow(
 
 function DealInvestorStatusBadge({ label }: { label: string }) {
   const text = label.trim() || "—";
-  if (text === "—") return <span className="deal_inv_signed_empty">—</span>;
+  if (isTableHyphen(text)) return <DealTableHyphen />;
   return (
     <span className="deal_inv_status_badge" title={text}>
       <span className="deal_inv_status_badge_label">{text}</span>
@@ -402,7 +403,8 @@ function DealInvestorStatusBadge({ label }: { label: string }) {
 
 function VerifiedAccBadge({ label }: { label: string }) {
   const t = String(label ?? "").trim() || "—";
-  const hint = t !== "—" ? t : undefined;
+  if (isTableHyphen(t)) return <DealTableHyphen />;
+  const hint = t;
   return (
     <span
       className="deal_inv_verified_badge deal_inv_verified_badge_ellipsis"
@@ -444,7 +446,8 @@ function DealInvEllipsisText({
   title?: string;
 }) {
   const display = String(text ?? "").trim() || "—";
-  const hint = titleProp?.trim() || (display !== "—" ? display : undefined);
+  if (isTableHyphen(display)) return <DealTableHyphen />;
+  const hint = titleProp?.trim() || display;
   return (
     <span
       className={`deal_inv_ellipsis_text${alignEnd ? " deal_inv_ellipsis_text_end" : ""}${className ? ` ${className}` : ""}`.trim()}
@@ -1209,29 +1212,27 @@ function DealInvestorsPopulated({
       {
         id: "profile",
         header: "Profile",
-        colWidth: "14rem",
+        colWidth: "12rem",
         thClassName: "deal_inv_th_profile",
         tdClassName: "deal_inv_td_profile",
         sortValue: (row) =>
           dealInvestorProfileDisplayName(row).toLowerCase(),
         cell: (row) => {
           const text = dealInvestorProfileDisplayName(row)
-          if (!text || text === "—")
-            return <span className="um_status_muted">—</span>
+          if (!text || isTableHyphen(text)) return <DealTableHyphen />
           return <span className="deal_inv_profile_full_text">{text}</span>
         },
       },
       {
         id: "profileType",
         header: "Profile type",
-        colWidth: "14rem",
+        colWidth: "12rem",
         thClassName: "deal_inv_th_profile deal_inv_th_profile_type",
         tdClassName: "deal_inv_td_profile deal_inv_td_profile_type",
         sortValue: (row) => dealInvestorProfileTypeDisplay(row).toLowerCase(),
         cell: (row) => {
           const text = dealInvestorProfileTypeDisplay(row)
-          if (!text || text === "—")
-            return <span className="um_status_muted">—</span>
+          if (!text || isTableHyphen(text)) return <DealTableHyphen />
           return <span className="deal_inv_profile_full_text">{text}</span>
         },
       },
@@ -1282,8 +1283,7 @@ function DealInvestorsPopulated({
             : formatInvestorClassTableLabel(row.investorClass, investorClasses);
           const dealLine = dealAllClassNamesLine.trim();
           const pillSource = assignedRaw || dealLine;
-          if (!pillSource.trim())
-            return <span className="deal_inv_class_pill_muted">—</span>;
+          if (!pillSource.trim()) return <DealTableHyphen />;
           const titleForTooltip =
             assignedRaw && dealLine && assignedRaw !== dealLine
               ? `${assignedRaw} · Deal: ${dealLine}`

@@ -1,4 +1,5 @@
 import { Award, ClipboardList, Handshake, Shield, UserCircle, Users } from "lucide-react"
+import { DealTableHyphen } from "./DealTableHyphen"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 import {
   investorRoleLabel,
@@ -62,7 +63,7 @@ export function DealInvestorRoleBadge({
       : dedupeDisplayLabels([String(investorRole ?? "")])
 
   if (labels.length === 0) {
-    return <span className="um_status_muted">—</span>
+    return <DealTableHyphen />
   }
 
   if (labels.length === 1) {

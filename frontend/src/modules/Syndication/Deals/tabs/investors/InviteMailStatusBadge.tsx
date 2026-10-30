@@ -2,6 +2,7 @@ import { Loader2, Mail, MailCheck } from "lucide-react"
 import type { DealInvestorRow } from "../../types/deal-investors.types"
 
 import "../../deal-investors-tab.css"
+import { DealTableHyphen } from "./DealTableHyphen"
 
 /**
  * Investors / Members table: shows whether the deal invitation email was already sent.
@@ -14,7 +15,7 @@ export function InviteMailStatusBadge({
   sending?: boolean
 }) {
   if (row.id === "add_member_draft") {
-    return <span className="deal_inv_mail_status_muted">—</span>
+    return <DealTableHyphen />
   }
   if (sending) {
     return (
